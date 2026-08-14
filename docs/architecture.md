@@ -12,11 +12,15 @@
 ## Non-goals
 
 - Cross-platform (macOS only)
-- Menubar, dock icon, settings window, preferences UI
+- Dock icon, settings window, preferences UI
 - Cloud transcription providers
 - AI post-processing, summarization, agents
 - Speaker diarization, meeting recording, semantic search
-- Auto-launch at login (user wires this themselves with `launchd` if desired)
+
+> Two original non-goals were later shipped: a menu-bar status item
+> (`MenuBarController`) and launch-at-login (`parrot install`). The dock icon and
+> settings-window exclusions still hold — the process runs `.accessory` and is
+> configured entirely by flags.
 
 ## Why Swift
 
@@ -75,13 +79,72 @@ Subcommands:
 
 ### `HotkeyMonitor`
 
-Global hotkey via `CGEventTap` (requires Accessibility permission). Default: **hold Fn**. Detected via `flagsChanged` events with `NSEvent.ModifierFlags.function` / `kCGEventFlagMaskSecondaryFn`. Emits `.pressed` / `.released`. Configurable via `--hotkey` flag or config file.
+Global hotkey via `CGEventTap` (requires Accessibility permission). Default: **hold Fn**.
+Configurable with `--hotkey`; `parrot hotkeys` lists the options. Two kinds, handled
+differently (see `Hotkey.swift`):
 
-**Fn key caveat:** macOS by default maps the Fn (🌐) key to "Show Emoji & Symbols" or "Start Dictation" depending on the user's setting in System Settings → Keyboard → Press 🌐 key to. The CGEventTap sees the keypress regardless, but the system action also fires. `parrot doctor` will detect this setting and instruct the user to change it to "Do Nothing" so Fn becomes a clean modifier.
+- **Modifiers** — Fn, and the left/right Option/Command/Control/Shift pairs. Detected as
+  `flagsChanged` edges. Left and right share a `CGEventFlags` mask, so the physical keycode
+  disambiguates them. The tap stays `.listenOnly`: a modifier held alone does nothing, so
+  there's no reason to swallow it, and swallowing Option would be actively harmful.
+- **Plain keys** — F13–F20, End, Home, Page Up/Down, Forward Delete, or any
+  `--hotkey keycode:<n>`. Detected as `keyDown`/`keyUp` with auto-repeat filtered. These *do*
+  something in the focused app, so the tap switches to `.defaultTap` and swallows that one
+  key's events — otherwise dictating on End would jump the cursor to end-of-line every time.
+
+The tap subscribes to `keyDown`/`keyUp` only when the chosen hotkey needs them (or under
+`--debug-hotkey`). With a modifier hotkey it listens to `flagsChanged` alone, so parrot isn't
+copying every keystroke on the system.
+
+When macOS disables the tap (`tapDisabledByTimeout` / `tapDisabledByUserInput`) it is
+re-armed immediately. Left unhandled, parrot keeps running — menu bar icon and all — while
+the hotkey silently stops working.
+
+**Fn key caveats, two of them:**
+
+1. macOS maps Fn (🌐) to "Show Emoji & Symbols" or "Start Dictation" depending on System
+   Settings → Keyboard → Press 🌐 key to. The tap sees the keypress regardless, but the system
+   action also fires. `parrot doctor` detects this and tells the user to set "Do Nothing".
+2. **Third-party keyboards don't send Fn at all.** On those boards `Fn` is a firmware-local
+   layer key, handled inside the keyboard to produce F-keys and media controls; macOS never
+   sees an event. Only Apple keyboards emit a real `fn`. Anyone on a mechanical keyboard must
+   pick a different hotkey.
 
 ### `AudioCapture`
 
-`AVAudioEngine` tap on the input node. Streams 16 kHz mono `Float32` buffers into a ring buffer while the hotkey is held. On release, hands the full buffer to the active `Transcriber`.
+`AVAudioEngine` tap on the input node. Streams 16 kHz mono `Float32` buffers while the hotkey
+is held; on release, hands the full buffer to the active `Transcriber`. Format conversion from
+the device's native rate happens inside the tap callback via `AVAudioConverter`.
+
+Two things here are load-bearing and easy to get wrong:
+
+**Install the tap with `inputFormat(forBus:)`, not `outputFormat(forBus:)`.** The latter is a
+cached downstream format that goes stale the moment the device is rebound, and the mismatch
+throws an *uncatchable* ObjC exception that hard-crashes the process.
+
+**`AVAudioEngine` opens the system default input the instant `engine.inputNode` is touched** —
+before any code can rebind it. That matters because Bluetooth can't carry A2DP playback and
+mic capture at once, so opening a headset's mic collapses its playback to call quality.
+Measured against a WH-1000XM4 set as default input:
+
+```
+0 start              headset=44100 Hz
+1 engine created     headset=44100 Hz
+2 inputNode accessed headset=16000 Hz   <- already dropped to HFP, never recovers
+3 device rebound     headset=16000 Hz   <- too late
+```
+
+So `--input-device` picks which mic the samples come from, but cannot stop a Bluetooth
+*default* from being degraded. parrot warns when the default input is Bluetooth. The complete
+fix is to move the input path onto AUHAL or `AVCaptureSession`, neither of which touches the
+system default — a hard prerequisite for the always-hot mic. See 2.0 in the roadmap.
+
+### `AudioDevices`
+
+CoreAudio enumeration and selection: `parrot devices` lists inputs with transport type,
+`--input-device <name|uid>` pins one (substring match, case-insensitive), and
+`--allow-bluetooth-input` opts back into a Bluetooth mic. When the system default is
+Bluetooth, parrot prefers the built-in mic and says so.
 
 ### `Transcriber` (protocol)
 
@@ -142,26 +205,28 @@ struct TranscriptionModel: Codable {
 enum Engine: String, Codable { case whisperKit, parakeet }
 ```
 
-Backed by a bundled `models.json` resource. Adding a model = appending an entry. Adding an engine = one new `Transcriber` conformance + one entry in the `Engine` enum.
+Backed by a hardcoded array in `ModelRegistry.swift` — *not* a JSON resource.
+The `models.json` resource bundle was dropped so the executable ships as a true
+single binary with nothing to install alongside it. Adding a model = appending an entry. Adding an engine = one new `Transcriber` conformance + one entry in the `Engine` enum.
 
 The registry is the single source of truth for: download URLs, file names, sizes, recommended flags, what shows up in `parrot models list`.
 
-### `ModelDownloader`
+### `ModelDownloader` — not built
 
-On first selection (or via `parrot models download <id>`), downloads to `~/Library/Application Support/parrot/models/<engine>/<id>/`. Progress bar to stderr (using `\r` overwrites). Resumable, validates size. Refuses to start the daemon if the selected model isn't present.
+WhisperKit handles downloading itself, so there is no `ModelDownloader.swift`.
+Two consequences:
 
-### `Config`
+- **Models land wherever `swift-transformers` puts them**, which defaults to
+  `~/Documents/huggingface` — the user's Documents folder, iCloud-synced on many
+  Macs. `WhisperKitConfig(downloadBase:)` fixes this; tracked as 1.4 in the roadmap.
+- **There is no progress output.** `verbose: false` means the first run prints
+  nothing through a 145 MB–1.6 GB fetch and looks hung. Tracked as 4.2.
 
-Plain `Codable` struct. Loaded from (in order): CLI flags > `~/.config/parrot/config.toml` > defaults.
+### `Config` — not built
 
-```toml
-model = "whisper-large-v3-turbo"
-hotkey = "fn"
-inject_mode = "paste"   # or "type-unicode"
-overlay = true          # show recording pill at bottom of screen
-```
-
-CLI flags override the file. No settings UI; you edit the TOML.
+Configuration is CLI flags only. There is no `Config.swift` and no
+`~/.config/parrot/config.toml`; the TOML design below was never implemented and
+may not be needed. Tracked as 6.7 in [../.plan/roadmap.md](../.plan/roadmap.md).
 
 ## Permissions
 
@@ -190,7 +255,7 @@ Initial registry:
 | WhisperKit | `whisper-large-v3-turbo` | ~800 MB | Recommended for daily use |
 | Parakeet | `parakeet-tdt-0.6b-v3` | ~600 MB | English, fastest on ANE |
 
-Models live in `~/Library/Application Support/parrot/models/`. Not bundled — fetched on first selection or via `parrot models download`.
+Models currently live in `~/Documents/huggingface/` (WhisperKit's default). Not bundled — fetched on first selection or via `parrot models download`.
 
 ## Data flow, end-to-end
 
@@ -224,40 +289,50 @@ These are deliberate cuts. Each can be revisited if real usage demands it.
 
 Organized by feature area. These are folders within a single SPM executable target — Swift sees them as one module, but the directory grouping keeps related code together. If a group later earns its keep as a reusable library (e.g. `Transcription` consumed by another tool), it can be promoted to its own SPM target with no rewriting.
 
+As built (differences from the original plan noted inline):
+
 ```
 parrot/
   Package.swift                 # SPM, single executable target
   Sources/parrot/
-    main.swift                  # entry point, argument parsing, NSApp.run()
-    Config.swift
-    Doctor.swift
+    Parrot.swift                # entry point, subcommands, the product loop
+    Doctor.swift                # permission + Fn-mapping checks
+    Setup.swift                 # interactive first-run permission grant
+    Install.swift               # LaunchAgent write/remove
 
-    Transcription/              # the inference layer
-      Transcriber.swift         # protocol
+    Transcription/
+      Transcriber.swift         # protocol (decorative for now — see roadmap 6.5)
       WhisperKitTranscriber.swift
-      ParakeetTranscriber.swift
 
-    Models/                     # registry + download pipeline
-      ModelRegistry.swift
-      ModelDownloader.swift
+    Models/
+      ModelRegistry.swift       # hardcoded array, not JSON
       TranscriptionModel.swift  # Codable types
 
     Audio/
-      AudioCapture.swift        # AVAudioEngine tap + ring buffer
+      AudioCapture.swift        # AVAudioEngine tap + format conversion
+      AudioDevices.swift        # CoreAudio input enumeration/selection
 
     Input/
       HotkeyMonitor.swift       # CGEventTap
+      Hotkey.swift              # hotkey names, keycodes, parsing
       TextInjector.swift        # CGEvent posting
 
     UI/
-      RecordingOverlay.swift    # borderless NSWindow + SwiftUI pill
+      RecordingOverlay.swift    # borderless NSPanel + SwiftUI pill
+      MenuBarController.swift   # NSStatusItem
 
-  Resources/
-    models.json
   docs/
-    architecture.md
+    architecture.md             # this file
+    codebase-notes.md           # how it actually works + open findings
+    releasing.md                # cutting a release
+  .plan/
+    plan.md                     # original M0-M8 milestones
+    roadmap.md                  # active work
   README.md
 ```
+
+Not built: `Config.swift`, `ModelDownloader.swift`, `ParakeetTranscriber.swift`,
+`Resources/models.json`. No test target yet (roadmap 1.2).
 
 Build: `swift build -c release`. Resulting binary at `.build/release/parrot`. Install: copy to `~/.local/bin/` or `/usr/local/bin/`.
 
@@ -267,7 +342,18 @@ Swift's module unit is the **SPM target** (one target = one module = one `import
 
 ## Open questions
 
-- **Parakeet via FluidAudio vs. direct CoreML?** FluidAudio is faster to integrate but adds a dependency. Decide once we benchmark both.
-- **Hotkey conflicts.** Right-Option is unused on most keyboards but some users remap it. Print a clear error if `CGEventTap` registration fails.
+- **Parakeet via FluidAudio vs. direct CoreML?** FluidAudio is faster to integrate but adds a dependency. Decide once we benchmark both. Tracked as issue #1 upstream.
+- **AUHAL vs. `AVCaptureSession` for the input path?** Both avoid `AVAudioEngine`'s
+  default-device binding. AUHAL is lower-latency and more control; `AVCaptureSession` is far
+  less C and reuses the `AVCaptureDevice` permission model parrot already uses. Blocking for
+  the always-hot mic.
 - **First-run UX.** Bundle `whisper-base.en` so `parrot` works out of the box, or always require an explicit download? Probably the latter — keeps the binary small and the model directory clean.
-- **Code signing.** A self-built unsigned binary works fine locally but accessibility permission persistence is more reliable for signed binaries. Decide if we sign for personal distribution.
+
+Settled since the original draft:
+
+- **Code signing** — yes. Ad-hoc signing keys the TCC grant to the cdhash, so Accessibility
+  is silently revoked on every update. A Developer ID identity is available; wiring it into
+  the release workflow is roadmap 5.2.
+- **Hotkey conflicts** — solved by making the hotkey configurable (`--hotkey`,
+  `parrot hotkeys`) rather than by picking a universally-safe default. There isn't one: Fn
+  doesn't exist on third-party keyboards at all.

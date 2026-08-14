@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # parrot installer.
-#   curl -fsSL https://digimata.github.io/parrot/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/encore-ai-labs/parrot/master/scripts/install.sh | sh
 #
 # Fetches the latest arm64 macOS binary from GitHub Releases, drops it
 # in /usr/local/bin, and strips the quarantine xattr so Gatekeeper doesn't
@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-REPO="digimata/parrot"
+REPO="encore-ai-labs/parrot"
 BIN_NAME="parrot"
 INSTALL_DIR="/usr/local/bin"
 ASSET="parrot-macos-arm64.tar.gz"
@@ -92,6 +92,7 @@ $SUDO chmod +x "${INSTALL_DIR}/${BIN_NAME}"
 green "✓ parrot ${TAG} installed at ${INSTALL_DIR}/${BIN_NAME}"
 echo
 echo "next:"
-echo "  parrot setup                       # grant mic + accessibility"
-echo "  parrot install --launch-at-login   # (optional) start at login"
-echo "  parrot                             # run the daemon"
+echo "  parrot setup       # grant mic + accessibility"
+echo "  parrot hotkeys     # pick a push-to-talk key (fn only works on Apple keyboards)"
+echo "  parrot devices     # pick a mic — avoid Bluetooth if you listen to music"
+echo "  parrot             # run the daemon"

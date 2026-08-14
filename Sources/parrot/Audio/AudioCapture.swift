@@ -1,4 +1,6 @@
 import AVFoundation
+import AudioToolbox
+import CoreAudio
 import Foundation
 
 /// Captures microphone audio while recording is active and returns a 16 kHz
@@ -8,6 +10,8 @@ final class AudioCapture {
     enum CaptureError: Error {
         case engineStartFailed(Error)
         case converterCreationFailed
+        case deviceSelectionFailed(OSStatus)
+        case invalidInputFormat
     }
 
     static let targetSampleRate: Double = 16_000
@@ -18,6 +22,15 @@ final class AudioCapture {
     private var isRecording = false
     private let lock = NSLock()
 
+    /// Pin capture to a specific CoreAudio device instead of following the
+    /// system default. Chiefly used to stay off Bluetooth mics — see
+    /// `AudioDevices`.
+    private let inputDeviceID: AudioDeviceID?
+
+    init(inputDeviceID: AudioDeviceID? = nil) {
+        self.inputDeviceID = inputDeviceID
+    }
+
     /// Called for every audio buffer with the buffer's RMS level (0…~1).
     /// Invoked on an arbitrary thread; hop to main if you touch UI.
     var onLevel: ((Float) -> Void)?
@@ -27,7 +40,18 @@ final class AudioCapture {
         guard !isRecording else { return }
 
         let input = engine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
+        if let inputDeviceID {
+            try selectInputDevice(inputDeviceID, on: input)
+        }
+
+        // `inputFormat` is the hardware format; `outputFormat` is a cached
+        // downstream format that goes stale the moment we rebind the device —
+        // installing a tap with the stale one throws an uncatchable ObjC
+        // exception ("Input HW format and tap format not matching").
+        let inputFormat = input.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw CaptureError.invalidInputFormat
+        }
 
         let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -74,6 +98,21 @@ final class AudioCapture {
         samples.removeAll(keepingCapacity: true)
         lock.unlock()
         return captured
+    }
+
+    /// Bind the engine's input node to a specific CoreAudio device.
+    private func selectInputDevice(_ id: AudioDeviceID, on input: AVAudioInputNode) throws {
+        guard let unit = input.audioUnit else { return }
+        var deviceID = id
+        let status = AudioUnitSetProperty(
+            unit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        guard status == noErr else { throw CaptureError.deviceSelectionFailed(status) }
     }
 
     private func process(

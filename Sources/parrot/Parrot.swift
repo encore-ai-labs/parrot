@@ -8,9 +8,75 @@ struct Parrot: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "parrot",
         abstract: "Minimal macOS dictation daemon. Hold Fn, speak, release.",
-        subcommands: [Run.self, Setup.self, Doctor.self, Models.self, Install.self],
+        subcommands: [
+            Run.self, Setup.self, Doctor.self, Models.self,
+            Hotkeys.self, Devices.self, Install.self,
+        ],
         defaultSubcommand: Run.self
     )
+}
+
+struct Devices: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "List microphones you can pass to --input-device."
+    )
+
+    func run() throws {
+        let devices = AudioDevices.inputs()
+        guard !devices.isEmpty else {
+            print("no input devices found")
+            return
+        }
+
+        let systemDefault = AudioDevices.defaultInput()
+        let preferred = AudioDevices.preferred(allowBluetooth: false)
+
+        for d in devices {
+            var marks: [String] = []
+            if d.id == preferred?.id { marks.append("★ parrot") }
+            if d.id == systemDefault?.id { marks.append("system default") }
+            let suffix = marks.isEmpty ? "" : "  (\(marks.joined(separator: ", ")))"
+            let name = d.name.padding(toLength: 30, withPad: " ", startingAt: 0)
+            let transport = d.transportName.padding(toLength: 13, withPad: " ", startingAt: 0)
+            print("  \(name) \(transport) \(d.inputChannels)ch\(suffix)")
+        }
+
+        if let warning = AudioDevices.bluetoothDefaultWarning() {
+            print()
+            print(warning)
+        }
+    }
+}
+
+struct Hotkeys: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "List the push-to-talk keys you can pass to --hotkey."
+    )
+
+    func run() throws {
+        print("modifiers — inert on their own, so the keypress is left alone:")
+        for h in Hotkey.all {
+            guard case .modifier = h else { continue }
+            let star = h.name == Hotkey.default.name ? "★" : " "
+            print("  \(star) \(h.name)")
+        }
+        print()
+        print("plain keys — parrot swallows these while it's running, so they")
+        print("won't reach the app you're dictating into:")
+        let keys = Hotkey.all.compactMap { if case .key(let n, _) = $0 { return n } else { return nil } }
+        for row in stride(from: 0, to: keys.count, by: 6) {
+            print("    \(keys[row..<min(row + 6, keys.count)].joined(separator: "  "))")
+        }
+        print()
+        print("anything else — find its number with `parrot run --debug-hotkey`,")
+        print("then pass it as `--hotkey keycode:<n>`. It'll be swallowed too.")
+        print()
+        print("★ = default")
+        print()
+        print("note: a third-party keyboard's Fn key is handled by the board's own")
+        print("      firmware and never reaches macOS — only Apple keyboards send a")
+        print("      real fn. Pick something else if you dictate from a mechanical.")
+    }
 }
 
 struct Run: ParsableCommand {
@@ -34,7 +100,37 @@ struct Run: ParsableCommand {
     @Option(name: .long, help: "Model id to use. Defaults to the recommended model.")
     var model: String?
 
+    @Option(
+        name: .long,
+        help: "Push-to-talk key. Default: fn. Run `parrot hotkeys` for the list."
+    )
+    var hotkey: String?
+
+    @Option(
+        name: .long,
+        help: "Microphone to record from (name or UID). Run `parrot devices` for the list."
+    )
+    var inputDevice: String?
+
+    @Flag(
+        name: .long,
+        help: "Allow recording from a Bluetooth mic, which degrades headset playback quality."
+    )
+    var allowBluetoothInput: Bool = false
+
     func run() throws {
+        let chosenHotkey: Hotkey
+        if let raw = hotkey {
+            guard let parsed = Hotkey.parse(raw) else {
+                FileHandle.standardError.write(Data("unknown hotkey: \(raw)\n".utf8))
+                FileHandle.standardError.write(Data("run `parrot hotkeys` to see the options.\n".utf8))
+                throw ExitCode(1)
+            }
+            chosenHotkey = parsed
+        } else {
+            chosenHotkey = .default
+        }
+
         if !skipDoctor {
             let checks = DoctorReport.run()
             if !DoctorReport.allOK(checks) {
@@ -61,6 +157,26 @@ struct Run: ParsableCommand {
             chosenModel = m
         }
 
+        // Pick the mic before anything slow happens, so a bad --input-device
+        // fails immediately rather than after a model download.
+        let chosenDevice: AudioInputDevice?
+        if let query = inputDevice {
+            guard let found = AudioDevices.find(query) else {
+                FileHandle.standardError.write(Data("unknown input device: \(query)\n".utf8))
+                FileHandle.standardError.write(Data("run `parrot devices` to see the options.\n".utf8))
+                throw ExitCode(1)
+            }
+            chosenDevice = found
+        } else {
+            chosenDevice = AudioDevices.preferred(allowBluetooth: allowBluetoothInput)
+        }
+
+        // Keyed off the system default, not the chosen device — see
+        // AudioDevices.bluetoothDefaultWarning().
+        if !allowBluetoothInput, let warning = AudioDevices.bluetoothDefaultWarning() {
+            FileHandle.standardError.write(Data("\(warning)\n".utf8))
+        }
+
         let transcriber = WhisperKitTranscriber(model: chosenModel)
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
@@ -81,14 +197,16 @@ struct Run: ParsableCommand {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
-        let monitor = HotkeyMonitor(debug: debugHotkey)
-        let capture = AudioCapture()
+        let monitor = HotkeyMonitor(hotkey: chosenHotkey, debug: debugHotkey)
+        let capture = AudioCapture(inputDeviceID: chosenDevice?.id)
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
         }
-        let menuBar = MainActor.assumeIsolated { MenuBarController(modelID: chosenModel.id) }
+        let menuBar = MainActor.assumeIsolated {
+            MenuBarController(modelID: chosenModel.id, hotkeyName: chosenHotkey.name)
+        }
 
         do {
             try monitor.start { event in
@@ -169,7 +287,11 @@ struct Run: ParsableCommand {
         sigint.resume()
         signal(SIGINT, SIG_IGN)
 
-        FileHandle.standardError.write(Data("listening on fn hold · model: \(chosenModel.id) · ^C to quit\n".utf8))
+        let micName = chosenDevice?.name ?? "system default"
+        FileHandle.standardError.write(Data(
+            "listening on \(chosenHotkey.name) hold · model: \(chosenModel.id) · mic: \(micName) · ^C to quit\n"
+                .utf8
+        ))
         app.run()
     }
 }

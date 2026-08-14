@@ -117,34 +117,28 @@ enum AudioDevices {
         return candidates.first(where: \.isBuiltIn) ?? candidates.first ?? systemDefault
     }
 
-    /// Warn when the *system default* input is a Bluetooth device.
+    /// Warn when the mic parrot will actually record from is Bluetooth.
     ///
-    /// This keys off the system default rather than whatever `--input-device`
-    /// selected, and that distinction is the whole point. `AVAudioEngine` binds
-    /// and opens the default input device the instant `engine.inputNode` is
-    /// touched — before any code gets a chance to rebind it. Measured:
-    ///
-    ///     0 start              headset=44100 Hz
-    ///     1 engine created     headset=44100 Hz
-    ///     2 inputNode accessed headset=16000 Hz   <-- already too late
-    ///
-    /// So `--input-device` controls which mic the samples come from, but it
-    /// cannot stop a Bluetooth *default* from being dragged onto HFP, which is
-    /// what wrecks playback quality. Only changing the system default input (or
-    /// rewriting this on AUHAL, which never touches the default) avoids it.
-    static func bluetoothDefaultWarning() -> String? {
-        guard let systemDefault = defaultInput(), systemDefault.isBluetooth else { return nil }
+    /// Note this keys off the *selected* device, not the system default. That
+    /// used to be the other way round: `AVAudioEngine` opened the default input
+    /// the instant `engine.inputNode` was touched, so a Bluetooth default got
+    /// degraded no matter which mic you picked. `AudioCapture` is built on
+    /// `AVCaptureSession` now, which opens only the device it's handed — so a
+    /// Bluetooth device sitting there as the system default is harmless, and
+    /// warning about it would just be noise.
+    static func bluetoothWarning(for device: AudioInputDevice?) -> String? {
+        guard let device, device.isBluetooth else { return nil }
 
         let alternatives = inputs().filter { !$0.isBluetooth && !$0.isVirtual }
         let suggestion = alternatives.first(where: \.isBuiltIn) ?? alternatives.first
 
         var lines = [
-            "warning: your default input is \(systemDefault.name), a Bluetooth device.",
+            "warning: recording from \(device.name), a Bluetooth mic.",
             "  macOS can't run high-quality playback and mic capture on the same Bluetooth",
-            "  headset, so recording will drop it to call quality until parrot lets go.",
+            "  headset, so its playback drops to call quality while parrot records.",
         ]
         if let suggestion {
-            lines.append("  fix: System Settings → Sound → Input → \(suggestion.name)")
+            lines.append("  pick \(suggestion.name) instead to keep your audio intact.")
         }
         return lines.joined(separator: "\n")
     }

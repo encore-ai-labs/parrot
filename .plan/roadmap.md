@@ -38,76 +38,50 @@ re-downloading 145 MB–1.6 GB, and leaves it alone if anything else put it ther
 
 ---
 
-## Phase 2 — the audio path
+## Phase 2 — the audio path ✅ **done**
 
-The main UX win (3.1). Biggest change in the plan; own release.
+Shipped: `AudioCapture` rebuilt on `AVCaptureSession` with a hot session and a 300 ms pre-roll
+ring buffer.
 
-> **Blocker discovered — read before starting.** `AVAudioEngine` binds and opens the *system
-> default* input device the instant `engine.inputNode` is touched, before any code can rebind
-> it. Measured against a WH-1000XM4 as default input:
->
-> ```
-> 0 start              headset=44100 Hz
-> 1 engine created     headset=44100 Hz
-> 2 inputNode accessed headset=16000 Hz   ← already dropped to HFP
-> 3 AU uninitialized   headset=16000 Hz
-> 4 device rebound     headset=16000 Hz   ← too late, and it never recovers
-> ```
->
-> Bluetooth can't do A2DP playback and mic capture simultaneously, so opening a headset's mic
-> collapses its playback to call quality. **Under the always-hot design that becomes permanent
-> for as long as parrot runs** — music is ruined the entire session, not just while recording.
->
-> `--input-device` (shipped) picks which mic the samples come from, but cannot prevent the
-> default device from being opened. The only real fixes:
->
-> 1. **Rewrite the input path on AUHAL** (`kAudioUnitSubType_HALOutput`, device set before
->    `AudioUnitInitialize`) or `AVCaptureSession` with an explicit `AVCaptureDevice`. Neither
->    touches the system default. **This is a hard prerequisite for 2.1.**
-> 2. Interim: warn when the default input is Bluetooth (shipped) and have the user change
->    System Settings → Sound → Input.
->
-> Also fixed along the way: the tap must be installed with `inputNode.inputFormat(forBus:)`,
-> not `outputFormat(forBus:)`. The latter goes stale after a device rebind, and the mismatch
-> throws an **uncatchable ObjC exception** that hard-crashes the process.
+**2.0 Move off `AVAudioEngine`'s default-device binding** — ✅ **done, via `AVCaptureSession`.**
 
-**2.0 Move the input path off `AVAudioEngine`'s default-device binding** — AUHAL or
-`AVCaptureSession`, per the blocker above. Everything below depends on it.
-
-**2.1 Restructure `AudioCapture` around a hot engine**
+`AVAudioEngine` opened the *system default* input the instant `engine.inputNode` was touched,
+before any rebinding could apply. With a Bluetooth headset as default that dragged it onto HFP
+and wrecked playback — even when parrot was recording from a different mic, which is exactly
+what a user hit in practice. Measured, headset as system default while capturing from USB:
 
 ```
-daemon start ──► engine.start() once, on a background queue
-                 tap permanently installed, always converting to 16 kHz
-                        │
-                        ▼
-                 pre-roll ring buffer (last ~300 ms, preallocated, overwritten)
-                        │
-     Fn down ──────────►│  capturing = true; seed output with ring contents
-     Fn up   ──────────►│  capturing = false; drain
+AVAudioEngine      inputNode accessed -> 44100 Hz -> 16000 Hz, never recovers
+AVCaptureSession   full session cycle -> 44100 Hz throughout
 ```
 
-Fn-down becomes a flag flip — no `prepare()`, no `start()`, nothing blocking the main thread,
-and the capture *begins before the keypress*. Removes both the ~170 ms of lost audio and the
-~65 ms main-thread stall.
+`AVCaptureSession` opens only the device it's handed. It also honors an `audioSettings` request
+for 16 kHz mono Float32 directly, so the `AVAudioConverter` path was deleted rather than ported.
 
-**2.2 Handle device changes** — currently the engine is rebuilt per recording, so plugging in
-AirPods is picked up for free. A hot engine makes this explicit work: observe
-`AVAudioEngineConfigurationChange`, rebuild the converter against the new input format, and
-restart the engine. Without this, 2.1 regresses every headset swap into silence.
+**2.1 Hot session + pre-roll** — ✅ **done.** The session runs from daemon start; the hotkey
+just flips a flag and seeds the capture from a 300 ms ring. A 1.5 s hold now yields 1.78 s of
+audio (was 0.90 s), so the front of an utterance is never clipped and the main thread never
+blocks on device startup.
 
-**2.3 Handle sleep/wake** — a long-lived engine stops across sleep. Observe
-`NSWorkspace.didWakeNotification` and restart. Same failure mode as 2.2 if skipped.
+**2.5 `--cold-mic` escape hatch** — ✅ **done.** Opens the mic only while the key is held.
 
-**2.4 Preallocate on the audio thread (3.15)** — with the tap now running continuously rather
-than only while recording, the per-buffer allocations and `NSLock` in `process()` go from
-"tolerable" to "happening 12×/sec forever". Preallocate the ring and the conversion buffer.
+**2.6 README note on the always-on mic indicator** — ✅ **done.**
 
-**2.5 `--cold-mic` escape hatch** — keeps the old behavior for anyone who doesn't want the
-permanent mic indicator, and gives us a way to A/B if 2.1 misbehaves.
+Still open:
 
-**2.6 README note** — the always-on orange mic indicator is a visible behavior change and
-should be documented, not discovered.
+**2.2 Device changes** — the session is configured once. Swapping the USB mic mid-session
+isn't handled; needs `AVCaptureSessionRuntimeError` / device-disconnect notifications and a
+reconfigure.
+
+**2.3 Sleep/wake** — `AVCaptureSession` may stop across sleep. Needs
+`AVCaptureSessionWasInterrupted` / `didStartRunning` handling, or a watchdog.
+
+**2.4 Allocation on the audio callback** — the delegate still allocates an `Array` per buffer
+and takes an `NSLock`. It runs continuously now rather than only while recording, so this is
+worth tightening.
+
+**2.7 Live mic switching** — now that the device is a session input rather than a global
+default, a menu-bar "Microphone" submenu could switch without restarting.
 
 ---
 

@@ -27,9 +27,10 @@ The installer drops the binary in `/usr/local/bin/parrot`. Builds are unsigned f
 
 That's it. There is no record button, no stop button, no "send" — the key is the whole interface.
 
-> **Hold it a beat longer than feels natural.** The mic takes ~170 ms to produce its first
-> sample after you press, so a quick tap can capture nothing at all. Start holding, *then*
-> talk. This goes away once the always-hot mic lands — see [.plan/roadmap.md](.plan/roadmap.md).
+> **The mic is held open the whole time parrot runs**, so macOS shows the mic-in-use
+> indicator continuously. That's what lets a capture start ~300 ms *before* you press the key —
+> no clipped first words. `--cold-mic` opens the mic only while the key is held, at the cost of
+> losing the front of each utterance.
 
 > **Don't use `parrot install --launch-at-login` yet.** Under `launchd` parrot gets its own
 > TCC identity rather than inheriting your terminal's, and the binary is still ad-hoc signed
@@ -62,16 +63,15 @@ parrot --no-pick-mic          # use the recommended one, no prompt
 There's no prompt when there's no terminal (under `launchd`, say) — it falls through to the
 recommended device.
 
-**If you listen to music on Bluetooth headphones, don't let them be your default input.**
-macOS can't run high-quality playback and mic capture on the same Bluetooth device at once —
-opening a headset's mic drags it from A2DP (stereo, 44.1 kHz) down to HFP (mono, 16 kHz), and
-your audio turns to telephone quality.
+**Don't record from Bluetooth headphones if you're listening to music on them.** macOS can't
+run high-quality playback and mic capture on the same Bluetooth device at once — opening a
+headset's mic drags it from A2DP (stereo, 44.1 kHz) down to HFP (mono, 16 kHz), and your audio
+turns to telephone quality. parrot warns if you pick one, and defaults to a wired or built-in
+mic instead.
 
-Choosing a different mic in parrot is **not enough on its own**: `AVAudioEngine` opens the
-system default input before parrot can rebind it, so a headset that's the default still gets
-degraded. Fix it in System Settings → Sound → Input. Note that macOS tends to reclaim the
-default input for a headset each time it reconnects, so check it after pairing. parrot warns
-at startup when the default is Bluetooth. (The permanent fix is roadmap 2.0.)
+Your headset being the *system default input* is harmless — parrot opens only the device you
+chose. Picking any non-Bluetooth mic keeps your music intact, no System Settings change
+needed.
 
 ### Using a different key
 
@@ -120,7 +120,7 @@ parrot run --debug-hotkey              # print keycodes for every key you press
 
 - **Swift** — single SPM executable target
 - **WhisperKit** — Whisper inference via CoreML, ANE-accelerated
-- **AVAudioEngine** — mic capture
+- **AVCaptureSession** — mic capture, pinned to one device
 - **CGEventTap** — global hotkey
 - **CGEvent** — text injection at cursor
 - **NSWindow** (borderless, click-through) — recording-indicator pill

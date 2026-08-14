@@ -20,6 +20,14 @@ than described — see the banner below. Everything else still stands.
 > - **New: `--input-device` / `parrot devices`** — CoreAudio input selection, and a warning
 >   when the default input is Bluetooth.
 >
+> ### Resolved: 3.1 and 3.3's root cause
+>
+> `AudioCapture` was rebuilt on `AVCaptureSession` (hot session + 300 ms pre-roll), which
+> fixes both the clipping and the Bluetooth degradation. A 1.5 s hold now captures 1.78 s.
+> The headset stays at 44100 Hz throughout, and recovers on exit even when deliberately
+> selected. `--cold-mic` restores the old open-on-demand behavior. Details below stand as the
+> record of *why*.
+>
 > ### Discovered while fixing 3.3
 >
 > `AVAudioEngine` opens the **system default input device** the instant `engine.inputNode` is
@@ -123,9 +131,11 @@ would otherwise jump the cursor to end-of-line on every utterance.
 
 Both `tapDisabledByTimeout` and `tapDisabledByUserInput` re-arm the tap.
 
-**`AudioCapture`** — `AVAudioEngine` input tap at the device's native format (48 kHz here),
-converted to 16 kHz mono Float32 inside the tap callback via `AVAudioConverter`. Samples
-accumulate into a plain `[Float]` behind an `NSLock`. `stop()` drains and returns it.
+**`AudioCapture`** — `AVCaptureSession` pinned to one `AVCaptureDevice`, with
+`audioSettings` requesting 16 kHz mono Float32 (macOS honors it exactly, so there's no
+resampling). The session runs continuously; the delegate always feeds a 300 ms circular
+pre-roll and, while capturing, appends to `captured`. `start()` seeds `captured` from the ring
+so audio predates the keypress. Deliberately *not* `AVAudioEngine` — see the banner at the top.
 
 **`WhisperKitTranscriber`** — an `actor`. `warmUp()` builds `WhisperKitConfig(model:
 verbose: false, prewarm: true, load: true)`. `transcribe` joins result segments with `" "`
@@ -168,7 +178,7 @@ Worth naming so they don't get "fixed" later:
 
 ### P0 — silently corrupts output or loses audio
 
-**3.1 — ~170 ms of audio is lost at the head of every recording. [measured]**
+**3.1 — ~170 ms of audio is lost at the head of every recording. [measured]** ✅ **FIXED**
 
 `AudioCapture.start()` is called synchronously from the hotkey closure on the main thread,
 and the mic doesn't actually produce samples for a long time after that. Measured on this
@@ -210,7 +220,8 @@ So it removes content it shouldn't and misses the case it was written for (`54fd
 Should match a known-token allowlist (`BLANK_AUDIO`, `MUSIC`, `Applause`, `silence`,
 `nospeech`, …), and/or only strip when the bracketed span is the entire output.
 
-**3.3 — Models download into `~/Documents/huggingface`. [measured]**
+**3.3 — Models download into `~/Documents/huggingface`. [measured]** — still open (the
+*Bluetooth* problem found while investigating this is fixed; the download path is not)
 
 143 MB is sitting there now. `whisper-large-v3-turbo` would put 1.6 GB in the user's
 Documents folder — which is iCloud-synced on any Mac with Desktop & Documents sync on.

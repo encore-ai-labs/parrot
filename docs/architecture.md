@@ -25,7 +25,7 @@
 ## Why Swift
 
 - **CoreML / ANE access.** WhisperKit and FluidAudio are Swift-native and run inference on the Apple Neural Engine — lower power, lower latency than CPU/GPU paths in Rust.
-- **No FFI for platform APIs.** `AVAudioEngine`, `CGEventTap`, `CGEvent`, `AXIsProcessTrusted`, `NSWindow` — all first-party, no bindings to maintain.
+- **No FFI for platform APIs.** `AVCaptureSession`, `CGEventTap`, `CGEvent`, `AXIsProcessTrusted`, `NSWindow` — all first-party, no bindings to maintain.
 - **Permissions plumbing** (microphone, accessibility) is dramatically smoother in a Swift binary than via Rust crates.
 - **AppKit overlay for free.** The recording indicator (see below) is a borderless `NSWindow` — trivial in Swift, awkward in Rust.
 
@@ -43,7 +43,7 @@ $ parrot
                                              ▼
 ┌──────────────────┐  hotkey down   ┌──────────────────┐
 │   HotkeyMonitor  │ ─────────────▶ │  AudioCapture    │
-│  (CGEventTap)    │  hotkey up     │ (AVAudioEngine)  │
+│  (CGEventTap)    │  hotkey up     │(AVCaptureSession)│
 └──────────────────┘ ◀───────────── └────────┬─────────┘
                                              │ [Float] PCM
                                              ▼
@@ -112,32 +112,28 @@ the hotkey silently stops working.
 
 ### `AudioCapture`
 
-`AVAudioEngine` tap on the input node. Streams 16 kHz mono `Float32` buffers while the hotkey
-is held; on release, hands the full buffer to the active `Transcriber`. Format conversion from
-the device's native rate happens inside the tap callback via `AVAudioConverter`.
+`AVCaptureSession` pinned to a single `AVCaptureDevice`, with `audioSettings` requesting
+16 kHz mono Float32 — macOS honors that exactly, so there is no resampling step.
 
-Two things here are load-bearing and easy to get wrong:
+The session runs continuously from daemon start rather than opening on each keypress, and the
+delegate always writes into a 300 ms circular pre-roll buffer. Pressing the hotkey flips a flag
+and seeds the capture from that ring, so recording begins *before* the key went down. A 1.5 s
+hold yields ~1.78 s of audio. `--cold-mic` reverts to opening the device only while the key is
+held, trading the clipped leading audio for no idle mic indicator.
 
-**Install the tap with `inputFormat(forBus:)`, not `outputFormat(forBus:)`.** The latter is a
-cached downstream format that goes stale the moment the device is rebound, and the mismatch
-throws an *uncatchable* ObjC exception that hard-crashes the process.
-
-**`AVAudioEngine` opens the system default input the instant `engine.inputNode` is touched** —
-before any code can rebind it. That matters because Bluetooth can't carry A2DP playback and
-mic capture at once, so opening a headset's mic collapses its playback to call quality.
-Measured against a WH-1000XM4 set as default input:
+**Why not `AVAudioEngine`.** It opens the *system default* input the instant
+`engine.inputNode` is touched, before any code can rebind it. Bluetooth can't carry A2DP
+playback and mic capture at once, so a headset set as default input gets dragged onto HFP and
+the user's music collapses to call quality — even when parrot was told to record from a
+different mic. Measured, headset as system default while capturing from a USB mic:
 
 ```
-0 start              headset=44100 Hz
-1 engine created     headset=44100 Hz
-2 inputNode accessed headset=16000 Hz   <- already dropped to HFP, never recovers
-3 device rebound     headset=16000 Hz   <- too late
+AVAudioEngine      inputNode accessed -> 44100 Hz -> 16000 Hz, never recovers
+AVCaptureSession   full session cycle -> 44100 Hz throughout
 ```
 
-So `--input-device` picks which mic the samples come from, but cannot stop a Bluetooth
-*default* from being degraded. parrot warns when the default input is Bluetooth. The complete
-fix is to move the input path onto AUHAL or `AVCaptureSession`, neither of which touches the
-system default — a hard prerequisite for the always-hot mic. See 2.0 in the roadmap.
+`AVCaptureSession` opens only the device it is handed, so a Bluetooth device sitting as the
+system default is harmless. parrot warns only when the *selected* mic is Bluetooth.
 
 ### `AudioDevices`
 
@@ -264,7 +260,7 @@ Models currently live in `~/Documents/huggingface/` (WhisperKit's default). Not 
 3. Sets `.accessory` activation policy and enters `NSApp.run()`. Status: `listening`. Overlay hidden.
 4. User holds Fn.
 5. `HotkeyMonitor` fires `.pressed`. `RecordingOverlay` shows. Status: `recording`.
-6. `AudioCapture` starts the AVAudioEngine tap. Buffers fill. Overlay animates mic level.
+6. `AudioCapture` flips its capturing flag and seeds from the pre-roll ring (the session is already running). Buffers fill. Overlay animates mic level.
 7. User releases Fn.
 8. `HotkeyMonitor` fires `.released`. Overlay switches to spinner. Status: `transcribing`.
 9. `AudioCapture` stops, hands buffer to active `Transcriber`.
@@ -309,7 +305,7 @@ parrot/
       TranscriptionModel.swift  # Codable types
 
     Audio/
-      AudioCapture.swift        # AVAudioEngine tap + format conversion
+      AudioCapture.swift        # AVCaptureSession + pre-roll ring buffer
       AudioDevices.swift        # CoreAudio input enumeration/selection
 
     Input/
@@ -343,14 +339,14 @@ Swift's module unit is the **SPM target** (one target = one module = one `import
 ## Open questions
 
 - **Parakeet via FluidAudio vs. direct CoreML?** FluidAudio is faster to integrate but adds a dependency. Decide once we benchmark both. Tracked as issue #1 upstream.
-- **AUHAL vs. `AVCaptureSession` for the input path?** Both avoid `AVAudioEngine`'s
-  default-device binding. AUHAL is lower-latency and more control; `AVCaptureSession` is far
-  less C and reuses the `AVCaptureDevice` permission model parrot already uses. Blocking for
-  the always-hot mic.
 - **First-run UX.** Bundle `whisper-base.en` so `parrot` works out of the box, or always require an explicit download? Probably the latter — keeps the binary small and the model directory clean.
 
 Settled since the original draft:
 
+- **AUHAL vs. `AVCaptureSession` for the input path** — `AVCaptureSession`. Measured to isolate
+  fully from the system default device, and it delivers 16 kHz mono Float32 directly via
+  `audioSettings`, so no conversion layer was needed. AUHAL would have been more code for no
+  demonstrated benefit.
 - **Code signing** — yes. Ad-hoc signing keys the TCC grant to the cdhash, so Accessibility
   is silently revoked on every update. A Developer ID identity is available; wiring it into
   the release workflow is roadmap 5.2.

@@ -41,7 +41,7 @@ struct Devices: ParsableCommand {
             print("  \(name) \(transport) \(d.inputChannels)ch\(suffix)")
         }
 
-        if let warning = AudioDevices.bluetoothDefaultWarning() {
+        if let warning = AudioDevices.bluetoothWarning(for: preferred) {
             print()
             print(warning)
         }
@@ -121,6 +121,12 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Skip the microphone prompt and use the default.")
     var noPickMic: Bool = false
 
+    @Flag(
+        name: .long,
+        help: "Only open the mic while the hotkey is held. Clips the start of each utterance."
+    )
+    var coldMic: Bool = false
+
     func run() throws {
         let chosenHotkey: Hotkey
         if let raw = hotkey {
@@ -181,9 +187,7 @@ struct Run: ParsableCommand {
             }
         }
 
-        // Keyed off the system default, not the chosen device — see
-        // AudioDevices.bluetoothDefaultWarning().
-        if !allowBluetoothInput, let warning = AudioDevices.bluetoothDefaultWarning() {
+        if !allowBluetoothInput, let warning = AudioDevices.bluetoothWarning(for: chosenDevice) {
             FileHandle.standardError.write(Data("\(warning)\n".utf8))
         }
 
@@ -208,7 +212,13 @@ struct Run: ParsableCommand {
         app.setActivationPolicy(.accessory)
 
         let monitor = HotkeyMonitor(hotkey: chosenHotkey, debug: debugHotkey)
-        let capture = AudioCapture(inputDeviceID: chosenDevice?.id)
+        let capture = AudioCapture(device: chosenDevice, usePreRoll: !coldMic)
+        do {
+            try capture.startSession()
+        } catch {
+            FileHandle.standardError.write(Data("failed to open microphone: \(error)\n".utf8))
+            throw ExitCode(1)
+        }
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
         if let overlay {

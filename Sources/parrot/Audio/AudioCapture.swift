@@ -1,155 +1,220 @@
 import AVFoundation
-import AudioToolbox
 import CoreAudio
 import Foundation
 
-/// Captures microphone audio while recording is active and returns a 16 kHz
-/// mono Float32 buffer when stopped. Format-converts on the fly so callers
-/// don't have to worry about the input device's native rate.
-final class AudioCapture {
+/// Captures microphone audio and returns 16 kHz mono Float32 when stopped.
+///
+/// Built on `AVCaptureSession` rather than `AVAudioEngine`, for one decisive
+/// reason: `AVAudioEngine` binds and opens the *system default* input device the
+/// instant `engine.inputNode` is touched, before any code can rebind it. When
+/// the default is a Bluetooth headset that drags it off A2DP onto HFP and the
+/// user's music collapses to call quality — even if we then select a different
+/// mic. `AVCaptureSession` opens only the device it's given. Measured with a
+/// WH-1000XM4 as system default while capturing from a USB mic:
+///
+///     AVAudioEngine      inputNode accessed -> headset 44100 Hz -> 16000 Hz
+///     AVCaptureSession   full session cycle -> headset 44100 Hz throughout
+///
+/// The session also asks for 16 kHz mono Float32 directly via `audioSettings`,
+/// which macOS honors, so there's no sample-rate conversion to do here.
+///
+/// The session runs continuously from `startSession()` rather than starting on
+/// each keypress. Device startup costs ~170 ms before the first sample arrives,
+/// which was clipping the front of every utterance; a hot session plus a
+/// pre-roll ring buffer means a capture begins *before* the key went down. The
+/// cost is that macOS shows the mic-in-use indicator the whole time parrot runs.
+final class AudioCapture: NSObject {
     enum CaptureError: Error {
-        case engineStartFailed(Error)
-        case converterCreationFailed
-        case deviceSelectionFailed(OSStatus)
-        case invalidInputFormat
+        case deviceNotFound(String)
+        case inputCreationFailed(Error)
+        case cannotAddInput
+        case cannotAddOutput
     }
 
     static let targetSampleRate: Double = 16_000
 
-    private let engine = AVAudioEngine()
-    private var converter: AVAudioConverter?
-    private var samples: [Float] = []
-    private var isRecording = false
+    /// How much audio to keep from before the hotkey went down.
+    static let preRollSeconds: Double = 0.3
+    private static let preRollSamples = Int(targetSampleRate * preRollSeconds)
+
+    private let session = AVCaptureSession()
+    private let output = AVCaptureAudioDataOutput()
+    private let sampleQueue = DispatchQueue(label: "ai.encore.parrot.audio")
+
     private let lock = NSLock()
+    private var captured: [Float] = []
+    private var capturing = false
 
-    /// Pin capture to a specific CoreAudio device instead of following the
-    /// system default. Chiefly used to stay off Bluetooth mics — see
-    /// `AudioDevices`.
-    private let inputDeviceID: AudioDeviceID?
+    /// Fixed-size circular pre-roll. Always written, even mid-capture, so the
+    /// next capture is seeded correctly too.
+    private var ring = [Float](repeating: 0, count: preRollSamples)
+    private var ringWrite = 0
+    private var ringCount = 0
 
-    init(inputDeviceID: AudioDeviceID? = nil) {
-        self.inputDeviceID = inputDeviceID
-    }
+    private let deviceUID: String?
+    private let deviceName: String?
+    private let usePreRoll: Bool
+    private var configured = false
 
-    /// Called for every audio buffer with the buffer's RMS level (0…~1).
-    /// Invoked on an arbitrary thread; hop to main if you touch UI.
+    /// Called for every buffer with its RMS level (0…~1). Arbitrary thread.
     var onLevel: ((Float) -> Void)?
 
-    /// Begin recording. Idempotent — calling while already recording is a no-op.
-    func start() throws {
-        guard !isRecording else { return }
-
-        let input = engine.inputNode
-        if let inputDeviceID {
-            try selectInputDevice(inputDeviceID, on: input)
-        }
-
-        // `inputFormat` is the hardware format; `outputFormat` is a cached
-        // downstream format that goes stale the moment we rebind the device —
-        // installing a tap with the stale one throws an uncatchable ObjC
-        // exception ("Input HW format and tap format not matching").
-        let inputFormat = input.inputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw CaptureError.invalidInputFormat
-        }
-
-        let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: AudioCapture.targetSampleRate,
-            channels: 1,
-            interleaved: false
-        )!
-
-        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
-            throw CaptureError.converterCreationFailed
-        }
-        self.converter = converter
-
-        lock.lock()
-        samples.removeAll(keepingCapacity: true)
-        lock.unlock()
-
-        // Tap with input format; convert inside the callback.
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            self?.process(buffer: buffer, converter: converter, targetFormat: targetFormat)
-        }
-
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            input.removeTap(onBus: 0)
-            throw CaptureError.engineStartFailed(error)
-        }
-
-        isRecording = true
+    /// - Parameter usePreRoll: when false, the session only runs while the
+    ///   hotkey is held (no mic indicator at idle, but the front of each
+    ///   utterance is clipped).
+    init(device: AudioInputDevice?, usePreRoll: Bool = true) {
+        self.deviceUID = device?.uid
+        self.deviceName = device?.name
+        self.usePreRoll = usePreRoll
+        super.init()
     }
 
-    /// Stop recording and return all captured samples (16 kHz mono Float32).
+    /// Open the device and (when pre-rolling) begin streaming. Call once at
+    /// startup, off the main thread — this is the slow part.
+    func startSession() throws {
+        try configureIfNeeded()
+        if usePreRoll, !session.isRunning {
+            session.startRunning()
+        }
+    }
+
+    func stopSession() {
+        if session.isRunning { session.stopRunning() }
+    }
+
+    /// Begin recording. Idempotent.
+    func start() throws {
+        try configureIfNeeded()
+        if !session.isRunning {
+            session.startRunning()
+        }
+
+        lock.lock()
+        captured.removeAll(keepingCapacity: true)
+        if usePreRoll, ringCount > 0 {
+            // Drain the ring oldest-first so the capture starts ~300 ms before
+            // the keypress.
+            captured.reserveCapacity(ringCount)
+            let start = (ringWrite - ringCount + ring.count) % ring.count
+            for i in 0..<ringCount {
+                captured.append(ring[(start + i) % ring.count])
+            }
+        }
+        capturing = true
+        lock.unlock()
+    }
+
+    /// Stop recording and return everything captured, pre-roll included.
     @discardableResult
     func stop() -> [Float] {
-        guard isRecording else { return [] }
-        engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
-        isRecording = false
-
         lock.lock()
-        let captured = samples
-        samples.removeAll(keepingCapacity: true)
+        let wasCapturing = capturing
+        capturing = false
+        let out = captured
+        captured.removeAll(keepingCapacity: true)
         lock.unlock()
-        return captured
-    }
 
-    /// Bind the engine's input node to a specific CoreAudio device.
-    private func selectInputDevice(_ id: AudioDeviceID, on input: AVAudioInputNode) throws {
-        guard let unit = input.audioUnit else { return }
-        var deviceID = id
-        let status = AudioUnitSetProperty(
-            unit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &deviceID,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
-        guard status == noErr else { throw CaptureError.deviceSelectionFailed(status) }
-    }
-
-    private func process(
-        buffer: AVAudioPCMBuffer,
-        converter: AVAudioConverter,
-        targetFormat: AVAudioFormat
-    ) {
-        // Output buffer capacity scales with sample-rate ratio.
-        let ratio = targetFormat.sampleRate / buffer.format.sampleRate
-        let outCapacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
-
-        guard let outBuffer = AVAudioPCMBuffer(
-            pcmFormat: targetFormat,
-            frameCapacity: outCapacity
-        ) else { return }
-
-        var consumed = false
-        let inputBlock: AVAudioConverterInputBlock = { _, status in
-            if consumed {
-                status.pointee = .noDataNow
-                return nil
-            }
-            consumed = true
-            status.pointee = .haveData
-            return buffer
+        // Without pre-roll there's no reason to hold the device open at idle.
+        if !usePreRoll, session.isRunning {
+            session.stopRunning()
         }
+        return wasCapturing ? out : []
+    }
 
-        var error: NSError?
-        let status = converter.convert(to: outBuffer, error: &error, withInputFrom: inputBlock)
-        guard status != .error, let channelData = outBuffer.floatChannelData else { return }
+    // MARK: -
 
-        let count = Int(outBuffer.frameLength)
-        let ptr = channelData[0]
-        let chunk = Array(UnsafeBufferPointer(start: ptr, count: count))
+    private func configureIfNeeded() throws {
+        guard !configured else { return }
+
+        let device = try resolveDevice()
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+
+        let input: AVCaptureDeviceInput
+        do {
+            input = try AVCaptureDeviceInput(device: device)
+        } catch {
+            throw CaptureError.inputCreationFailed(error)
+        }
+        guard session.canAddInput(input) else { throw CaptureError.cannotAddInput }
+        session.addInput(input)
+
+        // macOS honors this exactly, so no resampling is needed downstream.
+        output.audioSettings = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: Int(Self.targetSampleRate),
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ]
+        output.setSampleBufferDelegate(self, queue: sampleQueue)
+        guard session.canAddOutput(output) else { throw CaptureError.cannotAddOutput }
+        session.addOutput(output)
+
+        configured = true
+    }
+
+    /// Map our CoreAudio device onto an `AVCaptureDevice`. UIDs line up between
+    /// the two APIs; the name is a fallback for anything that doesn't match.
+    private func resolveDevice() throws -> AVCaptureDevice {
+        let discovered = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.microphone, .external],
+            mediaType: .audio,
+            position: .unspecified
+        ).devices
+
+        if let uid = deviceUID, let match = discovered.first(where: { $0.uniqueID == uid }) {
+            return match
+        }
+        if let name = deviceName, let match = discovered.first(where: { $0.localizedName == name }) {
+            return match
+        }
+        if deviceUID == nil, let fallback = AVCaptureDevice.default(for: .audio) {
+            return fallback
+        }
+        throw CaptureError.deviceNotFound(deviceName ?? deviceUID ?? "default")
+    }
+}
+
+extension AudioCapture: AVCaptureAudioDataOutputSampleBufferDelegate {
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        var blockBuffer: CMBlockBuffer?
+        var abl = AudioBufferList()
+        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: nil,
+            bufferListOut: &abl,
+            bufferListSize: MemoryLayout<AudioBufferList>.size,
+            blockBufferAllocator: nil,
+            blockBufferMemoryAllocator: nil,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+            blockBufferOut: &blockBuffer
+        )
+        guard status == noErr else { return }
+
+        let buffers = UnsafeMutableAudioBufferListPointer(&abl)
+        guard let data = buffers[0].mData else { return }
+        let count = Int(buffers[0].mDataByteSize) / MemoryLayout<Float>.size
+        guard count > 0 else { return }
+        let chunk = Array(UnsafeBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: count))
 
         lock.lock()
-        samples.append(contentsOf: chunk)
+        if capturing {
+            captured.append(contentsOf: chunk)
+        }
+        if usePreRoll {
+            for s in chunk {
+                ring[ringWrite] = s
+                ringWrite = (ringWrite + 1) % ring.count
+                if ringCount < ring.count { ringCount += 1 }
+            }
+        }
         lock.unlock()
 
         if let onLevel {
@@ -158,7 +223,7 @@ final class AudioCapture {
     }
 }
 
-// MARK: - WAV writer (for debugging M3 captures)
+// MARK: - WAV writer (for debugging captures)
 
 enum WAVWriter {
     /// Write Float32 mono samples as 16-bit PCM WAV to `path`.

@@ -24,18 +24,42 @@ pkill -x parrot          # then restart it in a terminal tab
 `.sha256` to a GitHub Release.
 
 ```sh
-git tag v0.1.0
+git tag -a v0.1.0 -m "v0.1.0 — short description"
 git push origin v0.1.0
-gh run watch -R encore-ai-labs/parrot        # ~5-10 min, mostly WhisperKit compile
+gh workflow run release.yml -R encore-ai-labs/parrot --ref v0.1.0   # see note below
+gh run watch -R encore-ai-labs/parrot        # ~3 min, mostly WhisperKit compile
 gh release view v0.1.0 -R encore-ai-labs/parrot
 ```
+
+> **The tag push alone will not build anything — you must dispatch manually.**
+>
+> This repo is a fork, and GitHub does not run workflows on `push` events in forks. Pushing
+> `v0.1.0` produced **zero** runs even with `actions/permissions` reporting `enabled: true`
+> and the workflow reporting `state: active` — those two are not the same gate as the
+> fork-level one. `workflow_dispatch` is unaffected, so dispatching against the tag ref works,
+> and because `github.ref` is then `refs/tags/v0.1.0`, the workflow's
+> `if: startsWith(github.ref, 'refs/tags/')` release step still publishes correctly.
+>
+> To make plain `git push --tags` work, someone has to open the repo's **Actions** tab once and
+> click the "I understand my workflows, go ahead and enable them" button. That toggle isn't
+> exposed through the API. Until then, always dispatch.
 
 Tags are the only trigger — pushing to `master` builds nothing. There is no CI on pull
 requests yet either, so nothing is compiled or tested before a tag goes out (roadmap 6.1).
 
-**On a fresh fork, Actions may not have registered the workflow.** GitHub disables inherited
-workflows until the fork gets its own push. If `gh api repos/encore-ai-labs/parrot/actions/workflows`
-comes back empty, push a commit to `master` first, then tag.
+**On a fresh fork, the workflow may not be registered at all.** GitHub only picks up inherited
+workflow files once the fork gets its own push. If
+`gh api repos/encore-ai-labs/parrot/actions/workflows` comes back empty, push a commit to
+`master` first, then tag.
+
+After the run is green, verify what actually shipped:
+
+```sh
+curl -fsSL https://api.github.com/repos/encore-ai-labs/parrot/releases/latest | grep tag_name
+```
+
+The installer resolves the download URL from that endpoint, so if it doesn't report your new
+tag, `curl | sh` will still hand people the old build.
 
 If a release goes out wrong:
 

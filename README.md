@@ -38,16 +38,40 @@ That's it. There is no record button, no stop button, no "send" — the key is t
 
 ### Choosing a microphone
 
-```sh
-parrot devices                          # list mics, marked with the one parrot will use
-parrot --input-device brio              # match by name (substring, case-insensitive)
+Started from a terminal, parrot asks which mic to use. Enter takes the recommended one, so
+the usual case is a single keystroke:
+
 ```
+microphone:
+    1) Parth's iPhone Microphone      unknown
+    2) WH-1000XM4                     bluetooth, ⚠ drops headset playback to call quality
+    3) Logitech BRIO                  usb
+  ★ 4) MacBook Pro Microphone         built-in
+    5) ZoomAudioDevice                virtual, ⚠ virtual — may be silent
+choose [1-5], or Enter for ★:
+```
+
+Type a number, or part of a name (`brio`). To skip the prompt:
+
+```sh
+parrot devices                # just list them
+parrot --input-device brio    # pick up front, no prompt
+parrot --no-pick-mic          # use the recommended one, no prompt
+```
+
+There's no prompt when there's no terminal (under `launchd`, say) — it falls through to the
+recommended device.
 
 **If you listen to music on Bluetooth headphones, don't let them be your default input.**
 macOS can't run high-quality playback and mic capture on the same Bluetooth device at once —
 opening a headset's mic drags it from A2DP (stereo, 44.1 kHz) down to HFP (mono, 16 kHz), and
-your audio turns to telephone quality. Set System Settings → Sound → Input to your built-in
-mic or a USB one; parrot warns you at startup if it's Bluetooth.
+your audio turns to telephone quality.
+
+Choosing a different mic in parrot is **not enough on its own**: `AVAudioEngine` opens the
+system default input before parrot can rebind it, so a headset that's the default still gets
+degraded. Fix it in System Settings → Sound → Input. Note that macOS tends to reclaim the
+default input for a headset each time it reconnects, so check it after pairing. parrot warns
+at startup when the default is Bluetooth. (The permanent fix is roadmap 2.0.)
 
 ### Using a different key
 
@@ -85,6 +109,7 @@ parrot models download <id>            # pre-download a model
 parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones
 parrot --input-device brio             # pick a specific mic
+parrot --no-pick-mic                   # skip the mic prompt
 parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill

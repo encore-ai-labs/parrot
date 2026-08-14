@@ -149,6 +149,46 @@ enum AudioDevices {
         return lines.joined(separator: "\n")
     }
 
+    /// True when there's a terminal to prompt at. Under `launchd` there isn't,
+    /// and blocking a background daemon on `readLine()` would hang it forever.
+    static var isInteractive: Bool { isatty(STDIN_FILENO) == 1 }
+
+    /// Interactive microphone picker. Enter accepts the suggested device, so
+    /// the common case is one keystroke.
+    static func prompt(suggested: AudioInputDevice?) -> AudioInputDevice? {
+        let devices = inputs()
+        guard !devices.isEmpty else { return nil }
+        guard devices.count > 1 else { return devices.first }
+
+        func render() {
+            var out = "\nmicrophone:\n"
+            for (i, d) in devices.enumerated() {
+                let mark = d.id == suggested?.id ? "★" : " "
+                var tags = [d.transportName]
+                if d.isBluetooth { tags.append("⚠ drops headset playback to call quality") }
+                if d.isVirtual { tags.append("⚠ virtual — may be silent") }
+                let name = d.name.padding(toLength: 30, withPad: " ", startingAt: 0)
+                out += "  \(mark) \(i + 1)) \(name) \(tags.joined(separator: ", "))\n"
+            }
+            out += "choose [1-\(devices.count)], or Enter for ★: "
+            FileHandle.standardError.write(Data(out.utf8))
+        }
+
+        for attempt in 0..<3 {
+            render()
+            guard let line = readLine(strippingNewline: true) else { return suggested }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { return suggested }
+            if let n = Int(trimmed), n >= 1, n <= devices.count { return devices[n - 1] }
+            if let byName = find(trimmed) { return byName }
+            if attempt < 2 {
+                FileHandle.standardError.write(Data("  no match for '\(trimmed)'\n".utf8))
+            }
+        }
+        FileHandle.standardError.write(Data("  giving up — using ★\n".utf8))
+        return suggested
+    }
+
     // MARK: -
 
     private static func describe(_ id: AudioDeviceID) -> AudioInputDevice? {

@@ -118,6 +118,9 @@ struct Run: ParsableCommand {
     )
     var allowBluetoothInput: Bool = false
 
+    @Flag(name: .long, help: "Skip the microphone prompt and use the default.")
+    var noPickMic: Bool = false
+
     func run() throws {
         let chosenHotkey: Hotkey
         if let raw = hotkey {
@@ -168,7 +171,14 @@ struct Run: ParsableCommand {
             }
             chosenDevice = found
         } else {
-            chosenDevice = AudioDevices.preferred(allowBluetooth: allowBluetoothInput)
+            let suggested = AudioDevices.preferred(allowBluetooth: allowBluetoothInput)
+            // Prompt only when there's a terminal to prompt at — under launchd
+            // there isn't, and blocking a daemon on readLine() hangs it forever.
+            if !noPickMic, AudioDevices.isInteractive {
+                chosenDevice = AudioDevices.prompt(suggested: suggested)
+            } else {
+                chosenDevice = suggested
+            }
         }
 
         // Keyed off the system default, not the chosen device — see

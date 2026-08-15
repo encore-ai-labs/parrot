@@ -147,14 +147,50 @@ enum AudioDevices {
     /// and blocking a background daemon on `readLine()` would hang it forever.
     static var isInteractive: Bool { isatty(STDIN_FILENO) == 1 }
 
-    /// Interactive microphone picker. Enter accepts the suggested device, so
-    /// the common case is one keystroke.
-    static func prompt(suggested: AudioInputDevice?) -> AudioInputDevice? {
+    /// Interactive microphone picker.
+    ///
+    /// - Parameter preselect: UID of the device to start the cursor on, so a
+    ///   returning user's last choice is one Enter away.
+    static func prompt(suggested: AudioInputDevice?, preselect: String? = nil) -> AudioInputDevice? {
         let devices = inputs()
         guard !devices.isEmpty else { return nil }
         guard devices.count > 1 else { return devices.first }
 
-        func render() {
+        // Start on the remembered device, else the recommended one.
+        var initial = 0
+        if let preselect, let i = devices.firstIndex(where: { $0.uid == preselect }) {
+            initial = i
+        } else if let suggested, let i = devices.firstIndex(where: { $0.id == suggested.id }) {
+            initial = i
+        }
+
+        let options = devices.map { d -> TerminalSelect.Option in
+            var warning: String?
+            if d.isBluetooth { warning = "⚠ playback drops to call quality" }
+            if d.isVirtual { warning = "⚠ virtual — may be silent" }
+            var detail = d.transportName
+            if d.id == suggested?.id { detail += " · recommended" }
+            return TerminalSelect.Option(label: d.name, detail: detail, warning: warning)
+        }
+
+        if let picked = TerminalSelect.choose(
+            title: "microphone",
+            options: options,
+            initial: initial,
+            footer: "↑↓ to move · enter to choose"
+        ) {
+            return devices[picked]
+        }
+
+        // No usable terminal (or the user bailed) — fall back to typed input.
+        return typedPrompt(devices: devices, suggested: suggested)
+    }
+
+    private static func typedPrompt(
+        devices: [AudioInputDevice], suggested: AudioInputDevice?
+    ) -> AudioInputDevice? {
+        guard isInteractive else { return suggested }
+        for attempt in 0..<3 {
             var out = "\nmicrophone:\n"
             for (i, d) in devices.enumerated() {
                 let mark = d.id == suggested?.id ? "★" : " "
@@ -166,10 +202,7 @@ enum AudioDevices {
             }
             out += "choose [1-\(devices.count)], or Enter for ★: "
             FileHandle.standardError.write(Data(out.utf8))
-        }
 
-        for attempt in 0..<3 {
-            render()
             guard let line = readLine(strippingNewline: true) else { return suggested }
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty { return suggested }
@@ -179,7 +212,6 @@ enum AudioDevices {
                 FileHandle.standardError.write(Data("  no match for '\(trimmed)'\n".utf8))
             }
         }
-        FileHandle.standardError.write(Data("  giving up — using ★\n".utf8))
         return suggested
     }
 

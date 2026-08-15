@@ -39,29 +39,29 @@ That's it. There is no record button, no stop button, no "send" — the key is t
 
 ### Choosing a microphone
 
-Started from a terminal, parrot asks which mic to use. Enter takes the recommended one, so
-the usual case is a single keystroke:
+Started from a terminal, parrot asks which mic to use. Arrow keys to move, Enter to choose —
+it starts on your last choice, so the usual case is a single keystroke:
 
 ```
-microphone:
-    1) Parth's iPhone Microphone      unknown
-    2) WH-1000XM4                     bluetooth, ⚠ drops headset playback to call quality
-    3) Logitech BRIO                  usb
-  ★ 4) MacBook Pro Microphone         built-in
-    5) ZoomAudioDevice                virtual, ⚠ virtual — may be silent
-choose [1-5], or Enter for ★:
+microphone
+  Parth's iPhone Microphone  unknown
+  WH-1000XM4                 bluetooth  ⚠ playback drops to call quality
+  Logitech BRIO              usb
+❯ MacBook Pro Microphone     built-in · recommended
+  ZoomAudioDevice            virtual  ⚠ virtual — may be silent
+↑↓ to move · enter to choose
 ```
 
-Type a number, or part of a name (`brio`). To skip the prompt:
+`j`/`k` work too, as do the number keys. `q` or Ctrl-C backs out. To skip the prompt entirely:
 
 ```sh
 parrot devices                # just list them
 parrot --input-device brio    # pick up front, no prompt
-parrot --no-pick-mic          # use the recommended one, no prompt
+parrot --no-pick-mic          # use the remembered one, no prompt
 ```
 
-There's no prompt when there's no terminal (under `launchd`, say) — it falls through to the
-recommended device.
+There's no prompt when there's no terminal (under `launchd`, say) — it falls through to your
+remembered device, or the recommended one.
 
 **Don't record from Bluetooth headphones if you're listening to music on them.** macOS can't
 run high-quality playback and mic capture on the same Bluetooth device at once — opening a
@@ -72,6 +72,26 @@ mic instead.
 Your headset being the *system default input* is harmless — parrot opens only the device you
 chose. Picking any non-Bluetooth mic keeps your music intact, no System Settings change
 needed.
+
+### Lowercase mode
+
+The first time you run parrot it asks whether to lowercase everything:
+
+```
+lowercase mode
+❯ lowercase everything           "hey there"
+  keep Whisper's capitalization  "Hey there."
+↑↓ to move · enter to choose
+```
+
+Your answer is saved, so it only asks once. Change it any time with `--lowercase` /
+`--no-lowercase`, or re-run the whole first-time setup with `--reconfigure`.
+
+### Settings
+
+Answers are saved to `~/.config/parrot/config.json` — the chosen mic and whether lowercase
+mode is on. Delete the file or run `parrot --reconfigure` to start over. Command-line flags
+always win over what's saved.
 
 ### Using a different key
 
@@ -110,6 +130,8 @@ parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones
 parrot --input-device brio             # pick a specific mic
 parrot --no-pick-mic                   # skip the mic prompt
+parrot --lowercase                     # lowercase all transcribed text
+parrot --reconfigure                   # redo first-time setup
 parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill

@@ -127,6 +127,15 @@ struct Run: ParsableCommand {
     )
     var coldMic: Bool = false
 
+    @Flag(name: .long, help: "Lowercase all transcribed text.")
+    var lowercase: Bool = false
+
+    @Flag(name: .long, help: "Don't lowercase transcribed text.")
+    var noLowercase: Bool = false
+
+    @Flag(name: .long, help: "Re-run first-time setup and overwrite saved preferences.")
+    var reconfigure: Bool = false
+
     func run() throws {
         let chosenHotkey: Hotkey
         if let raw = hotkey {
@@ -166,6 +175,12 @@ struct Run: ParsableCommand {
             chosenModel = m
         }
 
+        var config = Config.load()
+        if reconfigure {
+            config = Config()
+        }
+        var configDirty = reconfigure
+
         // Pick the mic before anything slow happens, so a bad --input-device
         // fails immediately rather than after a model download.
         let chosenDevice: AudioInputDevice?
@@ -181,10 +196,57 @@ struct Run: ParsableCommand {
             // Prompt only when there's a terminal to prompt at — under launchd
             // there isn't, and blocking a daemon on readLine() hangs it forever.
             if !noPickMic, AudioDevices.isInteractive {
-                chosenDevice = AudioDevices.prompt(suggested: suggested)
+                chosenDevice = AudioDevices.prompt(
+                    suggested: suggested, preselect: config.inputDeviceUID
+                )
+            } else if let saved = config.inputDeviceUID, let remembered = AudioDevices.find(saved) {
+                chosenDevice = remembered
             } else {
                 chosenDevice = suggested
             }
+        }
+        if let uid = chosenDevice?.uid, uid != config.inputDeviceUID {
+            config.inputDeviceUID = uid
+            configDirty = true
+        }
+
+        // Lowercase: explicit flag wins, then a saved preference, then ask once.
+        let lowercaseMode: Bool
+        if lowercase || noLowercase {
+            guard !(lowercase && noLowercase) else {
+                FileHandle.standardError.write(Data(
+                    "pass at most one of --lowercase or --no-lowercase\n".utf8
+                ))
+                throw ExitCode(64)
+            }
+            lowercaseMode = lowercase
+        } else if let saved = config.lowercase {
+            lowercaseMode = saved
+        } else if TerminalSelect.isAvailable {
+            let answer = TerminalSelect.confirm(
+                title: "lowercase mode",
+                yes: TerminalSelect.Option(
+                    label: "lowercase everything",
+                    detail: "\"hey there\"",
+                    warning: nil
+                ),
+                no: TerminalSelect.Option(
+                    label: "keep Whisper's capitalization",
+                    detail: "\"Hey there.\"",
+                    warning: nil
+                ),
+                defaultYes: false
+            )
+            lowercaseMode = answer ?? false
+            config.lowercase = lowercaseMode
+            configDirty = true
+        } else {
+            lowercaseMode = false
+        }
+
+        if configDirty {
+            config.setupCompleted = true
+            config.save()
         }
 
         if !allowBluetoothInput, let warning = AudioDevices.bluetoothWarning(for: chosenDevice) {
@@ -272,7 +334,8 @@ struct Run: ParsableCommand {
                     Task {
                         let started = Date()
                         do {
-                            let text = try await transcriber.transcribe(samples)
+                            let raw = try await transcriber.transcribe(samples)
+                            let text = lowercaseMode ? raw.lowercased() : raw
                             let elapsed = Date().timeIntervalSince(started)
                             FileHandle.standardError.write(Data(
                                 String(format: "→ %.2fs · %@\n", elapsed, text).utf8

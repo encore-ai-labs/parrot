@@ -173,8 +173,13 @@ Parakeet work in issue #1.
 Application Support model path, and "no menubar / no launch-at-login" as non-goals. Three of
 those are wrong and two shipped anyway.
 
-**6.7 Config file** *(optional)* — `~/.config/parrot/config.toml` as promised in
-`architecture.md`. Flags may genuinely be enough; decide after 6.3.
+**6.7 Config file** — ✅ **done**, as `~/.config/parrot/config.json` (JSON, not TOML — no
+dependency needed). Stores the chosen mic and lowercase mode, written on first run.
+
+**6.8 Suppress the Continuity Camera deprecation log** — AVFoundation logs
+`AVCaptureDeviceTypeExternal is deprecated…` at every launch when an iPhone Continuity mic is
+present. It's emitted regardless of the `deviceTypes` we request; silencing it needs
+`NSCameraUseContinuityCameraDeviceType` in an `Info.plist`, so it's blocked behind 5.1.
 
 ---
 

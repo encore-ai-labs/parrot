@@ -218,11 +218,29 @@ Two consequences:
 - **There is no progress output.** `verbose: false` means the first run prints
   nothing through a 145 MB–1.6 GB fetch and looks hung. Tracked as 4.2.
 
-### `Config` — not built
+### `Config`
 
-Configuration is CLI flags only. There is no `Config.swift` and no
-`~/.config/parrot/config.toml`; the TOML design below was never implemented and
-may not be needed. Tracked as 6.7 in [../.plan/roadmap.md](../.plan/roadmap.md).
+A `Codable` struct at `~/.config/parrot/config.json`, holding the chosen microphone UID,
+whether lowercase mode is on, and a flag marking first-run setup complete. Every field is
+optional, and nil means "not yet decided" — that's what separates a first run (ask) from a
+later one (respect the earlier answer, including a "no").
+
+JSON rather than the TOML originally sketched: `Codable` gives it to us for free, and a TOML
+parser would have been a new dependency for three keys.
+
+Precedence is CLI flags > saved config > interactive prompt > built-in default. Missing or
+corrupt config is treated as a first run, never an error.
+
+### `TerminalSelect`
+
+Arrow-key menus for the first-run questions. Puts the terminal in raw mode (`ECHO` and
+`ICANON` off, `VMIN`/`VTIME` set — canonical mode overloads those slots with `VEOF`/`VEOL`,
+so leaving them alone makes `read()` block until four bytes arrive). Restoring the original
+`termios` on every exit path is a correctness requirement, not a nicety: leaving raw mode set
+would hand the user a shell with no echo and no line editing. Ctrl-C is handled in-loop rather
+than left to SIGINT for that reason.
+
+Falls back to the older typed prompt when stdin or stderr isn't a TTY.
 
 ## Permissions
 

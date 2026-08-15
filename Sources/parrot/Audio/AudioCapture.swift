@@ -159,8 +159,11 @@ final class AudioCapture: NSObject {
     /// Map our CoreAudio device onto an `AVCaptureDevice`. UIDs line up between
     /// the two APIs; the name is a fallback for anything that doesn't match.
     private func resolveDevice() throws -> AVCaptureDevice {
+        // .microphone alone covers built-in, USB, and Bluetooth inputs. Adding
+        // .external changes nothing here and makes AVFoundation log a
+        // Continuity Camera deprecation warning on every launch.
         let discovered = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.microphone, .external],
+            deviceTypes: [.microphone],
             mediaType: .audio,
             position: .unspecified
         ).devices

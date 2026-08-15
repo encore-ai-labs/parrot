@@ -79,12 +79,12 @@ The first time you run parrot it asks whether to lowercase everything:
 
 ```
 lowercase mode
-❯ lowercase everything           "hey there"
-  keep Whisper's capitalization  "Hey there."
+❯ keep capitalization   "Hey there."  (default)
+  lowercase everything  "hey there."
 ↑↓ to move · enter to choose
 ```
 
-Your answer is saved, so it only asks once. Change it any time with `--lowercase` /
+Keeping capitalization is the default. Your answer is saved, so it only asks once. Change it any time with `--lowercase` /
 `--no-lowercase`, or re-run the whole first-time setup with `--reconfigure`.
 
 ### Settings

@@ -17,15 +17,16 @@ Ordering is cheapest-first within each phase, and each phase is independently sh
 
 Small diffs, no design questions, immediate correctness win. Ship as one release.
 
-**1.1 Rewrite `sanitize()` (3.2)** — replace blanket bracket-stripping with a known-token
-allowlist (`BLANK_AUDIO`, `MUSIC`, `Applause`, `silence`, `noise`, `nospeech`, …), matched
-case-insensitively. Only strip a bracketed span if it matches a known tag, or if it's the
-entire output. Stops `2 * 3` → `2`.
+**1.1 Rewrite `sanitize()` (3.2)** — ✅ **done.** Moved to `TranscriptSanitizer`, which only
+removes a bracketed span when there's positive evidence it's an annotation: a `<|...|>` control
+token, contents matching a known non-speech phrase, a SHOUTED_TAG in square brackets, or the
+span being the entire transcript. Everything else is kept — a stray `[MUSIC]` is a visible
+annoyance the user can delete, while silently dropping half a sentence is a bug they may never
+notice.
 
-**1.2 Add a test target** — `Tests/parrotTests/`. Requires splitting the SPM manifest into a
-`parrotCore` library target plus a thin `parrot` executable, since you can't link a test
-target against an executable. Cover `sanitize` (with the table from notes §3.2 as fixtures),
-`computeRMS`, `WAVWriter` round-trip, `ModelRegistry` lookup.
+**1.2 Add a test target** — ✅ **done**, `Tests/parrotTests/`. No library split was needed:
+SwiftPM links a test target against an executable target fine. Seeded with every regression
+case from notes §3.2.
 
 **1.3 Minimum-duration + energy gate (3.5)** — drop captures under ~300 ms or below an RMS
 floor before they reach Whisper. `computeRMS` is already being calculated and thrown away at
@@ -150,8 +151,9 @@ under launchd, surface a user-visible notification, and exit in a way that doesn
 
 ## Phase 6 — maintainability
 
-**6.1 CI on pull requests** — today `.github/workflows/release.yml` only fires on `v*` tags,
-so nothing is ever built or tested before a release. Add a build + test workflow on push/PR.
+**6.1 CI on pull requests** — ✅ **done**, `.github/workflows/ci.yml` builds and tests on
+push to master and on PRs. Note the fork gate still applies to `push` events, so PR runs are
+the reliable trigger until workflows are enabled in the Actions tab.
 
 **6.2 `--version`** — doesn't exist. Wire it to a generated version string stamped at build
 time so bug reports are actionable.

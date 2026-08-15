@@ -202,7 +202,7 @@ That trades a hot mic (battery, and the mic-in-use indicator stays lit) for corr
 If the always-hot mic is unacceptable, the weaker fix is to move `start()` off the main
 thread and accept the clipping.
 
-**3.2 — `sanitize()` deletes legitimate dictated text. [measured]**
+**3.2 — `sanitize()` deletes legitimate dictated text. [measured]** ✅ **FIXED**
 
 `WhisperKitTranscriber.sanitize` (`WhisperKitTranscriber.swift:40`) strips *any* text between
 `[]`, `()`, `<||>`, or a pair of `*`. Actual outputs:
@@ -366,7 +366,7 @@ conventionally it goes first.
 
 ### Testing
 
-No `Tests/` directory and no test target. `sanitize`, `computeRMS`, `WAVWriter`, and
+✅ **FIXED** — `Tests/parrotTests/` now covers the sanitizer. Previously: `sanitize`, `computeRMS`, `WAVWriter`, and
 `ModelRegistry` are pure and would be trivial to cover — and `sanitize` in particular is
 where a regression just shipped (3.2).
 

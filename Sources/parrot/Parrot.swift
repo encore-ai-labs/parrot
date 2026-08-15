@@ -223,21 +223,24 @@ struct Run: ParsableCommand {
         } else if let saved = config.lowercase {
             lowercaseMode = saved
         } else if TerminalSelect.isAvailable {
-            let answer = TerminalSelect.confirm(
+            // "Keep capitalization" is both first and preselected — the default
+            // shouldn't be the second thing you read.
+            let picked = TerminalSelect.choose(
                 title: "lowercase mode",
-                yes: TerminalSelect.Option(
-                    label: "lowercase everything",
-                    detail: "\"hey there\"",
-                    warning: nil
-                ),
-                no: TerminalSelect.Option(
-                    label: "keep Whisper's capitalization",
-                    detail: "\"Hey there.\"",
-                    warning: nil
-                ),
-                defaultYes: false
+                options: [
+                    TerminalSelect.Option(
+                        label: "keep capitalization",
+                        detail: "\"Hey there.\"  (default)"
+                    ),
+                    TerminalSelect.Option(
+                        label: "lowercase everything",
+                        detail: "\"hey there.\""
+                    ),
+                ],
+                initial: 0,
+                footer: "↑↓ to move · enter to choose"
             )
-            lowercaseMode = answer ?? false
+            lowercaseMode = picked == 1
             config.lowercase = lowercaseMode
             configDirty = true
         } else {

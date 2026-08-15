@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build + test
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: swift version
+        run: swift --version
+
+      - name: cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-test-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-test-${{ runner.os }}-
+
+      - name: build
+        run: swift build -c debug
+
+      - name: test
+        run: swift test

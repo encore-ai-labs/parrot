@@ -90,7 +90,7 @@ remain authoritative. Use `--no-auto-paragraphs` for one run or save the prefere
 | Say | Markdown result |
 |---|---|
 | `new paragraph`, `new line` | Paragraph or line break |
-| `bullet point`, `new bullet`, `next bullet` | `- ` list item |
+| `bullet point(s)`, `new bullet`, `next bullet (point)` | `- ` list item |
 | `numbered item`, `next numbered item` | `1. ` list item |
 | `checkbox`, `new task`, `task item` | `- [ ] ` task |
 | `heading`, `heading two` | `## ` heading |
@@ -115,6 +115,14 @@ To speak any command literally, prefix it with `literal`—for example, `literal
 commands in a saved snippet body remain untouched. Normal dictation stays unchanged unless note
 mode is active. Use `--dictation` for a one-run override when notes are saved as your default.
 The corrected Markdown is what gets pasted, routed, and saved to local history.
+
+To select the processing mode for just one live capture, begin with `note mode` (or `notes
+mode`) or `dictation mode`. Parrot removes that leading trigger and processes the remaining
+words in the requested mode, so you can say “note mode, bullet point ship the release” without
+changing settings or restarting the daemon. Triggers are prefix-only to protect ordinary prose;
+later mentions of “note mode” stay untouched. Say `literal note mode ...` to dictate the leading
+words themselves. This switch is deterministic, adds no model or network request, and does not
+apply when transcribing stored audio/video files.
 
 ### Local speech cleanup
 
@@ -454,7 +462,8 @@ Parrot reports model-load time, every inference time, median latency, and real-t
 (RTF; lower is faster). With a reference it also reports word-error rate (WER; lower is more
 accurate). The benchmark uses your saved vocabulary and snippets by default; pass
 `--no-vocabulary` and `--no-snippets` for a clean model comparison, or `--notes` to benchmark
-the complete local note-formatting path.
+the complete local note-formatting path. Add `--spoken-mode-trigger` to benchmark the live
+leading mode-selection path; JSON records both the requested and effective mode.
 Use `--json` to save comparable machine-readable reports. Download each candidate first with
 `parrot models download <id>` so network time is not included in model-load time.
 For reproducible tests or managed deployments, `PARROT_MODELS_DIRECTORY` overrides only the

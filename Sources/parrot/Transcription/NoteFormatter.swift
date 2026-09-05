@@ -17,7 +17,12 @@ enum NoteFormatter {
     private static let commands = [
         Command(phrases: ["new paragraph"], marker: "\u{E000}"),
         Command(phrases: ["new line"], marker: "\u{E001}"),
-        Command(phrases: ["bullet point", "new bullet", "next bullet"], marker: "\u{E002}"),
+        Command(
+            phrases: [
+                "bullet point", "bullet points", "new bullet", "next bullet", "next bullet point",
+            ],
+            marker: "\u{E002}"
+        ),
         Command(
             phrases: ["numbered item", "new numbered item", "next numbered item"],
             marker: "\u{E003}"

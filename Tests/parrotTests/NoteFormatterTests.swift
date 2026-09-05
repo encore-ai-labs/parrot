@@ -25,6 +25,15 @@ final class NoteFormatterTests: XCTestCase {
         )
     }
 
+    func testAcceptsCommonBulletRecognitionVariants() {
+        XCTAssertEqual(
+            NoteFormatter.format(
+                "Bullet points Ship the release. Next bullet point Tell the team."
+            ),
+            "- Ship the release.\n- Tell the team."
+        )
+    }
+
     func testMarkdownHeadings() {
         XCTAssertEqual(
             NoteFormatter.format(

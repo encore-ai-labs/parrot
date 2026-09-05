@@ -580,15 +580,37 @@ struct Run: ParsableCommand {
                             "cleanup skipped for detected language \(transcription.language)\n".utf8
                         ))
                     }
-                    let text = TranscriptProcessing.process(
+                    let spokenSelection = SpokenModeTrigger.resolve(
                         transcription.text,
-                        mode: modeForCapture,
+                        fallbackMode: modeForCapture
+                    )
+                    let processingSegments: [TimedTranscriptSegment]
+                    if defaults.automaticParagraphs,
+                       spokenSelection.mode == .notes,
+                       modeForCapture != .notes {
+                        processingSegments = AudioPauseDetector.refining(
+                            transcription.segments,
+                            samples: samples,
+                            sampleRate: Double(sampleRate)
+                        )
+                    } else {
+                        processingSegments = transcription.segments
+                    }
+                    let processed = TranscriptProcessing.processWithSpokenModeTrigger(
+                        transcription.text,
+                        fallbackMode: modeForCapture,
                         lowercase: lowercaseMode,
                         cleanup: applyCleanup,
                         automaticParagraphs: defaults.automaticParagraphs,
-                        segments: transcription.segments,
+                        segments: processingSegments,
                         snippets: snippetExpander
                     )
+                    let text = processed.text
+                    if processed.usedSpokenModeTrigger {
+                        FileHandle.standardError.write(Data(
+                            "↪ spoken mode · \(processed.mode.rawValue)\n".utf8
+                        ))
+                    }
                     let elapsed = Date().timeIntervalSince(started)
                     let completionLog = logTranscripts
                         ? String(format: "→ %.2fs · %@\n", elapsed, text)

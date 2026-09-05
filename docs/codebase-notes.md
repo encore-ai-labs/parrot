@@ -331,6 +331,14 @@ suffixes while preserving list/task/heading prefixes. Literal escaping and full 
 prevent unintended edits; the undo stack stores only removed suffixes and is capped at 32. Edit phrases
 do not consume prompt tokens, so the feature adds no model or network step.
 
+**3.22 — Switching note formatting for one thought requires a restart or app rule.** ✅ **FIXED**
+
+An exact leading `note(s) mode` or `dictation mode` trigger now selects processing for one live
+capture and is stripped before delivery. Prefix-only matching, `literal` escaping, and stored-media
+bypass prevent surprising content loss. The path is a static local regex; it neither adds prompt
+tokens nor reruns inference. Triggered note captures retain pause-aware paragraph refinement using
+the already captured PCM.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

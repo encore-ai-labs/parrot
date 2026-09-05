@@ -423,6 +423,12 @@ enum FileTranscriptionPlan {
 }
 
 enum TranscriptProcessing {
+    struct Result: Equatable {
+        let text: String
+        let mode: DictationMode
+        let usedSpokenModeTrigger: Bool
+    }
+
     static func process(
         _ raw: String,
         mode: DictationMode,
@@ -432,15 +438,77 @@ enum TranscriptProcessing {
         segments: [TimedTranscriptSegment] = [],
         snippets: SnippetExpander
     ) -> String {
-        let structured = mode == .notes && automaticParagraphs
+        processResult(
+            raw,
+            mode: mode,
+            lowercase: lowercase,
+            cleanup: cleanup,
+            automaticParagraphs: automaticParagraphs,
+            segments: segments,
+            snippets: snippets,
+            spokenModeTrigger: false
+        ).text
+    }
+
+    /// Live dictation may opt into an exact leading voice trigger without
+    /// changing file transcription or other callers that process stored media.
+    static func processWithSpokenModeTrigger(
+        _ raw: String,
+        fallbackMode: DictationMode,
+        lowercase: Bool,
+        cleanup: Bool = false,
+        automaticParagraphs: Bool = false,
+        segments: [TimedTranscriptSegment] = [],
+        snippets: SnippetExpander
+    ) -> Result {
+        processResult(
+            raw,
+            mode: fallbackMode,
+            lowercase: lowercase,
+            cleanup: cleanup,
+            automaticParagraphs: automaticParagraphs,
+            segments: segments,
+            snippets: snippets,
+            spokenModeTrigger: true
+        )
+    }
+
+    private static func processResult(
+        _ raw: String,
+        mode fallbackMode: DictationMode,
+        lowercase: Bool,
+        cleanup: Bool,
+        automaticParagraphs: Bool,
+        segments: [TimedTranscriptSegment],
+        snippets: SnippetExpander,
+        spokenModeTrigger: Bool
+    ) -> Result {
+        let selection = spokenModeTrigger
+            ? SpokenModeTrigger.resolve(raw, fallbackMode: fallbackMode)
+            : SpokenModeTrigger.Selection(
+                text: raw,
+                mode: fallbackMode,
+                wasTriggered: false
+            )
+        // Format pauses against the original transcript so the timed segments
+        // still reconstruct it exactly. Strip the trigger from the structured
+        // result afterward; its matcher also accepts inserted line breaks.
+        let structured = selection.mode == .notes && automaticParagraphs
             ? AutomaticParagraphFormatter.format(raw, segments: segments)
             : raw
-        let cleaned = cleanup ? SpeechCleanup.clean(structured) : structured
-        let formatted = mode == .notes ? NoteFormatter.format(cleaned) : cleaned
-        let edited = mode == .notes ? SpokenEditProcessor.apply(formatted) : formatted
+        let selectedText = spokenModeTrigger
+            ? SpokenModeTrigger.resolve(structured, fallbackMode: fallbackMode).text
+            : structured
+        let cleaned = cleanup ? SpeechCleanup.clean(selectedText) : selectedText
+        let formatted = selection.mode == .notes ? NoteFormatter.format(cleaned) : cleaned
+        let edited = selection.mode == .notes ? SpokenEditProcessor.apply(formatted) : formatted
         let cased = lowercase ? edited.lowercased() : edited
-        return snippets.applying(to: cased)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return Result(
+            text: snippets.applying(to: cased)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            mode: selection.mode,
+            usedSpokenModeTrigger: selection.wasTriggered
+        )
     }
 
     static func processSegments(

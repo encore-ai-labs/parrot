@@ -34,6 +34,12 @@ struct ModelBenchmark: ParsableCommand {
     var notes = false
 
     @Flag(
+        name: .customLong("spoken-mode-trigger"),
+        help: "Apply the same leading note/dictation mode trigger used by live capture."
+    )
+    var spokenModeTrigger = false
+
+    @Flag(
         name: .customLong("auto-paragraphs"),
         help: "Include pause-aware paragraphs in a note-mode benchmark."
     )
@@ -97,15 +103,16 @@ struct ModelBenchmark: ParsableCommand {
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
         let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
         let snippetExpander = SnippetExpander(entries: snippets.entries)
-        let useAutomaticParagraphs = notes && (
+        let paragraphPreference = (
             automaticParagraphs || noAutomaticParagraphs
                 ? automaticParagraphs
                 : config.automaticParagraphs ?? true
         )
+        let transcriberAutomaticParagraphs = notes && paragraphPreference
         let transcriber = TranscriberFactory.make(
             model: model,
             language: canonicalLanguage,
-            automaticParagraphs: useAutomaticParagraphs,
+            automaticParagraphs: transcriberAutomaticParagraphs,
             vocabulary: vocabulary,
             additionalPromptTerms: snippets.promptTerms,
             notePromptTerms: NoteFormatter.promptTerms
@@ -114,7 +121,10 @@ struct ModelBenchmark: ParsableCommand {
         if !json {
             print("model    \(model.id)")
             print("language \(canonicalLanguage)")
-            print("paragraphs \(useAutomaticParagraphs ? "on" : "off")")
+            let paragraphs = paragraphPreference && (notes || spokenModeTrigger)
+                ? "on"
+                : "off"
+            print("paragraphs \(paragraphs)")
             print("audio    \(audioURL.path)")
             print(String(format: "duration %.2fs", audioSeconds))
         }
@@ -129,6 +139,7 @@ struct ModelBenchmark: ParsableCommand {
         var timings: [Double] = []
         var transcript = ""
         var detectedLanguage = canonicalLanguage
+        var effectiveMode: DictationMode = notes ? .notes : .dictation
         for index in 1...runs {
             let started = ContinuousClock.now
             let mode: DictationMode = notes ? .notes : .dictation
@@ -136,14 +147,44 @@ struct ModelBenchmark: ParsableCommand {
                 try await transcriber.transcribe(samples, mode: mode)
             }
             detectedLanguage = result.language
-            transcript = TranscriptProcessing.process(
-                result.text,
-                mode: mode,
-                lowercase: false,
-                automaticParagraphs: useAutomaticParagraphs,
-                segments: result.segments,
-                snippets: snippetExpander
-            )
+            if spokenModeTrigger {
+                let selection = SpokenModeTrigger.resolve(
+                    result.text,
+                    fallbackMode: mode
+                )
+                let segments: [TimedTranscriptSegment]
+                if paragraphPreference,
+                   selection.mode == .notes,
+                   mode != .notes {
+                    segments = AudioPauseDetector.refining(
+                        result.segments,
+                        samples: samples,
+                        sampleRate: AudioCapture.targetSampleRate
+                    )
+                } else {
+                    segments = result.segments
+                }
+                let processed = TranscriptProcessing.processWithSpokenModeTrigger(
+                    result.text,
+                    fallbackMode: mode,
+                    lowercase: false,
+                    automaticParagraphs: paragraphPreference,
+                    segments: segments,
+                    snippets: snippetExpander
+                )
+                transcript = processed.text
+                effectiveMode = processed.mode
+            } else {
+                transcript = TranscriptProcessing.process(
+                    result.text,
+                    mode: mode,
+                    lowercase: false,
+                    automaticParagraphs: transcriberAutomaticParagraphs,
+                    segments: result.segments,
+                    snippets: snippetExpander
+                )
+                effectiveMode = mode
+            }
             let seconds = elapsedSeconds(since: started)
             timings.append(seconds)
             if !json {
@@ -162,7 +203,9 @@ struct ModelBenchmark: ParsableCommand {
             language: detectedLanguage,
             modelSizeMB: model.sizeMB,
             noteMode: notes,
-            automaticParagraphs: useAutomaticParagraphs,
+            spokenModeTrigger: spokenModeTrigger,
+            effectiveMode: effectiveMode.rawValue,
+            automaticParagraphs: effectiveMode == .notes && paragraphPreference,
             vocabularyTerms: vocabulary.entries.count,
             snippets: snippets.entries.count,
             audioPath: audioURL.path,
@@ -235,6 +278,8 @@ struct ModelBenchmarkReport: Codable {
     let language: String
     let modelSizeMB: Int
     let noteMode: Bool
+    let spokenModeTrigger: Bool
+    let effectiveMode: String
     let automaticParagraphs: Bool
     let vocabularyTerms: Int
     let snippets: Int

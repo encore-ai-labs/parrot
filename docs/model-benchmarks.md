@@ -61,6 +61,21 @@ Adaptive pause detection added 5.8 ms (1.6%) to the median while preserving ever
 word. The formatter-only performance test processes a 200-segment note 100 times in roughly
 25 ms total on this Mac, or about 0.25 ms per long note. Plain dictation bypasses both passes.
 
+## Spoken one-capture mode cost
+
+A 3.63-second `say` clip beginning “note mode, bullet point...” was measured for 20 warmed
+English Base runs on the same optimized binary. The decoder stayed in plain dictation mode in
+both cases; only the deterministic post-transcription trigger path changed.
+
+| Trigger processing | Median | Realtime | WER against intended output | Output |
+|---|---:|---:|---:|---|
+| Off | 0.129 s | 28.2x | 0.0% | Spoken control words retained |
+| On | 0.125 s | 29.0x | 0.0% | Markdown bullet/task; trigger removed |
+
+The 3.8 ms difference favored the trigger run and is ordinary inference variance, so this sample
+shows no measurable trigger overhead. The static matcher adds no decoder prompt or second model
+pass; its focused long-input test exits in well under a millisecond.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:
@@ -84,6 +99,11 @@ parrot models benchmark parakeet-unified.en \
 
 Use `--json` for machine-readable results. Model download time is deliberately excluded from
 load time; download each candidate before benchmarking it.
+
+To measure the one-capture spoken mode switch, begin the audio with `note mode` or `dictation
+mode` and add `--spoken-mode-trigger`. The JSON report records `noteMode` as the decoder mode and
+`effectiveMode` as the post-trigger processing mode, making prompt and processing differences
+explicit.
 
 For multilingual models, benchmark both a fixed language and automatic detection. Fixed
 language is the latency baseline because it skips detection; `auto` measures the real cost for

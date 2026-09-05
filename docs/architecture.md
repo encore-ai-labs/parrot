@@ -301,6 +301,19 @@ Edit phrases do not consume Whisper prompt tokens, so recognition uses the exact
 existing note mode. There is no extra model, semantic rewrite, application context, network request,
 or unbounded memory growth.
 
+### `SpokenModeTrigger`
+
+Live captures may begin with `note mode`, `notes mode`, or `dictation mode` to override the
+fallback/app-selected processing mode for that capture only. The static prefix matcher strips an
+optional separator, supports `literal` escaping, and never scans for suffix or mid-sentence
+matches. Stored-media transcription bypasses it so source recordings remain authoritative.
+
+Mode resolution happens after recognition but before cleanup and formatting. Pause-aware
+paragraphs are calculated against the original transcript and timed segments before the leading
+trigger is removed, preserving their reconstruction invariant. A dictation-to-notes switch refines
+pause boundaries from the already captured PCM only when automatic paragraphs are enabled. No
+extra decoding pass, prompt tokens, model, context capture, or network request is added.
+
 ### `SnippetLibrary` / `SnippetExpander`
 
 Reusable multiline text lives in owner-readable `~/.config/parrot/snippets.json`. The explicit
@@ -424,9 +437,10 @@ The registry is the single source of truth for: download URLs, file names, sizes
 16 kHz conversion path, warms one registered model through `TranscriberFactory`, and repeats
 inference on the same samples. It reports load time separately from median inference latency and real-time
 factor. An optional reference transcript adds locally computed, case/punctuation-insensitive
-word-error rate. JSON output includes the hardware model, macOS version, exact run timings,
-note-mode and automatic-paragraph state, and vocabulary count so results remain comparable. No
-audio, reference, or transcript leaves the Mac.
+word-error rate. `--spoken-mode-trigger` exercises the live leading-trigger path. JSON output
+includes the hardware model, macOS version, exact run timings, requested/effective mode,
+automatic-paragraph state, and vocabulary count so results remain comparable. No audio,
+reference, or transcript leaves the Mac.
 
 ### Model storage and download progress
 

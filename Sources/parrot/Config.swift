@@ -41,6 +41,9 @@ struct Config: Codable, Equatable {
     /// Add one boundary space after cursor-injected text. This never changes
     /// history, journal, command, or stored-file output.
     var spaceAfterPaste: Bool?
+    /// Keep the microphone warm for a 300 ms pre-roll. Turning this off avoids
+    /// an idle mic session at the cost of clipping the start of captures.
+    var warmMicrophone: Bool?
 
     static var directory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -128,6 +131,7 @@ struct RuntimeDefaults: Equatable {
     let cleanup: Bool
     let automaticParagraphs: Bool
     let spaceAfterPaste: Bool
+    let warmMicrophone: Bool
 
     static func resolve(
         config: Config,
@@ -142,6 +146,7 @@ struct RuntimeDefaults: Equatable {
         cleanupOverride: Bool? = nil,
         automaticParagraphsOverride: Bool? = nil,
         spaceAfterPasteOverride: Bool? = nil,
+        warmMicrophoneOverride: Bool? = nil,
         recommendedModel: String
     ) throws -> RuntimeDefaults {
         guard !(notes && dictation) else {
@@ -193,7 +198,8 @@ struct RuntimeDefaults: Equatable {
             automaticParagraphs: automaticParagraphsOverride
                 ?? config.automaticParagraphs
                 ?? true,
-            spaceAfterPaste: spaceAfterPasteOverride ?? config.spaceAfterPaste ?? true
+            spaceAfterPaste: spaceAfterPasteOverride ?? config.spaceAfterPaste ?? true,
+            warmMicrophone: warmMicrophoneOverride ?? config.warmMicrophone ?? true
         )
     }
 }

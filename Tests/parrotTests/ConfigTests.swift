@@ -33,6 +33,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.cleanup)
         XCTAssertNil(config.automaticParagraphs)
         XCTAssertNil(config.spaceAfterPaste)
+        XCTAssertNil(config.warmMicrophone)
         XCTAssertEqual(permissions(at: root), 0o700)
         XCTAssertEqual(permissions(at: url), 0o600)
     }
@@ -50,6 +51,7 @@ final class ConfigTests: XCTestCase {
         config.cleanup = true
         config.automaticParagraphs = false
         config.spaceAfterPaste = false
+        config.warmMicrophone = false
 
         try config.write(to: url)
 
@@ -98,7 +100,8 @@ final class ConfigTests: XCTestCase {
                 deliveryCommand: nil,
                 cleanup: false,
                 automaticParagraphs: true,
-                spaceAfterPaste: true
+                spaceAfterPaste: true,
+                warmMicrophone: true
             )
         )
         XCTAssertEqual(
@@ -119,7 +122,8 @@ final class ConfigTests: XCTestCase {
                 deliveryCommand: nil,
                 cleanup: false,
                 automaticParagraphs: true,
-                spaceAfterPaste: true
+                spaceAfterPaste: true,
+                warmMicrophone: true
             )
         )
     }
@@ -332,6 +336,41 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(overridden.spaceAfterPaste)
     }
 
+    func testRuntimeDefaultsKeepMicWarmByDefaultAndAllowOverrides() throws {
+        var config = Config()
+        let builtIn = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertTrue(builtIn.warmMicrophone)
+
+        config.warmMicrophone = false
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertFalse(saved.warmMicrophone)
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            warmMicrophoneOverride: true,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertTrue(overridden.warmMicrophone)
+    }
+
     func testRuntimeDefaultsRejectConflictingModeOverrides() {
         XCTAssertThrowsError(
             try RuntimeDefaults.resolve(
@@ -352,7 +391,7 @@ final class ConfigTests: XCTestCase {
                 "set", "--hotkey", "ralt", "--model", "whisper-small.en",
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
-                "--no-space-after-paste",
+                "--no-space-after-paste", "--cold-mic",
             ]) as? Settings.Set
         )
         XCTAssertEqual(set.hotkey, "ralt")
@@ -363,6 +402,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(set.cleanup)
         XCTAssertTrue(set.automaticParagraphs)
         XCTAssertTrue(set.noSpaceAfterPaste)
+        XCTAssertTrue(set.coldMicrophone)
         XCTAssertTrue(try Settings.parseAsRoot(["reset"]) is Settings.Reset)
 
         let paste = try XCTUnwrap(
@@ -398,6 +438,9 @@ final class ConfigTests: XCTestCase {
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--space-after-paste", "--no-space-after-paste",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--warm-mic", "--cold-mic",
         ]))
     }
 

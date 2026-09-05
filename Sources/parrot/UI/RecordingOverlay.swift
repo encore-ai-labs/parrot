@@ -1,5 +1,52 @@
 import AppKit
+import Foundation
 import SwiftUI
+
+/// Keeps the latest meter sample while allowing at most one scheduled UI hop.
+/// Audio buffers can arrive faster than the main actor renders; stale levels
+/// have no value, so bounded latest-wins delivery avoids an unbounded task tail.
+final class AudioLevelCoalescer: @unchecked Sendable {
+    typealias Scheduler = (DispatchWorkItem) -> Void
+
+    private let lock = NSLock()
+    private let schedule: Scheduler
+    private let deliver: (Float) -> Void
+    private var latest: Float?
+    private var deliveryPending = false
+
+    init(
+        schedule: @escaping Scheduler,
+        deliver: @escaping (Float) -> Void
+    ) {
+        self.schedule = schedule
+        self.deliver = deliver
+    }
+
+    func submit(_ level: Float) {
+        lock.lock()
+        latest = level
+        guard !deliveryPending else {
+            lock.unlock()
+            return
+        }
+        deliveryPending = true
+        lock.unlock()
+
+        schedule(DispatchWorkItem { [weak self] in
+            self?.drain()
+        })
+    }
+
+    private func drain() {
+        lock.lock()
+        let level = latest
+        latest = nil
+        deliveryPending = false
+        lock.unlock()
+
+        if let level { deliver(level) }
+    }
+}
 
 /// Borderless, click-through pill near the bottom of the active screen.
 /// Driven by the daemon's hotkey + transcription lifecycle.
@@ -12,8 +59,22 @@ final class RecordingOverlay {
     }
 
     private var window: NSPanel?
-    private let model = OverlayModel()
+    private let model: OverlayModel
+    private let levelCoalescer: AudioLevelCoalescer
     private var hideWorkItem: DispatchWorkItem?
+
+    init() {
+        let model = OverlayModel()
+        self.model = model
+        levelCoalescer = AudioLevelCoalescer(
+            schedule: { DispatchQueue.main.async(execute: $0) },
+            deliver: { level in
+                MainActor.assumeIsolated {
+                    model.pushLevel(level)
+                }
+            }
+        )
+    }
 
     func show(_ state: State) {
         hideWorkItem?.cancel()
@@ -52,9 +113,7 @@ final class RecordingOverlay {
 
     /// Push a new audio level (0…~1). Safe to call from any thread.
     nonisolated func pushLevel(_ level: Float) {
-        Task { @MainActor in
-            self.model.pushLevel(level)
-        }
+        levelCoalescer.submit(level)
     }
 
     private func ensureWindow() {
@@ -106,6 +165,7 @@ final class OverlayModel: ObservableObject {
     @Published var levels: [Float] = Array(repeating: 0, count: barCount)
 
     func pushLevel(_ level: Float) {
+        guard state == .recording else { return }
         let shaped = min(1.0, sqrt(max(0, level)) * 3.4)
         var next = [Float]()
         next.reserveCapacity(Self.barCount)

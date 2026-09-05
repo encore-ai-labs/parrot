@@ -370,8 +370,10 @@ the always-hot path no longer materializes an `Array` per buffer. The short `NSL
 to synchronize buffer ownership with hotkey start/stop, and capture growth is amortized only
 while a user is actively recording.
 
-**3.16** — `pushLevel` spawns a `Task { @MainActor }` per audio buffer (~12/s at 4096 frames
-@ 48 kHz) with no coalescing.
+**3.16** ✅ **FIXED** — the warm pre-roll path does no RMS or UI work while idle. During an
+active capture, `AudioLevelCoalescer` uses latest-wins semantics with at most one scheduled
+main-queue delivery, so audio buffers cannot accumulate an unbounded task tail. Warm/cold
+capture policy is also persistent for LaunchAgent users, with explicit one-run overrides.
 
 **3.17** ✅ **FIXED** — `hotkeyCallback` subscribed to `keyDown`/`keyUp` purely for `--debug-hotkey`, then
 `event.copy()`s and main-queue-hops **every keystroke on the system** — including in password

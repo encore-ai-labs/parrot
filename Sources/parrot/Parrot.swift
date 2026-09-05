@@ -136,6 +136,12 @@ struct Run: ParsableCommand {
     )
     var coldMic: Bool = false
 
+    @Flag(
+        name: .long,
+        help: "Keep the mic warm for a 300 ms pre-roll, overriding a saved cold-mic setting."
+    )
+    var warmMic: Bool = false
+
     @Flag(name: .long, help: "Lowercase all transcribed text.")
     var lowercase: Bool = false
 
@@ -231,6 +237,9 @@ struct Run: ParsableCommand {
                 "pass at most one of --space-after-paste or --no-space-after-paste"
             )
         }
+        guard !(warmMic && coldMic) else {
+            throw ValidationError("pass at most one of --warm-mic or --cold-mic")
+        }
         if let journal {
             _ = try MarkdownJournal.resolveURL(journal)
         }
@@ -286,6 +295,7 @@ struct Run: ParsableCommand {
                 spaceAfterPasteOverride: spaceAfterPaste || noSpaceAfterPaste
                     ? spaceAfterPaste
                     : nil,
+                warmMicrophoneOverride: warmMic || coldMic ? warmMic : nil,
                 recommendedModel: recommendedModel
             )
         } catch {
@@ -521,7 +531,7 @@ struct Run: ParsableCommand {
         defer { NotificationCenter.default.removeObserver(terminationObserver) }
 
         let monitor = HotkeyMonitor(hotkey: chosenHotkey, debug: debugHotkey)
-        let capture = AudioCapture(device: chosenDevice, usePreRoll: !coldMic)
+        let capture = AudioCapture(device: chosenDevice, usePreRoll: defaults.warmMicrophone)
         capture.onStatus = { message in
             FileHandle.standardError.write(Data("\(message)\n".utf8))
         }
@@ -979,6 +989,7 @@ struct Run: ParsableCommand {
                 : "local command ← transcript on stdin"),
             cleanup: defaults.cleanup,
             automaticParagraphs: defaults.automaticParagraphs,
+            warmMicrophone: defaults.warmMicrophone,
             systemHotkeyAction: systemHotkeyAction
         ))
         var updateInProgress = false

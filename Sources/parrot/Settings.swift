@@ -37,6 +37,10 @@ struct Settings: ParsableCommand {
                 "paste space  \(defaults.spaceAfterPaste ? "on" : "off")"
                     + "\(config.spaceAfterPaste == nil ? "  (default)" : "")"
             )
+            print(
+                "capture      \(defaults.warmMicrophone ? "warm · 300ms pre-roll" : "cold · opens on press")"
+                    + "\(config.warmMicrophone == nil ? "  (default)" : "")"
+            )
             if let journalPath = defaults.journalPath {
                 print("delivery    journal → \(StartupTUI.displayPath(URL(fileURLWithPath: journalPath)))")
             } else if defaults.deliveryCommand != nil {
@@ -110,11 +114,24 @@ struct Settings: ParsableCommand {
         )
         var noSpaceAfterPaste: Bool = false
 
+        @Flag(
+            name: .customLong("warm-mic"),
+            help: "Keep the microphone warm for a 300 ms pre-roll."
+        )
+        var warmMicrophone: Bool = false
+
+        @Flag(
+            name: .customLong("cold-mic"),
+            help: "Open the microphone only while recording; capture starts may clip."
+        )
+        var coldMicrophone: Bool = false
+
         func validate() throws {
             guard hotkey != nil || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
-                    || spaceAfterPaste || noSpaceAfterPaste else {
+                    || spaceAfterPaste || noSpaceAfterPaste
+                    || warmMicrophone || coldMicrophone else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
@@ -134,6 +151,9 @@ struct Settings: ParsableCommand {
                 throw ValidationError(
                     "pass at most one of --space-after-paste or --no-space-after-paste"
                 )
+            }
+            guard !(warmMicrophone && coldMicrophone) else {
+                throw ValidationError("pass at most one of --warm-mic or --cold-mic")
             }
             if let hotkey, Hotkey.parse(hotkey) == nil {
                 throw ValidationError("unknown hotkey '\(hotkey)'; run `parrot hotkeys`")
@@ -159,7 +179,8 @@ struct Settings: ParsableCommand {
             guard hotkey != nil || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
-                    || spaceAfterPaste || noSpaceAfterPaste else {
+                    || spaceAfterPaste || noSpaceAfterPaste
+                    || warmMicrophone || coldMicrophone else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
@@ -211,6 +232,9 @@ struct Settings: ParsableCommand {
             if spaceAfterPaste || noSpaceAfterPaste {
                 config.spaceAfterPaste = spaceAfterPaste
             }
+            if warmMicrophone || coldMicrophone {
+                config.warmMicrophone = warmMicrophone
+            }
             let effectiveModelID = config.model ?? ModelRegistry.recommended()?.id ?? ""
             guard let effectiveModel = ModelRegistry.find(effectiveModelID) else {
                 throw ValidationError("no transcription model is available")
@@ -231,7 +255,7 @@ struct Settings: ParsableCommand {
 
     struct Reset: ParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Reset transcription, formatting, and delivery defaults."
+            abstract: "Reset transcription, formatting, capture, and delivery defaults."
         )
 
         func run() throws {
@@ -245,8 +269,9 @@ struct Settings: ParsableCommand {
             config.cleanup = nil
             config.automaticParagraphs = nil
             config.spaceAfterPaste = nil
+            config.warmMicrophone = nil
             try config.write()
-            print("✓ reset transcription, formatting, and delivery defaults")
+            print("✓ reset transcription, formatting, capture, and delivery defaults")
             print("restart a running Parrot daemon to apply the change")
         }
     }

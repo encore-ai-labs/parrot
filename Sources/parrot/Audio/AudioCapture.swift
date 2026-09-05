@@ -592,7 +592,8 @@ extension AudioCapture: AVCaptureAudioDataOutputSampleBufferDelegate {
         )
 
         lock.lock()
-        if recoveryState.isCapturing {
+        let isCapturing = recoveryState.isCapturing
+        if isCapturing {
             captured.append(contentsOf: samples)
         }
         if usePreRoll {
@@ -608,7 +609,11 @@ extension AudioCapture: AVCaptureAudioDataOutputSampleBufferDelegate {
 
         if confirmsRecovery { markAudioFlowing() }
 
-        if let onLevel {
+        // A warm session streams continuously for pre-roll. Waveform work is
+        // useful only during an active capture: skipping RMS here removes an
+        // O(samples) pass and a UI hop from every idle audio buffer.
+        if shouldEmitAudioLevel(isCapturing: isCapturing, hasConsumer: onLevel != nil),
+           let onLevel {
             onLevel(computeRMS(samples))
         }
     }
@@ -681,6 +686,11 @@ enum WAVWriter {
         var x = v.littleEndian
         return Data(bytes: &x, count: 2)
     }
+}
+
+@inline(__always)
+func shouldEmitAudioLevel(isCapturing: Bool, hasConsumer: Bool) -> Bool {
+    isCapturing && hasConsumer
 }
 
 func computeRMS<S: Collection>(_ samples: S) -> Float where S.Element == Float {

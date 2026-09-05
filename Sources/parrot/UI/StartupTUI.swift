@@ -14,6 +14,7 @@ enum StartupTUI {
         let delivery: String
         let cleanup: Bool
         let automaticParagraphs: Bool
+        let warmMicrophone: Bool
         let systemHotkeyAction: String?
     }
 
@@ -44,6 +45,7 @@ enum StartupTUI {
                 " · delivery: \(details.delivery)" +
                 " · cleanup: \(details.cleanup ? "on (English speech)" : "off")" +
                 " · paragraphs: \(details.automaticParagraphs ? "on in notes" : "off")" +
+                " · capture: \(details.warmMicrophone ? "warm/pre-roll" : "cold/on press")" +
                 "\(history)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
@@ -64,6 +66,12 @@ enum StartupTUI {
             details.mode + (details.mode == "notes" ? "  (Markdown + local backtrack)" : "")
         ))
         write(row("microphone", details.microphone))
+        write(row(
+            "capture",
+            details.warmMicrophone
+                ? "warm  ·  300ms pre-roll · zero idle waveform work"
+                : "cold  ·  opens on press · capture starts may clip"
+        ))
         let vocabulary = details.vocabularyCount == 1
             ? "1 term"
             : "\(details.vocabularyCount) terms  (parrot vocabulary)"

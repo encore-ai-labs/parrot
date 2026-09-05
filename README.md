@@ -321,10 +321,12 @@ parrot stats --period week --json    # script-friendly output
 
 That's it. There is no record button, no stop button, no "send" — the key is the whole interface.
 
-> **The mic is held open the whole time parrot runs**, so macOS shows the mic-in-use
+> **By default, the mic is held open the whole time parrot runs**, so macOS shows the mic-in-use
 > indicator continuously. That's what lets a capture start ~300 ms *before* you press the key —
-> no clipped first words. `--cold-mic` opens the mic only while the key is held, at the cost of
-> losing the front of each utterance.
+> no clipped first words. The warm session only maintains the pre-roll while idle: RMS metering
+> and waveform UI work begin with an actual recording. Save `parrot settings set --cold-mic`
+> to open the mic only while the key is held, at the cost of losing the front of each utterance.
+> Use `--cold-mic` for one run or `--warm-mic` to override a saved cold policy.
 
 > **Don't use `parrot install --launch-at-login` yet.** Under `launchd` parrot gets its own
 > TCC identity rather than inheriting your terminal's, and the binary is still ad-hoc signed
@@ -479,7 +481,8 @@ managed model cache location; transcript, config, and legacy-model paths stay un
 
 Parrot stores settings only at `~/.config/parrot/config.json`, with user-only permissions.
 The chosen microphone and lowercase choice are remembered during setup. Hotkey, model,
-language, note/dictation mode, pause-aware paragraphs, cleanup, and delivery can be saved explicitly:
+language, note/dictation mode, pause-aware paragraphs, cleanup, capture policy, and delivery
+can be saved explicitly:
 
 ```sh
 parrot settings
@@ -487,19 +490,21 @@ parrot settings set --hotkey right-option
 parrot settings set --model whisper-small.en --mode notes
 parrot settings set --no-auto-paragraphs # disable the note-mode default
 parrot settings set --cleanup
+parrot settings set --cold-mic     # no idle mic; capture starts may clip
+parrot settings set --warm-mic     # default: fast 300ms pre-roll
 parrot settings set --journal ~/Documents/Notes/inbox.md
 parrot settings set --command '$HOME/bin/route-parrot-note'
 parrot settings set --paste         # restore paste-at-cursor delivery
-parrot settings reset               # resets transcription/formatting/delivery defaults
+parrot settings reset               # resets transcription/formatting/capture/delivery defaults
 parrot daemon restart               # apply to a running LaunchAgent
 ```
 
 Saved defaults are what a LaunchAgent uses, so launch-at-login no longer falls back to Fn or
 plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--model`,
-`--notes`, `--dictation`, `--auto-paragraphs`, `--no-auto-paragraphs`, `--cleanup`, and
-`--no-cleanup` take priority without changing the file. `--journal`, `--command`, and `--paste`
-similarly select one delivery destination without changing saved defaults. `--reconfigure`
-resets the complete first-run configuration.
+`--notes`, `--dictation`, `--auto-paragraphs`, `--no-auto-paragraphs`, `--cleanup`,
+`--no-cleanup`, `--warm-mic`, and `--cold-mic` take priority without changing the file.
+`--journal`, `--command`, and `--paste` similarly select one delivery destination without
+changing saved defaults. `--reconfigure` resets the complete first-run configuration.
 
 ### App-aware modes
 
@@ -597,6 +602,8 @@ parrot --cleanup                       # conservative local filler/false-start c
 parrot --no-cleanup                    # preserve disfluencies for this run
 parrot --input-device brio             # pick a specific mic
 parrot --no-pick-mic                   # skip the mic prompt
+parrot --cold-mic                      # no idle mic; capture starts may clip
+parrot --warm-mic                      # override a saved cold policy for this run
 parrot --lowercase                     # lowercase all transcribed text
 parrot --no-history                    # don't save local Markdown transcript history
 parrot --reconfigure                   # redo first-time setup

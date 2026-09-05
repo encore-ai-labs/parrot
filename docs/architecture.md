@@ -137,8 +137,10 @@ the hotkey silently stops working.
 The session runs continuously from daemon start rather than opening on each keypress, and the
 delegate always writes into a 300 ms circular pre-roll buffer. Pressing the hotkey flips a flag
 and seeds the capture from that ring, so recording begins *before* the key went down. A 1.5 s
-hold yields ~1.78 s of audio. `--cold-mic` reverts to opening the device only while the key is
-held, trading the clipped leading audio for no idle mic indicator.
+hold yields ~1.78 s of audio. Idle warm buffers update only the ring: Parrot skips RMS and UI
+meter delivery until a capture is active. `parrot settings set --cold-mic` persistently reverts
+to opening the device only while the key is held, trading clipped leading audio for no idle mic
+indicator; `--cold-mic` and `--warm-mic` are one-run overrides.
 
 **Why not `AVAudioEngine`.** It opens the *system default* input the instant
 `engine.inputNode` is touched, before any code can rebind it. Bluetooth can't carry A2DP
@@ -406,7 +408,9 @@ Window configuration:
 - `ignoresMouseEvents = true` — clicks pass through to whatever is underneath
 - `collectionBehavior: [.canJoinAllSpaces, .stationary, .ignoresCycle]` — visible across Spaces, doesn't appear in window switcher
 
-Content: a small SwiftUI view hosted via `NSHostingView`, showing a pulsing dot + "listening" text, optionally a live mic level meter fed from `AudioCapture`. Total footprint: ~120pt wide, ~40pt tall, positioned 60pt above the bottom of the screen.
+Content: a compact SwiftUI waveform hosted via `NSHostingView`. `AudioCapture` emits RMS only
+while recording, and `AudioLevelCoalescer` keeps only the newest sample behind at most one
+scheduled main-queue delivery. A slow UI therefore cannot accumulate audio-buffer tasks.
 
 States:
 - **Hidden** — idle. No window on screen.
@@ -471,7 +475,8 @@ flooding LaunchAgent logs.
 
 A `Codable` struct at `~/.config/parrot/config.json`, holding the chosen microphone UID,
 lowercase preference, first-run completion flag, and optional defaults for hotkey, model,
-dictation/notes mode, pause-aware paragraphs, speech cleanup, and Markdown journal destination.
+dictation/notes mode, pause-aware paragraphs, speech cleanup, warm/cold microphone policy,
+cursor spacing, and delivery destination.
 Every field is optional,
 so older config files decode unchanged and nil continues to mean "use the built-in default."
 

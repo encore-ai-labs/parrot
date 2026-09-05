@@ -469,80 +469,42 @@ struct Run: ParsableCommand {
         }
         let history = noHistory ? nil : TranscriptHistory()
         let lifecycle = DictationLifecycle()
+        let recordingRecovery = LastRecordingRecovery()
+        let restoredRecording: Bool
+        do {
+            restoredRecording = try recordingRecovery.restorePending()
+            if restoredRecording {
+                FileHandle.standardError.write(Data(
+                    "↻ recovered an interrupted recording · use the menu bar to retry or forget it\n".utf8
+                ))
+            }
+        } catch {
+            restoredRecording = false
+            FileHandle.standardError.write(Data(
+                "recovery recording unavailable: \(error.localizedDescription)\n".utf8
+            ))
+        }
         var recordingMode = defaults.mode
 
-        let startRecording = {
-            guard let sessionID = lifecycle.start() else { return }
-            let selection = modeController.selection(
-                frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            )
-            recordingMode = selection.mode
-            do {
-                try capture.start()
-                _ = monitor.startExitKeyMonitoring()
-                let automatic = selection.isAutomatic ? " · automatic" : ""
-                FileHandle.standardError.write(Data(
-                    "● recording · \(selection.mode.rawValue)\(automatic)\n".utf8
-                ))
-                MainActor.assumeIsolated {
-                    menuBar.setMode(
-                        selection.mode,
-                        automaticApplicationName: selection.automaticApplicationName
-                    )
-                    overlay?.show(.recording)
-                    menuBar.setRecording(true)
-                }
-            } catch {
-                lifecycle.failStart(sessionID)
-                FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
-            }
-        }
-
-        let stopRecording = {
-            guard let sessionID = lifecycle.beginTranscription() else { return }
-            let modeForCapture = recordingMode
-            monitor.stopExitKeyMonitoring()
-            let samples = capture.stop()
-            MainActor.assumeIsolated {
-                overlay?.show(.transcribing)
-                menuBar.setTranscribing()
-            }
-            let seconds = Double(samples.count) / AudioCapture.targetSampleRate
-            let rms = computeRMS(samples)
-            FileHandle.standardError.write(Data(
-                String(format: "○ captured %.2fs · rms %.4f\n", seconds, rms).utf8
-            ))
-            if dumpWav, !samples.isEmpty {
-                let path = "/tmp/parrot-last.wav"
+        func transcribeAndDeliver(
+            _ samples: [Float],
+            sampleRate: Int,
+            mode modeForCapture: DictationMode,
+            sessionID: Int,
+            audioDuration seconds: TimeInterval
+        ) {
+            Task { [modeForCapture, samples] in
                 do {
-                    try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
-                    FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
+                    try recordingRecovery.stage(samples: samples, sampleRate: sampleRate)
                 } catch {
-                    FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
+                    // The samples are still recoverable in memory and normal
+                    // transcription should never fail solely because the
+                    // crash-safety copy could not be written.
+                    FileHandle.standardError.write(Data(
+                        "recovery save failed: \(error.localizedDescription)\n".utf8
+                    ))
                 }
-            }
-            guard !samples.isEmpty else {
-                _ = lifecycle.finish(sessionID)
-                MainActor.assumeIsolated {
-                    overlay?.hide()
-                    menuBar.setRecording(false)
-                }
-                return
-            }
-            if let rejection = CaptureQuality.rejection(
-                duration: seconds,
-                rms: rms,
-                enabled: !noAudioGate
-            ) {
-                _ = lifecycle.finish(sessionID)
-                FileHandle.standardError.write(Data("× \(rejection.message) — discarded\n".utf8))
-                MainActor.assumeIsolated {
-                    overlay?.hide()
-                    menuBar.setRecording(false)
-                }
-                return
-            }
-            Task { [modeForCapture] in
+
                 let started = Date()
                 do {
                     let raw = try await transcriber.transcribe(samples, mode: modeForCapture)
@@ -587,23 +549,125 @@ struct Run: ParsableCommand {
                         }
                     }
                     let shouldInjectAtCursor = !deliveredToJournal
-                    await MainActor.run {
-                        guard lifecycle.finish(sessionID) else { return }
+                    let didFinish = await MainActor.run { () -> Bool in
+                        guard lifecycle.finish(sessionID) else { return false }
                         if shouldInjectAtCursor {
                             TextInjector.inject(text)
                         }
                         overlay?.hide()
                         menuBar.setRecording(false)
+                        menuBar.setRecordingRecovery(available: true)
+                        menuBar.setRecordingRecoveryBusy(false)
+                        return true
+                    }
+                    if didFinish {
+                        do {
+                            try recordingRecovery.markDelivered()
+                        } catch {
+                            FileHandle.standardError.write(Data(
+                                "recovery cleanup failed: \(error.localizedDescription)\n".utf8
+                            ))
+                        }
                     }
                 } catch {
-                    FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
+                    FileHandle.standardError.write(Data(
+                        "transcription failed: \(error) · retry is available in the menu bar\n".utf8
+                    ))
                     await MainActor.run {
                         guard lifecycle.finish(sessionID) else { return }
                         overlay?.hide()
                         menuBar.setRecording(false)
+                        menuBar.setRecordingRecovery(available: recordingRecovery.hasRecording)
+                        menuBar.setRecordingRecoveryBusy(false)
                     }
                 }
             }
+        }
+
+        let startRecording = {
+            guard let sessionID = lifecycle.start() else { return }
+            let selection = modeController.selection(
+                frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            )
+            recordingMode = selection.mode
+            do {
+                try capture.start()
+                _ = monitor.startExitKeyMonitoring()
+                let automatic = selection.isAutomatic ? " · automatic" : ""
+                FileHandle.standardError.write(Data(
+                    "● recording · \(selection.mode.rawValue)\(automatic)\n".utf8
+                ))
+                MainActor.assumeIsolated {
+                    menuBar.setMode(
+                        selection.mode,
+                        automaticApplicationName: selection.automaticApplicationName
+                    )
+                    overlay?.show(.recording)
+                    menuBar.setRecording(true)
+                    menuBar.setRecordingRecoveryBusy(true)
+                }
+            } catch {
+                lifecycle.failStart(sessionID)
+                FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
+                MainActor.assumeIsolated {
+                    menuBar.setRecordingRecoveryBusy(false)
+                }
+            }
+        }
+
+        let stopRecording = {
+            guard let sessionID = lifecycle.beginTranscription() else { return }
+            let modeForCapture = recordingMode
+            monitor.stopExitKeyMonitoring()
+            let samples = capture.stop()
+            MainActor.assumeIsolated {
+                overlay?.show(.transcribing)
+                menuBar.setTranscribing()
+            }
+            let seconds = Double(samples.count) / AudioCapture.targetSampleRate
+            let rms = computeRMS(samples)
+            FileHandle.standardError.write(Data(
+                String(format: "○ captured %.2fs · rms %.4f\n", seconds, rms).utf8
+            ))
+            if dumpWav, !samples.isEmpty {
+                let path = "/tmp/parrot-last.wav"
+                do {
+                    try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
+                    FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
+                } catch {
+                    FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
+                }
+            }
+            guard !samples.isEmpty else {
+                _ = lifecycle.finish(sessionID)
+                MainActor.assumeIsolated {
+                    overlay?.hide()
+                    menuBar.setRecording(false)
+                    menuBar.setRecordingRecoveryBusy(false)
+                }
+                return
+            }
+            if let rejection = CaptureQuality.rejection(
+                duration: seconds,
+                rms: rms,
+                enabled: !noAudioGate
+            ) {
+                _ = lifecycle.finish(sessionID)
+                FileHandle.standardError.write(Data("× \(rejection.message) — discarded\n".utf8))
+                MainActor.assumeIsolated {
+                    overlay?.hide()
+                    menuBar.setRecording(false)
+                    menuBar.setRecordingRecoveryBusy(false)
+                }
+                return
+            }
+            transcribeAndDeliver(
+                samples,
+                sampleRate: Int(AudioCapture.targetSampleRate),
+                mode: modeForCapture,
+                sessionID: sessionID,
+                audioDuration: seconds
+            )
         }
 
         let cancelRecording = {
@@ -614,7 +678,60 @@ struct Run: ParsableCommand {
             MainActor.assumeIsolated {
                 overlay?.hide()
                 menuBar.setRecording(false)
+                menuBar.setRecordingRecoveryBusy(false)
             }
+        }
+
+        let retryLastRecording = {
+            guard let audio = recordingRecovery.samples(),
+                  let sessionID = lifecycle.beginRetry()
+            else { return }
+            let selection = modeController.selection(
+                frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            )
+            let seconds = Double(audio.samples.count) / Double(audio.sampleRate)
+            FileHandle.standardError.write(Data(
+                "↻ retrying last recording · \(selection.mode.rawValue)\n".utf8
+            ))
+            MainActor.assumeIsolated {
+                menuBar.setMode(
+                    selection.mode,
+                    automaticApplicationName: selection.automaticApplicationName
+                )
+                overlay?.show(.transcribing)
+                menuBar.setTranscribing()
+                menuBar.setRecordingRecoveryBusy(true)
+            }
+            transcribeAndDeliver(
+                audio.samples,
+                sampleRate: audio.sampleRate,
+                mode: selection.mode,
+                sessionID: sessionID,
+                audioDuration: seconds
+            )
+        }
+
+        let forgetLastRecording = {
+            do {
+                try recordingRecovery.forget()
+                FileHandle.standardError.write(Data("✓ forgot last recording\n".utf8))
+                MainActor.assumeIsolated {
+                    menuBar.setRecordingRecovery(available: false)
+                }
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "couldn't forget last recording: \(error.localizedDescription)\n".utf8
+                ))
+            }
+        }
+
+        MainActor.assumeIsolated {
+            menuBar.setRecordingRecovery(
+                available: recordingRecovery.hasRecording,
+                restored: restoredRecording,
+                retry: retryLastRecording,
+                forget: forgetLastRecording
+            )
         }
 
         let gesture = HotkeyGestureController { effect in

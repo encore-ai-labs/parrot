@@ -261,8 +261,17 @@ and per-dictation costs bounded even when the local library grows large.
 
 Successful, non-empty transcripts are appended to one Markdown file per local calendar day
 under `~/.local/share/parrot/transcripts/`. The actor serializes writes from overlapping
-transcription tasks. Its directory is forced to mode `0700` and each file to `0600`; audio is
-never stored. `--no-history` disables all history writes for that daemon run.
+transcription tasks. Its directory is forced to mode `0700` and each file to `0600`.
+`--no-history` disables all history writes for that daemon run.
+
+`LastRecordingRecovery` provides one bounded audio recovery slot. Before inference, accepted
+16 kHz mono samples are streamed as a private PCM WAV and atomically renamed to
+`~/.local/share/parrot/recovery/last-recording.wav`; this avoids materializing a second complete
+audio buffer for a long hands-free note. Successful cursor or journal delivery removes the WAV,
+while inference failure or process interruption leaves it for the next launch. The daemon keeps
+the latest successful samples only in memory so **Retry Last Recording** can reuse the warmed
+model and current mode; a new accepted capture replaces them, and **Forget Last Recording**
+clears memory and disk. Recovery therefore does not become an unbounded audio history.
 
 Each new entry includes an HTML-comment marker containing a stable, timestamp-derived ID. The
 comment stays invisible in rendered Markdown while allowing `TranscriptHistoryReader` to parse
@@ -476,22 +485,24 @@ Models are not bundled. New downloads live in
 6. `AudioCapture` flips its capturing flag and seeds from the pre-roll ring (the session is already running). Buffers fill. Overlay animates mic level.
 7. User releases Fn.
 8. `HotkeyMonitor` fires `.released`. Overlay switches to spinner. Status: `transcribing`.
-9. `AudioCapture` stops, hands buffer to active `Transcriber`.
-10. `Transcriber` runs CoreML inference. Returns string.
+9. `AudioCapture` stops and `LastRecordingRecovery` atomically stages one private safety WAV.
+10. The active `Transcriber` runs CoreML inference. Returns string.
 11. `SpeechCleanup` optionally removes conservative disfluencies; then the mode captured at
     recording start selects whether `NoteFormatter` applies explicit Markdown structure commands.
 12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies, which
     are never passed through cleanup or note formatting.
 13. `TextInjector` posts the string at the cursor, or `MarkdownJournal` durably appends it when
     journal delivery is selected. `TranscriptHistory` independently saves the recovery copy.
-14. Overlay hides. Status: `listening`. Loop.
+14. The safety WAV is removed after delivery; the samples remain in memory for one-click retry.
+    Overlay hides. Status: `listening`. Loop.
 15. User hits `^C`. Process exits cleanly.
 
 `DictationLifecycle` serializes this loop as idle → recording → transcribing → idle and assigns
 each capture a generation token. Hotkey presses during transcription are ignored, and only the
 current generation may inject text or reset UI. Before inference, `CaptureQuality` rejects
 captures under 250 ms or below a conservative RMS floor; `--no-audio-gate` is the explicit
-debugging escape hatch.
+debugging escape hatch. Retrying a previous capture enters the same single-flight transcription
+phase directly, so retry cannot overlap a new recording or load a second model.
 
 End-to-end latency target: <500 ms after hotkey release for utterances under 10 seconds, on Apple Silicon.
 

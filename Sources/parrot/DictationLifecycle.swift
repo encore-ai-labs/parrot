@@ -38,6 +38,18 @@ final class DictationLifecycle: @unchecked Sendable {
         return id
     }
 
+    /// Begin inference for audio that was captured previously. This takes the
+    /// same single-flight slot as a live transcription without pretending a
+    /// microphone recording is active.
+    func beginRetry() -> Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard phase == .idle else { return nil }
+        nextID += 1
+        phase = .transcribing(nextID)
+        return nextID
+    }
+
     func cancelRecording() -> Bool {
         lock.lock()
         defer { lock.unlock() }

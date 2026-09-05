@@ -11,11 +11,17 @@ final class MenuBarController {
     private let modeLabel: NSMenuItem
     private let dictationModeItem: NSMenuItem
     private let notesModeItem: NSMenuItem
+    private let retryRecordingItem: NSMenuItem
+    private let forgetRecordingItem: NSMenuItem
     private let updateLabel: NSMenuItem
     private let modelID: String
     private let idleTitle: String
     private var updateAction: (() -> Void)?
     private var modeAction: ((DictationMode) -> Void)?
+    private var retryRecordingAction: (() -> Void)?
+    private var forgetRecordingAction: (() -> Void)?
+    private var recordingRecoveryAvailable = false
+    private var recordingRecoveryBusy = false
 
     init(
         modelID: String,
@@ -52,6 +58,16 @@ final class MenuBarController {
             action: #selector(notesModeClicked),
             keyEquivalent: ""
         )
+        retryRecordingItem = NSMenuItem(
+            title: "Retry Last Recording",
+            action: #selector(retryRecordingClicked),
+            keyEquivalent: ""
+        )
+        forgetRecordingItem = NSMenuItem(
+            title: "Forget Last Recording",
+            action: #selector(forgetRecordingClicked),
+            keyEquivalent: ""
+        )
         dictationModeItem.target = self
         notesModeItem.target = self
         dictationModeItem.isEnabled = true
@@ -62,6 +78,13 @@ final class MenuBarController {
         modeMenu.addItem(notesModeItem)
         modeLabel.submenu = modeMenu
         menu.addItem(modeLabel)
+
+        retryRecordingItem.target = self
+        forgetRecordingItem.target = self
+        retryRecordingItem.isEnabled = false
+        forgetRecordingItem.isEnabled = false
+        menu.addItem(retryRecordingItem)
+        menu.addItem(forgetRecordingItem)
 
         updateLabel.isEnabled = false
         updateLabel.isHidden = true
@@ -88,6 +111,35 @@ final class MenuBarController {
 
     func setTranscribing() {
         stateLabel.title = "transcribing…"
+    }
+
+    func setRecordingRecovery(
+        available: Bool,
+        restored: Bool = false,
+        retry: (() -> Void)? = nil,
+        forget: (() -> Void)? = nil
+    ) {
+        if let retry { retryRecordingAction = retry }
+        if let forget { forgetRecordingAction = forget }
+        recordingRecoveryAvailable = available
+        retryRecordingItem.title = restored
+            ? "Retry Recovered Recording"
+            : "Retry Last Recording"
+        updateRecordingRecoveryItems()
+    }
+
+    func setRecordingRecoveryBusy(_ busy: Bool) {
+        recordingRecoveryBusy = busy
+        updateRecordingRecoveryItems()
+    }
+
+    private func updateRecordingRecoveryItems() {
+        retryRecordingItem.isEnabled = recordingRecoveryAvailable
+            && !recordingRecoveryBusy
+            && retryRecordingAction != nil
+        forgetRecordingItem.isEnabled = recordingRecoveryAvailable
+            && !recordingRecoveryBusy
+            && forgetRecordingAction != nil
     }
 
     func setMode(_ mode: DictationMode, automaticApplicationName: String? = nil) {
@@ -172,5 +224,13 @@ final class MenuBarController {
     @objc private func notesModeClicked() {
         modeAction?(.notes)
         setMode(.notes)
+    }
+
+    @objc private func retryRecordingClicked() {
+        retryRecordingAction?()
+    }
+
+    @objc private func forgetRecordingClicked() {
+        forgetRecordingAction?()
     }
 }

@@ -59,6 +59,17 @@ Ordinary keys, including Return, remain usable and do not stop the recording.
 Press **Escape** at any point while recording to cancel and discard the audio without
 transcribing, saving history, or injecting text. Escape is consumed as part of cancellation.
 
+If inference fails—or the daemon is interrupted after a recording—open the menu-bar bird and
+choose **Retry Recovered Recording**. After any successful dictation, **Retry Last Recording**
+can immediately reprocess the in-memory audio with the currently selected mode, without loading
+a second model. **Forget Last Recording** clears both the memory copy and any recovery file.
+
+Recovery is deliberately a single local slot, not an audio archive. Parrot writes a private
+16-bit WAV to `~/.local/share/parrot/recovery/last-recording.wav` before inference, atomically
+replaces it with the next accepted capture, and deletes it after successful text delivery. The
+samples remain only in daemon memory until the next accepted capture or an explicit forget. A
+failed or crash-interrupted inference keeps the WAV so the next daemon launch can restore it.
+
 ### Local note mode
 
 Save note mode as your default, or use `--notes` (or `--note-mode`) for one run, to turn
@@ -309,7 +320,7 @@ never substrings, and do not cascade into one another.
 
 The vocabulary is stored only at `~/.config/parrot/vocabulary.json` with user-only permissions
 (`0600`). Restart a running daemon after changing it. No vocabulary, transcript, or audio is
-sent to a server.
+sent to a server; the bounded recording recovery slot described above also stays local.
 
 ### Benchmark local models
 

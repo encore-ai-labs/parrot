@@ -46,6 +46,16 @@ final class DictationLifecycleTests: XCTestCase {
         XCTAssertNotNil(lifecycle.start())
     }
 
+    func testRetryUsesTheSameSingleFlightTranscriptionSlot() throws {
+        let lifecycle = DictationLifecycle()
+        let retry = try XCTUnwrap(lifecycle.beginRetry())
+        XCTAssertTrue(lifecycle.isTranscribing)
+        XCTAssertNil(lifecycle.beginRetry())
+        XCTAssertNil(lifecycle.start())
+        XCTAssertTrue(lifecycle.finish(retry))
+        XCTAssertNotNil(lifecycle.start())
+    }
+
     func testCaptureQualityRejectsOnlyShortOrNearSilentAudio() {
         XCTAssertEqual(
             CaptureQuality.rejection(duration: 0.1, rms: 0.01),

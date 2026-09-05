@@ -620,30 +620,57 @@ enum WAVWriter {
     /// Write Float32 mono samples as 16-bit PCM WAV to `path`.
     static func write(samples: [Float], sampleRate: Int, to path: String) throws {
         let bytesPerSample = 2
-        let dataSize = samples.count * bytesPerSample
-
-        var data = Data()
-        data.append(contentsOf: Array("RIFF".utf8))
-        data.append(uint32LE(36 + UInt32(dataSize)))
-        data.append(contentsOf: Array("WAVE".utf8))
-        data.append(contentsOf: Array("fmt ".utf8))
-        data.append(uint32LE(16))                       // fmt chunk size
-        data.append(uint16LE(1))                        // PCM
-        data.append(uint16LE(1))                        // mono
-        data.append(uint32LE(UInt32(sampleRate)))
-        data.append(uint32LE(UInt32(sampleRate * bytesPerSample)))
-        data.append(uint16LE(UInt16(bytesPerSample)))   // block align
-        data.append(uint16LE(16))                       // bits per sample
-        data.append(contentsOf: Array("data".utf8))
-        data.append(uint32LE(UInt32(dataSize)))
-
-        for s in samples {
-            let clamped = max(-1.0, min(1.0, s))
-            let i = Int16(clamped * 32767.0)
-            data.append(uint16LE(UInt16(bitPattern: i)))
+        let (dataSize, overflow) = samples.count.multipliedReportingOverflow(by: bytesPerSample)
+        guard !overflow, dataSize <= Int(UInt32.max) - 36 else {
+            throw CocoaError(.fileWriteOutOfSpace)
         }
 
-        try data.write(to: URL(fileURLWithPath: path))
+        var header = Data()
+        header.append(contentsOf: Array("RIFF".utf8))
+        header.append(uint32LE(36 + UInt32(dataSize)))
+        header.append(contentsOf: Array("WAVE".utf8))
+        header.append(contentsOf: Array("fmt ".utf8))
+        header.append(uint32LE(16))                       // fmt chunk size
+        header.append(uint16LE(1))                        // PCM
+        header.append(uint16LE(1))                        // mono
+        header.append(uint32LE(UInt32(sampleRate)))
+        header.append(uint32LE(UInt32(sampleRate * bytesPerSample)))
+        header.append(uint16LE(UInt16(bytesPerSample)))   // block align
+        header.append(uint16LE(16))                       // bits per sample
+        header.append(contentsOf: Array("data".utf8))
+        header.append(uint32LE(UInt32(dataSize)))
+
+        let fileManager = FileManager.default
+        guard fileManager.createFile(
+            atPath: path,
+            contents: header,
+            attributes: [.posixPermissions: 0o600]
+        ) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: path))
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+
+        // Stream conversion in modest chunks. A long hands-free note already
+        // occupies one Float array; building a second whole-file Data buffer
+        // here would add avoidable memory pressure at the latency-critical
+        // transition from recording to inference.
+        let chunkSize = 8_192
+        var offset = 0
+        while offset < samples.count {
+            let end = min(offset + chunkSize, samples.count)
+            var pcm = Data(capacity: (end - offset) * bytesPerSample)
+            for sample in samples[offset..<end] {
+                let clamped = max(-1.0, min(1.0, sample))
+                let value = Int16(clamped * 32767.0)
+                pcm.append(uint16LE(UInt16(bitPattern: value)))
+            }
+            try handle.write(contentsOf: pcm)
+            offset = end
+        }
+        try handle.synchronize()
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
     }
 
     private static func uint32LE(_ v: UInt32) -> Data {

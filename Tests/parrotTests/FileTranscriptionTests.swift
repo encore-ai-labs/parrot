@@ -182,6 +182,7 @@ final class FileTranscriptionTests: XCTestCase {
         XCTAssertTrue(markdown.contains("# memo.m4a"))
         XCTAssertTrue(markdown.contains("- Source: `memo.m4a`"))
         XCTAssertFalse(markdown.contains("/private/tmp"))
+        XCTAssertTrue(markdown.contains("- Template: `meeting`"))
         XCTAssertTrue(markdown.contains("## Transcript\n\n# Project notes"))
         XCTAssertTrue(markdown.contains("**[00:01.250–00:03.500]** first segment"))
         XCTAssertTrue(markdown.contains("12.0× realtime"))
@@ -281,6 +282,7 @@ final class FileTranscriptionTests: XCTestCase {
             sourceName: "memo.m4a",
             model: "whisper-base.en",
             mode: "notes",
+            template: "meeting",
             automaticParagraphs: true,
             language: "en",
             transcribedAt: "2026-09-05T10:00:00.000Z",

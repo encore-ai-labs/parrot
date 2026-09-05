@@ -238,6 +238,11 @@ an explicit or preferred microphone for a bounded 2–15 seconds and reports loc
 20 ms activity, and clipping with actionable guidance or structured JSON. It loads no model, saves
 no audio/history, changes no preference, makes no network request, and adds no daemon-idle work.
 
+**6.19 Deterministic local note templates** — ✅ **complete.** A private bounded template library
+adds reusable Markdown structures, starter presets, saved and one-run selection, and prefix-only
+spoken switching. Exact placeholders render after the existing local note pipeline; template bodies
+never enter model context, and atomic library edits hot-reload on the next capture.
+
 ---
 
 ## Suggested release cadence

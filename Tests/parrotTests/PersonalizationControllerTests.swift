@@ -3,6 +3,53 @@ import XCTest
 @testable import parrot
 
 final class PersonalizationControllerTests: XCTestCase {
+    func testTemplateReloadAddsOnlyItsSpokenNameToPromptAndKeepsBodyLocal() async throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vocabularyURL = root.appendingPathComponent("vocabulary.json")
+        let snippetsURL = root.appendingPathComponent("snippets.json")
+        let fillersURL = root.appendingPathComponent("fillers.json")
+        let templatesURL = root.appendingPathComponent("note-templates.json")
+        let controller = PersonalizationController(
+            vocabulary: PersonalVocabulary(),
+            snippets: SnippetLibrary(),
+            fillers: PersonalFillerLibrary(),
+            vocabularyURL: vocabularyURL,
+            snippetsURL: snippetsURL,
+            fillersURL: fillersURL,
+            templatesURL: templatesURL
+        )
+        var templates = NoteTemplateLibrary()
+        try templates.set(
+            name: "customer meeting",
+            body: "# Private customer\n\n{{transcript}}"
+        )
+        try templates.save(to: templatesURL)
+
+        let refresh = await controller.refreshIfNeeded()
+
+        XCTAssertTrue(refresh.didReload)
+        XCTAssertEqual(refresh.snapshot.templateCount, 1)
+        XCTAssertTrue(refresh.snapshot.transcriber.promptTerms.contains("template customer meeting"))
+        XCTAssertFalse(refresh.snapshot.transcriber.promptTerms.joined().contains("Private"))
+        XCTAssertEqual(
+            refresh.snapshot.templates.resolve("template customer meeting, notes").templateName,
+            "customer meeting"
+        )
+        XCTAssertEqual(
+            refresh.snapshot.templates.render("notes", templateName: "customer meeting"),
+            "# Private customer\n\nnotes"
+        )
+
+        try "{invalid".write(to: templatesURL, atomically: true, encoding: .utf8)
+        let malformed = await controller.refreshIfNeeded()
+        XCTAssertFalse(malformed.didReload)
+        XCTAssertEqual(malformed.warnings.count, 1)
+        XCTAssertTrue(malformed.snapshot.templates.contains("customer meeting"))
+        let unchangedMalformed = await controller.refreshIfNeeded()
+        XCTAssertTrue(unchangedMalformed.warnings.isEmpty)
+    }
+
     func testReloadMakesVocabularyPromptAndSnippetAvailableTogether() async throws {
         let root = temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

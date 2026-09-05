@@ -170,6 +170,20 @@ work. In the debug test harness, ten analyses of the same ten-second signal comp
 on this Mac, about **13.7 ms per diagnostic**. AVCaptureSession startup and the requested listening
 period are intentionally excluded because they depend on physical hardware and chosen duration.
 
+## Local note-template cost
+
+Templates do not affect audio capture or add inference. With no selected template, the finalized
+text returns directly after one branch. With a template selected, rendering performs fixed string
+replacement after the existing note pipeline. In the debug performance harness, 100 renderings of
+the same roughly 108 KB note completed in about **100 ms** on this Mac, approximately **1.0 ms per
+unusually long note**. Template bodies never enter the decoder prompt; at most four short spoken
+selector names share the existing bounded prompt-term path.
+
+The running daemon checks four private-library file signatures at recording start. The existing
+hot-reload test performed 1,000 unchanged checks in about **137 ms** total on this Mac, or roughly
+**0.14 ms per capture** across vocabulary, snippets, fillers, and templates. Decoding and matcher
+rebuilding occur only after an atomic file replacement is observed.
+
 ## Local history export cost
 
 History export is an explicit CLI operation and adds no capture, delivery, model, or daemon-idle

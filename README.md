@@ -193,6 +193,39 @@ later mentions of “note mode” stay untouched. Say `literal note mode ...` to
 words themselves. This switch is deterministic, adds no model or network request, and does not
 apply when transcribing stored audio/video files.
 
+### Local note templates
+
+Reusable templates give recurring notes a consistent Markdown shape without asking a language
+model to rewrite them. Add one of the starter structures, make it the note-mode default, or select
+another template for one live capture by saying its name first:
+
+```sh
+parrot templates add daily --preset daily
+parrot templates add meeting --preset meeting
+parrot templates add interview --file interview.md
+parrot templates use daily
+parrot daemon restart                 # apply a new saved default
+
+# one run, without changing the saved default
+parrot --template meeting
+parrot transcribe memo.m4a --template interview
+```
+
+A template file is ordinary UTF-8 Markdown containing `{{transcript}}` exactly once. It may also
+use `{{date}}`, `{{time}}`, and timezone-qualified `{{datetime}}`. During a live capture, say
+“template meeting, heading two decisions…” to select that template and note mode for only that
+capture. The trigger must be at the beginning; `literal template meeting ...` keeps those words.
+
+Templates wrap the result after local cleanup, Markdown commands, spoken edits, and snippet
+expansion, so user-authored headings and snippet bodies remain exact. A saved default applies only
+when note mode wins—including the dedicated note hotkey and app rules—and never changes plain
+dictation. Use `parrot templates off` to clear it.
+
+The private library lives at `~/.config/parrot/note-templates.json` with mode `0600` and hot-reloads
+on the next recording. Parrot caps it at 32 templates and 32,000 characters each. Bodies never
+enter a prompt; only the four newest short trigger names may use the existing bounded recognition
+hint. Rendering is fixed placeholder substitution with no LLM or network request.
+
 ### Local speech cleanup
 
 For cleaner spoken drafts, enable Parrot's conservative on-device cleanup pass:
@@ -743,6 +776,7 @@ parrot settings
 parrot settings set --hotkey right-option
 parrot settings set --note-hotkey right-command # optional direct note-mode shortcut
 parrot settings set --note-journal ~/Documents/Notes/inbox.md # only the note key appends here
+parrot settings set --template daily # saved shape whenever note mode is active
 parrot settings set --context selected-text # opt-in bounded local Whisper hint
 parrot settings set --model whisper-small.en --mode notes
 parrot settings set --no-auto-paragraphs # disable the note-mode default
@@ -761,7 +795,8 @@ parrot daemon restart               # apply to a running LaunchAgent
 
 Saved defaults are what a LaunchAgent uses, so launch-at-login no longer falls back to Fn or
 plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--note-hotkey`,
-`--no-note-hotkey`, `--note-journal`, `--no-note-journal`, `--context`, `--model`,
+`--no-note-hotkey`, `--note-journal`, `--no-note-journal`, `--template`, `--no-template`,
+`--context`, `--model`,
 `--notes`, `--dictation`, `--auto-paragraphs`, `--no-auto-paragraphs`, `--cleanup`,
 `--no-cleanup`, `--clipboard-paste`, `--keystroke-paste`,
 `--clipboard-restore-delay-ms`, `--warm-mic`, and `--cold-mic` take priority without changing
@@ -854,6 +889,9 @@ parrot fillers                         # list personal phrases removed locally
 parrot fillers add "you know"          # hot-reloads on the next recording
 parrot snippets                        # list reusable local voice snippets
 parrot snippets add meeting --file template.md
+parrot templates                      # list deterministic Markdown note shapes
+parrot templates add daily --preset daily
+parrot templates use daily            # make it the note-mode default
 parrot history                         # list recent local transcripts
 parrot history search project roadmap # search private Markdown history
 parrot history copy                    # recover the latest transcript to clipboard
@@ -868,6 +906,7 @@ parrot settings                         # show effective saved daemon defaults
 parrot settings set --hotkey end --mode notes
 parrot settings set --note-hotkey right-option # direct local note-mode capture
 parrot settings set --note-journal ~/Documents/Notes/inbox.md # note-key-only inbox
+parrot settings set --template daily           # saved note-mode shape
 parrot settings set --context selected-text # opt-in local recognition hint
 parrot settings set --no-note-journal           # note key returns to primary delivery
 parrot settings set --no-note-hotkey           # return to one shortcut
@@ -884,6 +923,8 @@ parrot --command '$HOME/bin/route-parrot-note' # final text on stdin; don't past
 parrot --paste                         # override any saved destination for one run
 parrot --no-space-after-paste          # exact cursor insertion for this run
 parrot --notes                         # explicit spoken commands → local Markdown
+parrot --template meeting              # named shape + note mode for this run
+parrot --no-template                   # ignore a saved shape for this run
 parrot --notes --no-auto-paragraphs    # keep a long note continuous
 parrot --dictation                     # override a saved notes mode for one run
 parrot --cleanup                       # conservative local filler/false-start cleanup

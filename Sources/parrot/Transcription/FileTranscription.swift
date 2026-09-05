@@ -37,6 +37,12 @@ struct Transcribe: ParsableCommand {
     @Flag(name: .long, help: "Use plain dictation formatting.")
     var dictation = false
 
+    @Option(name: .customLong("template"), help: "Apply a named local Markdown note template.")
+    var noteTemplate: String?
+
+    @Flag(name: .customLong("no-template"), help: "Ignore the saved note template.")
+    var noNoteTemplate = false
+
     @Flag(name: .long, help: "Lowercase transcript text.")
     var lowercase = false
 
@@ -95,6 +101,12 @@ struct Transcribe: ParsableCommand {
     mutating func validate() throws {
         guard !(notes && dictation) else {
             throw ValidationError("pass at most one of --notes or --dictation")
+        }
+        guard !(noteTemplate != nil && noNoteTemplate) else {
+            throw ValidationError("pass at most one of --template or --no-template")
+        }
+        guard !(dictation && noteTemplate != nil) else {
+            throw ValidationError("--template selects note mode and cannot use --dictation")
         }
         guard !(lowercase && noLowercase) else {
             throw ValidationError("pass at most one of --lowercase or --no-lowercase")
@@ -156,13 +168,31 @@ struct Transcribe: ParsableCommand {
             )
         }
         let mode: DictationMode
-        if notes {
+        if notes || noteTemplate != nil {
             mode = .notes
         } else if dictation {
             mode = .dictation
         } else {
             mode = config.mode ?? .dictation
         }
+        let requestedTemplate = noNoteTemplate
+            ? nil
+            : (noteTemplate ?? config.noteTemplate)
+        let templateLibrary = mode == .notes && requestedTemplate != nil
+            ? try NoteTemplateLibrary.load()
+            : NoteTemplateLibrary()
+        let selectedTemplate: String?
+        if mode == .notes, let requestedTemplate {
+            guard let canonical = templateLibrary.canonicalName(matching: requestedTemplate) else {
+                throw ValidationError(
+                    "no note template matches '\(requestedTemplate)'; run `parrot templates`"
+                )
+            }
+            selectedTemplate = canonical
+        } else {
+            selectedTemplate = nil
+        }
+        let templateRenderer = NoteTemplateRenderer(library: templateLibrary)
         let lowercaseOutput: Bool
         if lowercase || noLowercase {
             lowercaseOutput = lowercase
@@ -198,7 +228,9 @@ struct Transcribe: ParsableCommand {
 
         FileHandle.standardError.write(Data(
             "transcribing \(jobs.count) file\(jobs.count == 1 ? "" : "s") locally"
-                .appending(" · \(selectedModel.id) · \(canonicalLanguage) · \(mode.rawValue)\n").utf8
+                .appending(" · \(selectedModel.id) · \(canonicalLanguage) · \(mode.rawValue)")
+                .appending(selectedTemplate.map { " · template \($0)" } ?? "")
+                .appending("\n").utf8
         ))
         try await transcriber.warmUp()
 
@@ -226,7 +258,9 @@ struct Transcribe: ParsableCommand {
                     fillers: fillerRemover,
                     automaticParagraphs: automaticParagraphsOutput,
                     segments: transcription.segments,
-                    snippets: snippetExpander
+                    snippets: snippetExpander,
+                    templates: templateRenderer,
+                    configuredNoteTemplate: selectedTemplate
                 )
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw FileTranscriptionError.noSpeech(job.input.path)
@@ -247,6 +281,7 @@ struct Transcribe: ParsableCommand {
                     sourceName: job.input.lastPathComponent,
                     model: selectedModel.id,
                     mode: mode.rawValue,
+                    template: selectedTemplate,
                     automaticParagraphs: mode == .notes && automaticParagraphsOutput,
                     language: transcription.language,
                     transcribedAt: Self.timestamp(Date()),
@@ -434,6 +469,22 @@ enum TranscriptProcessing {
         let text: String
         let mode: DictationMode
         let usedSpokenModeTrigger: Bool
+        let templateName: String?
+        let usedSpokenTemplateTrigger: Bool
+
+        init(
+            text: String,
+            mode: DictationMode,
+            usedSpokenModeTrigger: Bool,
+            templateName: String? = nil,
+            usedSpokenTemplateTrigger: Bool = false
+        ) {
+            self.text = text
+            self.mode = mode
+            self.usedSpokenModeTrigger = usedSpokenModeTrigger
+            self.templateName = templateName
+            self.usedSpokenTemplateTrigger = usedSpokenTemplateTrigger
+        }
     }
 
     static func process(
@@ -444,7 +495,11 @@ enum TranscriptProcessing {
         fillers: PersonalFillerRemover = PersonalFillerRemover(entries: []),
         automaticParagraphs: Bool = false,
         segments: [TimedTranscriptSegment] = [],
-        snippets: SnippetExpander
+        snippets: SnippetExpander,
+        templates: NoteTemplateRenderer = NoteTemplateRenderer(),
+        configuredNoteTemplate: String? = nil,
+        date: Date = Date(),
+        calendar: Calendar = .current
     ) -> String {
         processResult(
             raw,
@@ -455,7 +510,12 @@ enum TranscriptProcessing {
             automaticParagraphs: automaticParagraphs,
             segments: segments,
             snippets: snippets,
-            spokenModeTrigger: false
+            templates: templates,
+            configuredNoteTemplate: configuredNoteTemplate,
+            date: date,
+            calendar: calendar,
+            spokenModeTrigger: false,
+            spokenTemplateTrigger: false
         ).text
     }
 
@@ -469,7 +529,11 @@ enum TranscriptProcessing {
         fillers: PersonalFillerRemover = PersonalFillerRemover(entries: []),
         automaticParagraphs: Bool = false,
         segments: [TimedTranscriptSegment] = [],
-        snippets: SnippetExpander
+        snippets: SnippetExpander,
+        templates: NoteTemplateRenderer = NoteTemplateRenderer(),
+        configuredNoteTemplate: String? = nil,
+        date: Date = Date(),
+        calendar: Calendar = .current
     ) -> Result {
         processResult(
             raw,
@@ -480,7 +544,12 @@ enum TranscriptProcessing {
             automaticParagraphs: automaticParagraphs,
             segments: segments,
             snippets: snippets,
-            spokenModeTrigger: true
+            templates: templates,
+            configuredNoteTemplate: configuredNoteTemplate,
+            date: date,
+            calendar: calendar,
+            spokenModeTrigger: true,
+            spokenTemplateTrigger: true
         )
     }
 
@@ -493,34 +562,73 @@ enum TranscriptProcessing {
         automaticParagraphs: Bool,
         segments: [TimedTranscriptSegment],
         snippets: SnippetExpander,
-        spokenModeTrigger: Bool
+        templates: NoteTemplateRenderer,
+        configuredNoteTemplate: String?,
+        date: Date,
+        calendar: Calendar,
+        spokenModeTrigger: Bool,
+        spokenTemplateTrigger: Bool
     ) -> Result {
-        let selection = spokenModeTrigger
-            ? SpokenModeTrigger.resolve(raw, fallbackMode: fallbackMode)
-            : SpokenModeTrigger.Selection(
+        let templateSelection = spokenTemplateTrigger
+            ? templates.resolve(raw)
+            : NoteTemplateRenderer.Selection(
                 text: raw,
+                templateName: nil,
+                wasTriggered: false
+            )
+        let modeSelection = spokenModeTrigger
+            ? SpokenModeTrigger.resolve(
+                templateSelection.text,
+                fallbackMode: templateSelection.wasTriggered ? .notes : fallbackMode
+            )
+            : SpokenModeTrigger.Selection(
+                text: templateSelection.text,
                 mode: fallbackMode,
                 wasTriggered: false
             )
+        let selectedMode: DictationMode = templateSelection.wasTriggered
+            ? .notes
+            : modeSelection.mode
         // Format pauses against the original transcript so the timed segments
-        // still reconstruct it exactly. Strip the trigger from the structured
-        // result afterward; its matcher also accepts inserted line breaks.
-        let structured = selection.mode == .notes && automaticParagraphs
+        // still reconstruct it exactly. Strip triggers from the structured
+        // result afterward; both matchers accept inserted line breaks.
+        let structured = selectedMode == .notes && automaticParagraphs
             ? AutomaticParagraphFormatter.format(raw, segments: segments)
             : raw
+        let structuredTemplate = spokenTemplateTrigger
+            ? templates.resolve(structured)
+            : NoteTemplateRenderer.Selection(
+                text: structured,
+                templateName: nil,
+                wasTriggered: false
+            )
         let selectedText = spokenModeTrigger
-            ? SpokenModeTrigger.resolve(structured, fallbackMode: fallbackMode).text
-            : structured
+            ? SpokenModeTrigger.resolve(
+                structuredTemplate.text,
+                fallbackMode: templateSelection.wasTriggered ? .notes : fallbackMode
+            ).text
+            : structuredTemplate.text
         let personalized = fillers.applying(to: selectedText)
         let cleaned = cleanup ? SpeechCleanup.clean(personalized) : personalized
-        let formatted = selection.mode == .notes ? NoteFormatter.format(cleaned) : cleaned
-        let edited = selection.mode == .notes ? SpokenEditProcessor.apply(formatted) : formatted
+        let formatted = selectedMode == .notes ? NoteFormatter.format(cleaned) : cleaned
+        let edited = selectedMode == .notes ? SpokenEditProcessor.apply(formatted) : formatted
         let cased = lowercase ? edited.lowercased() : edited
+        let expanded = snippets.applying(to: cased)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let configuredTemplate = selectedMode == .notes
+            && configuredNoteTemplate.map(templates.contains) == true
+            ? configuredNoteTemplate
+            : nil
+        let templateName = templateSelection.templateName ?? configuredTemplate
+        let output = templateName.map {
+            templates.render(expanded, templateName: $0, at: date, calendar: calendar)
+        } ?? expanded
         return Result(
-            text: snippets.applying(to: cased)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            mode: selection.mode,
-            usedSpokenModeTrigger: selection.wasTriggered
+            text: output,
+            mode: selectedMode,
+            usedSpokenModeTrigger: modeSelection.wasTriggered,
+            templateName: templateName,
+            usedSpokenTemplateTrigger: templateSelection.wasTriggered
         )
     }
 
@@ -549,6 +657,7 @@ struct FileTranscriptReport: Codable, Equatable {
     let sourceName: String
     let model: String
     let mode: String
+    let template: String?
     let automaticParagraphs: Bool
     let language: String
     let transcribedAt: String
@@ -579,6 +688,9 @@ enum FileTranscriptRenderer {
             output += "- Transcribed: \(report.transcribedAt)\n"
             output += "- Model: `\(escapeCode(report.model))`\n"
             output += "- Mode: \(report.mode)\n"
+            if let template = report.template {
+                output += "- Template: `\(escapeCode(template))`\n"
+            }
             output += "- Automatic paragraphs: \(report.automaticParagraphs ? "on" : "off")\n"
             output += "- Language: \(report.language)\n"
             output += "- Duration: \(timestamp(report.audioSeconds))\n"

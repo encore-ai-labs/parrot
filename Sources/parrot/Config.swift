@@ -25,6 +25,8 @@ struct Config: Codable, Equatable {
     var noteHotkey: String?
     /// Optional Markdown inbox used only by the dedicated note shortcut.
     var noteJournalPath: String?
+    /// Optional deterministic Markdown shape applied whenever note mode wins.
+    var noteTemplate: String?
     /// Explicit local text source used as a bounded Whisper recognition hint.
     var recognitionContext: String?
     /// Default transcription model id.
@@ -151,6 +153,7 @@ struct RuntimeDefaults: Equatable {
     let hotkey: String
     let noteHotkey: String?
     let noteJournalPath: String?
+    let noteTemplate: String?
     let recognitionContext: RecognitionContextSource
     let model: String
     let language: String
@@ -173,6 +176,8 @@ struct RuntimeDefaults: Equatable {
         disableNoteHotkey: Bool = false,
         noteJournalOverride: String? = nil,
         disableNoteJournal: Bool = false,
+        noteTemplateOverride: String? = nil,
+        disableNoteTemplate: Bool = false,
         recognitionContextOverride: String? = nil,
         modelOverride: String?,
         languageOverride: String? = nil,
@@ -197,6 +202,12 @@ struct RuntimeDefaults: Equatable {
         }
         guard !(noteJournalOverride != nil && disableNoteJournal) else {
             throw RuntimeDefaultsError.conflictingNoteJournalOverrides
+        }
+        guard !(noteTemplateOverride != nil && disableNoteTemplate) else {
+            throw RuntimeDefaultsError.conflictingNoteTemplateOverrides
+        }
+        guard !(dictation && noteTemplateOverride != nil) else {
+            throw RuntimeDefaultsError.templateRequiresNotes
         }
         let destinationOverrides = [journalOverride != nil, commandOverride != nil, paste]
             .filter { $0 }.count
@@ -231,7 +242,7 @@ struct RuntimeDefaults: Equatable {
             throw RuntimeDefaultsError.invalidRecognitionContext(requestedContext)
         }
         let resolvedMode: DictationMode
-        if notes {
+        if notes || noteTemplateOverride != nil {
             resolvedMode = .notes
         } else if dictation {
             resolvedMode = .dictation
@@ -263,6 +274,9 @@ struct RuntimeDefaults: Equatable {
         let resolvedNoteJournalPath = disableNoteJournal
             ? nil
             : (noteJournalOverride ?? config.noteJournalPath)
+        let resolvedNoteTemplate = disableNoteTemplate
+            ? nil
+            : (noteTemplateOverride ?? config.noteTemplate)
         if noteJournalOverride != nil, resolvedNoteHotkey == nil {
             throw RuntimeDefaultsError.noteJournalRequiresHotkey
         }
@@ -276,6 +290,7 @@ struct RuntimeDefaults: Equatable {
             hotkey: resolvedHotkey,
             noteHotkey: resolvedNoteHotkey,
             noteJournalPath: resolvedNoteJournalPath,
+            noteTemplate: resolvedNoteTemplate,
             recognitionContext: resolvedContext,
             model: modelOverride ?? config.model ?? recommendedModel,
             language: resolvedLanguage,
@@ -302,6 +317,8 @@ enum RuntimeDefaultsError: LocalizedError {
     case conflictingModes
     case conflictingNoteHotkeyOverrides
     case conflictingNoteJournalOverrides
+    case conflictingNoteTemplateOverrides
+    case templateRequiresNotes
     case noteJournalRequiresHotkey
     case conflictingHotkeys(String)
     case conflictingDestinations
@@ -320,6 +337,10 @@ enum RuntimeDefaultsError: LocalizedError {
             return "pass at most one of --note-hotkey or --no-note-hotkey"
         case .conflictingNoteJournalOverrides:
             return "pass at most one of --note-journal or --no-note-journal"
+        case .conflictingNoteTemplateOverrides:
+            return "pass at most one of --template or --no-template"
+        case .templateRequiresNotes:
+            return "--template selects note mode and cannot be combined with --dictation"
         case .noteJournalRequiresHotkey:
             return "--note-journal requires --note-hotkey or a saved note key"
         case .conflictingHotkeys(let hotkey):

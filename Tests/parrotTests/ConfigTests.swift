@@ -28,6 +28,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.hotkey)
         XCTAssertNil(config.noteHotkey)
         XCTAssertNil(config.noteJournalPath)
+        XCTAssertNil(config.noteTemplate)
         XCTAssertNil(config.recognitionContext)
         XCTAssertNil(config.model)
         XCTAssertNil(config.language)
@@ -55,6 +56,7 @@ final class ConfigTests: XCTestCase {
         config.hotkey = "right-option"
         config.noteHotkey = "right-command"
         config.noteJournalPath = "/tmp/note-inbox.md"
+        config.noteTemplate = "daily standup"
         config.recognitionContext = "selected-text"
         config.model = "whisper-small.en"
         config.language = "en"
@@ -116,6 +118,7 @@ final class ConfigTests: XCTestCase {
                 hotkey: "right-option",
                 noteHotkey: "right-command",
                 noteJournalPath: "/tmp/note-inbox.md",
+                noteTemplate: nil,
                 recognitionContext: .off,
                 model: "whisper-small.en",
                 language: "auto",
@@ -145,6 +148,7 @@ final class ConfigTests: XCTestCase {
                 hotkey: "end",
                 noteHotkey: "right-command",
                 noteJournalPath: "/tmp/note-inbox.md",
+                noteTemplate: nil,
                 recognitionContext: .off,
                 model: "whisper-base.en",
                 language: "auto",

@@ -5,9 +5,11 @@ struct PersonalizationSnapshot: Sendable {
     let transcriber: TranscriberPersonalization
     let snippets: SnippetExpander
     let fillers: PersonalFillerRemover
+    let templates: NoteTemplateRenderer
     let vocabularyCount: Int
     let snippetCount: Int
     let fillerCount: Int
+    let templateCount: Int
 }
 
 struct PersonalizationRefresh: Sendable {
@@ -16,29 +18,34 @@ struct PersonalizationRefresh: Sendable {
     let warnings: [String]
 }
 
-/// Keeps the daemon's private vocabulary, snippets, and fillers current without
-/// a restart. Only three metadata reads occur on the steady-state recording path;
+/// Keeps the daemon's private vocabulary, snippets, fillers, and templates current without
+/// a restart. Only four metadata reads occur on the steady-state recording path;
 /// JSON decoding and regex/prompt rebuilding happen after an atomic file
 /// replacement is observed.
 actor PersonalizationController {
     private let vocabularyURL: URL
     private let snippetsURL: URL
     private let fillersURL: URL
+    private let templatesURL: URL
     private var vocabularySignature: PersonalizationFileSignature?
     private var snippetsSignature: PersonalizationFileSignature?
     private var fillersSignature: PersonalizationFileSignature?
+    private var templatesSignature: PersonalizationFileSignature?
     private var vocabulary: PersonalVocabulary
     private var snippetLibrary: SnippetLibrary
     private var fillerLibrary: PersonalFillerLibrary
+    private var templateLibrary: NoteTemplateLibrary
     private var snapshot: PersonalizationSnapshot
 
     init(
         vocabulary: PersonalVocabulary,
         snippets: SnippetLibrary,
         fillers: PersonalFillerLibrary,
+        templates: NoteTemplateLibrary = NoteTemplateLibrary(),
         vocabularyURL: URL = PersonalVocabulary.url,
         snippetsURL: URL = SnippetLibrary.url,
-        fillersURL: URL = PersonalFillerLibrary.url
+        fillersURL: URL = PersonalFillerLibrary.url,
+        templatesURL: URL = NoteTemplateLibrary.url
     ) {
         self.vocabulary = vocabulary
         snippetLibrary = snippets
@@ -46,14 +53,18 @@ actor PersonalizationController {
         self.vocabularyURL = vocabularyURL
         self.snippetsURL = snippetsURL
         self.fillersURL = fillersURL
+        self.templatesURL = templatesURL
         vocabularySignature = Self.signature(vocabularyURL)
         snippetsSignature = Self.signature(snippetsURL)
         fillersSignature = Self.signature(fillersURL)
+        templatesSignature = Self.signature(templatesURL)
+        templateLibrary = templates
         snapshot = Self.makeSnapshot(
             revision: 0,
             vocabulary: vocabulary,
             snippets: snippets,
-            fillers: fillers
+            fillers: fillers,
+            templates: templates
         )
     }
 
@@ -108,13 +119,29 @@ actor PersonalizationController {
             }
         }
 
+        let currentTemplatesSignature = Self.signature(templatesURL)
+        if currentTemplatesSignature != templatesSignature {
+            templatesSignature = currentTemplatesSignature
+            do {
+                templateLibrary = try NoteTemplateLibrary.load(from: templatesURL)
+                templatesSignature = Self.signature(templatesURL)
+                didReload = true
+            } catch {
+                warnings.append(
+                    "couldn't reload note templates; keeping the previous templates: "
+                        + error.localizedDescription
+                )
+            }
+        }
+
         if didReload {
             let nextRevision = snapshot.revision &+ 1
             snapshot = Self.makeSnapshot(
                 revision: nextRevision,
                 vocabulary: vocabulary,
                 snippets: snippetLibrary,
-                fillers: fillerLibrary
+                fillers: fillerLibrary,
+                templates: templateLibrary
             )
         }
         return PersonalizationRefresh(
@@ -128,12 +155,13 @@ actor PersonalizationController {
         revision: UInt64,
         vocabulary: PersonalVocabulary,
         snippets: SnippetLibrary,
-        fillers: PersonalFillerLibrary
+        fillers: PersonalFillerLibrary,
+        templates: NoteTemplateLibrary
     ) -> PersonalizationSnapshot {
         let transcriber = TranscriberPersonalization(
             revision: revision,
             vocabularyReplacer: VocabularyReplacer(entries: vocabulary.entries),
-            promptTerms: snippets.promptTerms + vocabulary.promptTerms
+            promptTerms: templates.promptTerms + snippets.promptTerms + vocabulary.promptTerms
         )
         let fillerRemover = PersonalFillerRemover(entries: fillers.entries)
         return PersonalizationSnapshot(
@@ -141,9 +169,11 @@ actor PersonalizationController {
             transcriber: transcriber,
             snippets: SnippetExpander(entries: snippets.entries),
             fillers: fillerRemover,
+            templates: NoteTemplateRenderer(library: templates),
             vocabularyCount: vocabulary.entries.count,
             snippetCount: snippets.entries.count,
-            fillerCount: fillerRemover.count
+            fillerCount: fillerRemover.count,
+            templateCount: templates.entries.count
         )
     }
 

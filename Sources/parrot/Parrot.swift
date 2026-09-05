@@ -13,7 +13,7 @@ struct Parrot: ParsableCommand {
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
             Hotkeys.self, Devices.self, Apps.self, Vocabulary.self, Snippets.self, Fillers.self,
-            History.self, Stats.self, Transcribe.self, Settings.self, Languages.self,
+            Templates.self, History.self, Stats.self, Transcribe.self, Settings.self, Languages.self,
             Install.self, Daemon.self, Update.self,
         ],
         defaultSubcommand: Run.self
@@ -461,6 +461,12 @@ struct Run: ParsableCommand {
     )
     var dictationMode: Bool = false
 
+    @Option(name: .customLong("template"), help: "Apply a named local Markdown template and use note mode.")
+    var noteTemplate: String?
+
+    @Flag(name: .customLong("no-template"), help: "Ignore the saved note template for this run.")
+    var noNoteTemplate: Bool = false
+
     @Option(
         name: .long,
         help: "Append dictations to this Markdown file instead of typing at the cursor."
@@ -515,6 +521,12 @@ struct Run: ParsableCommand {
     func validate() throws {
         guard [journal != nil, command != nil, paste].filter({ $0 }).count <= 1 else {
             throw ValidationError("pass at most one of --journal, --command, or --paste")
+        }
+        guard !(noteTemplate != nil && noNoteTemplate) else {
+            throw ValidationError("pass at most one of --template or --no-template")
+        }
+        guard !(dictationMode && noteTemplate != nil) else {
+            throw ValidationError("--template selects note mode and cannot use --dictation")
         }
         guard !(cleanup && noCleanup) else {
             throw ValidationError("pass at most one of --cleanup or --no-cleanup")
@@ -601,6 +613,8 @@ struct Run: ParsableCommand {
                 disableNoteHotkey: noNoteHotkey,
                 noteJournalOverride: noteJournal,
                 disableNoteJournal: noNoteJournal,
+                noteTemplateOverride: noteTemplate,
+                disableNoteTemplate: noNoteTemplate,
                 recognitionContextOverride: recognitionContext,
                 modelOverride: model,
                 languageOverride: language,
@@ -670,6 +684,30 @@ struct Run: ParsableCommand {
                     .appending("choose whisper-base/whisper-small or use --language en\n").utf8
             ))
             throw ExitCode(64)
+        }
+        let templates: NoteTemplateLibrary
+        do {
+            templates = try NoteTemplateLibrary.load()
+        } catch {
+            FileHandle.standardError.write(Data(
+                "note templates unavailable: \(error.localizedDescription)\n".utf8
+            ))
+            throw ExitCode(1)
+        }
+        let configuredNoteTemplate: String?
+        if let requested = defaults.noteTemplate {
+            guard let canonical = templates.canonicalName(matching: requested) else {
+                FileHandle.standardError.write(Data(
+                    "unknown note template: \(requested)\n".utf8
+                ))
+                FileHandle.standardError.write(Data(
+                    "run `parrot templates` or `parrot templates off` to repair it.\n".utf8
+                ))
+                throw ExitCode(1)
+            }
+            configuredNoteTemplate = canonical
+        } else {
+            configuredNoteTemplate = nil
         }
         let effectiveRecognitionContext: RecognitionContextSource
         if chosenModel.engine == .whisperKit {
@@ -864,7 +902,8 @@ struct Run: ParsableCommand {
         let personalizationController = PersonalizationController(
             vocabulary: vocabulary,
             snippets: snippets,
-            fillers: fillers
+            fillers: fillers,
+            templates: templates
         )
         let journalWriter: MarkdownJournal?
         if let journalPath = defaults.journalPath {
@@ -903,7 +942,7 @@ struct Run: ParsableCommand {
             language: defaults.language,
             automaticParagraphs: defaults.automaticParagraphs,
             vocabulary: vocabulary,
-            additionalPromptTerms: snippets.promptTerms,
+            additionalPromptTerms: templates.promptTerms + snippets.promptTerms,
             notePromptTerms: NoteFormatter.promptTerms
         )
         let warmupSemaphore = DispatchSemaphore(value: 0)
@@ -1162,11 +1201,15 @@ struct Run: ParsableCommand {
                     let fillerNoun = refresh.snapshot.fillerCount == 1
                         ? "filler"
                         : "fillers"
+                    let templateNoun = refresh.snapshot.templateCount == 1
+                        ? "template"
+                        : "templates"
                     FileHandle.standardError.write(Data(
                         "↻ personalization reloaded · \(refresh.snapshot.vocabularyCount) "
                             .appending("\(vocabularyNoun) · ")
                             .appending("\(refresh.snapshot.snippetCount) \(snippetNoun) · ")
-                            .appending("\(refresh.snapshot.fillerCount) \(fillerNoun)\n").utf8
+                            .appending("\(refresh.snapshot.fillerCount) \(fillerNoun) · ")
+                            .appending("\(refresh.snapshot.templateCount) \(templateNoun)\n").utf8
                     ))
                 }
                 return refresh
@@ -1218,13 +1261,18 @@ struct Run: ParsableCommand {
                             "cleanup skipped for detected language \(transcription.language)\n".utf8
                         ))
                     }
+                    let spokenTemplateSelection = personalization.templates.resolve(
+                        transcription.text
+                    )
                     let spokenSelection = SpokenModeTrigger.resolve(
-                        transcription.text,
-                        fallbackMode: modeForCapture
+                        spokenTemplateSelection.text,
+                        fallbackMode: spokenTemplateSelection.wasTriggered
+                            ? .notes
+                            : modeForCapture
                     )
                     let processingSegments: [TimedTranscriptSegment]
                     if defaults.automaticParagraphs,
-                       spokenSelection.mode == .notes,
+                       (spokenTemplateSelection.wasTriggered || spokenSelection.mode == .notes),
                        modeForCapture != .notes {
                         switch recording {
                         case .memory(let samples, let sampleRate, _):
@@ -1252,12 +1300,19 @@ struct Run: ParsableCommand {
                         fillers: personalization.fillers,
                         automaticParagraphs: defaults.automaticParagraphs,
                         segments: processingSegments,
-                        snippets: personalization.snippets
+                        snippets: personalization.snippets,
+                        templates: personalization.templates,
+                        configuredNoteTemplate: configuredNoteTemplate
                     )
                     let text = processed.text
                     if processed.usedSpokenModeTrigger {
                         FileHandle.standardError.write(Data(
                             "↪ spoken mode · \(processed.mode.rawValue)\n".utf8
+                        ))
+                    }
+                    if processed.usedSpokenTemplateTrigger, let template = processed.templateName {
+                        FileHandle.standardError.write(Data(
+                            "↪ spoken template · \(template)\n".utf8
                         ))
                     }
                     let elapsed = Date().timeIntervalSince(started)
@@ -1416,9 +1471,12 @@ struct Run: ParsableCommand {
                 let deliverySource = recordingDeliveryRoute == .noteJournal
                     ? " · note inbox"
                     : ""
+                let templateSource = selection.mode == .notes
+                    ? configuredNoteTemplate.map { " · template \($0)" } ?? ""
+                    : ""
                 FileHandle.standardError.write(Data(
                     "● recording · \(selection.mode.rawValue)\(selectionSource)"
-                        .appending("\(deliverySource)\n").utf8
+                        .appending("\(deliverySource)\(templateSource)\n").utf8
                 ))
                 MainActor.assumeIsolated {
                     menuBar.setMode(
@@ -1727,9 +1785,11 @@ struct Run: ParsableCommand {
             language: RecognitionLanguage.displaySelection(defaults.language, model: chosenModel),
             microphone: micName,
             mode: defaults.mode.rawValue,
+            noteTemplate: configuredNoteTemplate,
             vocabularyCount: vocabulary.entries.count,
             snippetCount: snippets.entries.count,
             fillerCount: fillers.entries.count,
+            templateCount: templates.entries.count,
             historyPath: historyPath,
             historyRetentionDays: defaults.historyRetentionDays,
             audioHistoryRetentionDays: audioHistoryRetentionDays,

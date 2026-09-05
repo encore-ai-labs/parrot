@@ -35,6 +35,7 @@ struct Settings: ParsableCommand {
                         ? "  (inactive without note key)"
                         : "")
             )
+            print("template    \(defaults.noteTemplate ?? "off")")
             print("context     \(defaults.recognitionContext.rawValue)  (local Whisper hint)")
             print("model       \(defaults.model)\(config.model == nil ? "  (recommended)" : "")")
             print("language    \(defaults.language)\(config.language == nil ? "  (default)" : "")")
@@ -118,6 +119,18 @@ struct Settings: ParsableCommand {
             help: "Restore the primary delivery destination for the note key."
         )
         var noNoteJournal: Bool = false
+
+        @Option(
+            name: .customLong("template"),
+            help: "Apply a named local Markdown template whenever note mode is active."
+        )
+        var noteTemplate: String?
+
+        @Flag(
+            name: .customLong("no-template"),
+            help: "Disable the saved note template."
+        )
+        var noNoteTemplate: Bool = false
 
         @Option(
             name: .customLong("context"),
@@ -233,7 +246,7 @@ struct Settings: ParsableCommand {
         func validate() throws {
             guard hotkey != nil || noteHotkey != nil || noNoteHotkey
                     || noteJournal != nil || noNoteJournal
-                    || recognitionContext != nil
+                    || noteTemplate != nil || noNoteTemplate || recognitionContext != nil
                     || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
@@ -291,6 +304,9 @@ struct Settings: ParsableCommand {
                     "pass at most one of --note-journal or --no-note-journal"
                 )
             }
+            guard !(noteTemplate != nil && noNoteTemplate) else {
+                throw ValidationError("pass at most one of --template or --no-template")
+            }
             if let historyRetentionDays {
                 _ = try HistoryRetentionPolicy(days: historyRetentionDays)
             }
@@ -309,6 +325,14 @@ struct Settings: ParsableCommand {
             }
             if let noteJournal {
                 _ = try MarkdownJournal.resolveURL(noteJournal)
+            }
+            if let noteTemplate {
+                let library = try NoteTemplateLibrary.load()
+                guard library.entry(matching: noteTemplate) != nil else {
+                    throw ValidationError(
+                        "no note template matches '\(noteTemplate)'; run `parrot templates`"
+                    )
+                }
             }
             if let recognitionContext,
                RecognitionContextSource.parse(recognitionContext) == nil {
@@ -341,7 +365,7 @@ struct Settings: ParsableCommand {
         func run() throws {
             guard hotkey != nil || noteHotkey != nil || noNoteHotkey
                     || noteJournal != nil || noNoteJournal
-                    || recognitionContext != nil
+                    || noteTemplate != nil || noNoteTemplate || recognitionContext != nil
                     || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
@@ -383,6 +407,17 @@ struct Settings: ParsableCommand {
                 config.noteJournalPath = url.path
             } else if noNoteJournal {
                 config.noteJournalPath = nil
+            }
+            if let noteTemplate {
+                let library = try NoteTemplateLibrary.load()
+                guard let canonical = library.canonicalName(matching: noteTemplate) else {
+                    throw ValidationError(
+                        "no note template matches '\(noteTemplate)'; run `parrot templates`"
+                    )
+                }
+                config.noteTemplate = canonical
+            } else if noNoteTemplate {
+                config.noteTemplate = nil
             }
             if let recognitionContext {
                 guard let parsed = RecognitionContextSource.parse(recognitionContext) else {
@@ -493,6 +528,7 @@ struct Settings: ParsableCommand {
             config.hotkey = nil
             config.noteHotkey = nil
             config.noteJournalPath = nil
+            config.noteTemplate = nil
             config.recognitionContext = nil
             config.model = nil
             config.language = nil

@@ -462,6 +462,15 @@ quiet speech, healthy signal, and clipping with actionable macOS guidance and st
 diagnostic does not initialize a recognizer, save audio or history, change device preferences, or
 perform network work; non-healthy results use exit status 2 for setup automation.
 
+**3.36 — Recurring notes require rebuilding their Markdown structure every time.** ✅ **FIXED**
+
+`parrot templates` now manages a bounded private library of deterministic Markdown shapes with
+starter presets, exact file/text input, a saved note-mode default, and a prefix-only spoken selector
+for one capture. Formatting, cleanup, spoken edits, and snippets complete before the template wraps
+the transcript. Bodies never enter recognition context; only four recent short names may use the
+existing prompt budget. The library hot-reloads atomically without model reload or daemon restart,
+while saved-default changes retain the normal explicit restart behavior.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

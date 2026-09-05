@@ -428,6 +428,25 @@ trigger is removed, preserving their reconstruction invariant. A dictation-to-no
 pause boundaries from the already captured PCM only when automatic paragraphs are enabled. No
 extra decoding pass, prompt tokens, model, context capture, or network request is added.
 
+### `NoteTemplateLibrary` / `NoteTemplateRenderer`
+
+Named Markdown templates live in owner-readable `~/.config/parrot/note-templates.json`. Each body
+contains `{{transcript}}` exactly once and may include local `{{date}}`, `{{time}}`, and
+timezone-qualified `{{datetime}}` values. Names, entry count, and body length are bounded; unknown
+or malformed placeholders fail validation before recording hardware is changed.
+
+A live prefix such as `template meeting, ...` chooses the longest matching saved name, forces note
+mode for that capture, and is stripped before deterministic text processing. `literal template`
+escapes selection. Saved templates apply only after note mode has won through the fallback,
+dedicated note hotkey, or app rule. Stored-media transcription accepts only an explicit or saved
+selection and never interprets its source transcript as a control phrase.
+
+Rendering happens after filler removal, optional cleanup, note formatting, spoken edits,
+lowercasing, and snippet expansion. It performs exact placeholder replacement only; no template
+body enters recognition context or another model. At most the four newest short trigger phrases
+share the existing bounded recognition prompt. The default no-template path returns the processed
+string directly.
+
 ### `SnippetLibrary` / `SnippetExpander`
 
 Reusable multiline text lives in owner-readable `~/.config/parrot/snippets.json`. The explicit
@@ -440,9 +459,9 @@ Only the four newest command phrases—not their bodies—are eligible for Whisp
 budget. Every saved trigger remains available to the deterministic expander. This keeps startup
 and per-dictation costs bounded even when the local library grows large.
 
-Vocabulary, filler, and snippet CLI writes are atomic, so a running daemon observes a complete old
-or new library on the next recording. It never needs to reload the Core ML model or restart the
-process.
+Vocabulary, filler, snippet, and note-template CLI writes are atomic, so a running daemon observes
+a complete old or new library on the next recording. It never needs to reload the Core ML model or
+restart the process.
 
 ### `TranscriptHistory`
 
@@ -751,7 +770,8 @@ Models are not bundled. New downloads live in
     and is skipped for every other detected language; then `NoteFormatter` applies
     explicit Markdown structure commands.
 12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies, which
-    are never passed through cleanup or note formatting.
+    are never passed through cleanup or note formatting. When note mode has a selected template,
+    `NoteTemplateRenderer` then wraps that finalized text with fixed local placeholders.
 13. `TextInjector` posts the string at the cursor, or `MarkdownJournal` durably appends it when
     journal delivery is selected. `TranscriptHistory` independently saves the recovery copy.
 14. When finite audio history is explicitly enabled, `HistoryAudioArchive` hard-links the staged
@@ -800,6 +820,11 @@ parrot/
     Settings.swift              # saved default management CLI
     Apps.swift                  # app-mode rule CLI
     AppModeRules.swift          # frontmost bundle-id mode policy + hot reload
+
+    Templates/
+      NoteTemplateLibrary.swift # bounded private library + validation
+      NoteTemplateRenderer.swift # prefix selection + deterministic rendering
+      NoteTemplateCommand.swift # list/add/show/use/off/remove/path CLI
 
     Daemon/
       DaemonLock.swift          # cross-process hotkey/mic ownership lock

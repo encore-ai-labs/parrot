@@ -11,9 +11,11 @@ enum StartupTUI {
         let language: String
         let microphone: String
         let mode: String
+        let noteTemplate: String?
         let vocabularyCount: Int
         let snippetCount: Int
         let fillerCount: Int
+        let templateCount: Int
         let historyPath: String?
         let historyRetentionDays: Int?
         let audioHistoryRetentionDays: Int?
@@ -53,13 +55,15 @@ enum StartupTUI {
             let context = details.recognitionContext == "off"
                 ? ""
                 : " · context: \(details.recognitionContext) (local)"
+            let template = details.noteTemplate.map { " · template: \($0)" } ?? ""
             write(
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
-                " · mic: \(details.microphone) · mode: \(details.mode)" +
+                " · mic: \(details.microphone) · mode: \(details.mode)\(template)" +
                 " · language: \(details.language)" +
                 " · vocabulary: \(details.vocabularyCount)" +
                 " · snippets: \(details.snippetCount)" +
                 " · fillers: \(details.fillerCount)" +
+                " · templates: \(details.templateCount)" +
                 " · delivery: \(details.delivery)" +
                 " · cleanup: \(details.cleanup ? "on (English speech)" : "off")" +
                 " · paragraphs: \(details.automaticParagraphs ? "on in notes" : "off")" +
@@ -97,6 +101,11 @@ enum StartupTUI {
             "mode",
             details.mode + (details.mode == "notes" ? "  (Markdown + local backtrack)" : "")
         ))
+        write(row(
+            "template",
+            details.noteTemplate.map { "\($0)  ·  deterministic local Markdown" }
+                ?? "off  ·  say ‘template <name>’ for one note"
+        ))
         write(row("microphone", details.microphone))
         write(row(
             "capture",
@@ -116,6 +125,10 @@ enum StartupTUI {
             ? "1 personal phrase  ·  live reload"
             : "\(details.fillerCount) personal phrases  ·  live reload  (parrot fillers)"
         write(row("fillers", fillers))
+        let templates = details.templateCount == 1
+            ? "1 note template  ·  live reload"
+            : "\(details.templateCount) note templates  ·  live reload  (parrot templates)"
+        write(row("templates", templates))
         write(row("cleanup", details.cleanup ? "on  ·  local deterministic · English speech" : "off"))
         write(row(
             "paragraphs",

@@ -596,6 +596,14 @@ returns, Parrot promotes it automatically. A reconnect during an active dictatio
 dictation ends, so one note never mixes microphones or gets discarded merely because a dock was
 plugged in. Explicit priorities may include Bluetooth; automatic fallback still avoids it.
 
+You can also open the menu-bar bird and switch the active microphone immediately—no daemon
+restart. The submenu shows the input Parrot actually opened, marks temporary fallback use, and
+labels Bluetooth or virtual-device risks. A live choice moves that microphone to the front of the
+saved priority order without deleting the remaining fallbacks. Switching is disabled while
+recording or transcribing; input replacement runs away from the UI, clears cross-device pre-roll,
+and a hotkey press racing the swap is rejected rather than creating a mixed-microphone note.
+Connect/disconnect notifications refresh the list, so the daemon does not poll CoreAudio at idle.
+
 **Don't record from Bluetooth headphones if you're listening to music on them.** macOS can't
 run high-quality playback and mic capture on the same Bluetooth device at once — opening a
 headset's mic drags it from A2DP (stereo, 44.1 kHz) down to HFP (mono, 16 kHz), and your audio

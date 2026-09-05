@@ -100,6 +100,20 @@ final class AudioRecoveryTests: XCTestCase {
         )
     }
 
+    func testLiveInputSwitchAndCaptureStartAreMutuallyExclusive() {
+        var gate = AudioInputSwitchGate()
+
+        XCTAssertFalse(gate.begin(isCapturing: true))
+        XCTAssertTrue(gate.permitsCaptureStart)
+
+        XCTAssertTrue(gate.begin(isCapturing: false))
+        XCTAssertFalse(gate.permitsCaptureStart)
+        XCTAssertFalse(gate.begin(isCapturing: false))
+
+        gate.end()
+        XCTAssertTrue(gate.permitsCaptureStart)
+    }
+
     func testRMSAcceptsAudioBufferWithoutArrayMaterialization() {
         let samples: [Float] = [0.5, -0.5, 0.5, -0.5]
         let rms = samples.withUnsafeBufferPointer { computeRMS($0) }
@@ -175,6 +189,74 @@ final class AudioRecoveryTests: XCTestCase {
         XCTAssertNil(AudioDevices.find("   ", in: [studio]))
     }
 
+    func testLiveSelectionMovesMicrophoneToFrontAndPreservesFallbacks() {
+        XCTAssertEqual(
+            AudioDevices.priorities(
+                selecting: "built-in",
+                existing: ["studio", "display", "built-in"]
+            ),
+            ["built-in", "studio", "display"]
+        )
+        XCTAssertEqual(
+            AudioDevices.priorities(
+                selecting: " studio ",
+                existing: ["studio", "display", "display", ""]
+            ),
+            ["studio", "display"]
+        )
+        XCTAssertEqual(
+            AudioDevices.priorities(
+                selecting: "selected",
+                existing: (0..<20).map { "fallback-\($0)" }
+            ).count,
+            AudioDevices.maximumPriorityCount
+        )
+    }
+
+    func testMicrophoneMenuPresentationShowsActualRiskAndFallbackState() {
+        let builtIn = AudioInputDevice(
+            id: 1,
+            name: "MacBook Microphone",
+            uid: "built-in",
+            transport: kAudioDeviceTransportTypeBuiltIn,
+            inputChannels: 1
+        )
+        let bluetooth = AudioInputDevice(
+            id: 2,
+            name: "AirPods",
+            uid: "airpods",
+            transport: kAudioDeviceTransportTypeBluetooth,
+            inputChannels: 1
+        )
+        let virtual = AudioInputDevice(
+            id: 3,
+            name: "ZoomAudioDevice",
+            uid: "zoom",
+            transport: kAudioDeviceTransportTypeVirtual,
+            inputChannels: 1
+        )
+
+        XCTAssertEqual(
+            MicrophoneMenuPresentation.sorted([virtual, builtIn, bluetooth]).map(\.uid),
+            ["airpods", "built-in", "zoom"]
+        )
+        XCTAssertEqual(
+            MicrophoneMenuPresentation.itemTitle(bluetooth),
+            "AirPods · bluetooth ⚠"
+        )
+        XCTAssertEqual(
+            MicrophoneMenuPresentation.itemTitle(virtual),
+            "ZoomAudioDevice · virtual ⚠"
+        )
+        XCTAssertEqual(
+            MicrophoneMenuPresentation.label(
+                name: builtIn.name,
+                isTemporaryFallback: true
+            ),
+            "microphone: MacBook Microphone · temporary fallback"
+        )
+    }
+
     func testOnlyHigherPriorityConnectionPromotesAndActiveCaptureDefersIt() {
         let priorities = ["studio", "display", "built-in"]
 
@@ -245,6 +327,22 @@ final class AudioRecoveryTests: XCTestCase {
             }
         }
         XCTAssertEqual(promotion, .immediately)
+    }
+
+    func testLiveSelectionPriorityUpdateCostStaysNegligible() {
+        let priorities = (0..<AudioDevices.maximumPriorityCount).map { "mic-\($0)" }
+        var selected: [String] = []
+
+        measure {
+            for _ in 0..<10_000 {
+                selected = AudioDevices.priorities(
+                    selecting: "mic-7",
+                    existing: priorities
+                )
+            }
+        }
+        XCTAssertEqual(selected.first, "mic-7")
+        XCTAssertEqual(selected.count, AudioDevices.maximumPriorityCount)
     }
 
     private func device(

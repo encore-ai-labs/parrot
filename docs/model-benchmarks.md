@@ -154,6 +154,12 @@ debug performance harness on this Mac, or about **0.70 microseconds per device c
 Startup and actual recovery additionally enumerate current CoreAudio devices, work that already
 existed and remains outside capture and inference.
 
+Live menu selection remains event-driven and updates the same bounded priority list. In the debug
+performance harness, 10,000 selected-device reorderings at the maximum eight saved UIDs averaged
+**43 ms**, or about **4.3 microseconds per user selection**. Actual AVCaptureSession input
+replacement is a one-time asynchronous hardware operation on the existing serial session queue;
+it does not block the menu, run during capture, add idle polling, or touch transcription/model work.
+
 ## Local history export cost
 
 History export is an explicit CLI operation and adds no capture, delivery, model, or daemon-idle

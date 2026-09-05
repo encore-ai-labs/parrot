@@ -183,6 +183,14 @@ discards an otherwise valid note. The rank/capture decision and capture transiti
 closing the old reconnect/start race. The audio delegate consumes the `UnsafeBufferPointer` in
 place, avoiding the former per-buffer `Array` allocation.
 
+The menu-bar microphone submenu exposes the same device state and serialized configuration path.
+It displays the AVFoundation input actually in use rather than merely echoing a preference, marks
+temporary fallback state, and refreshes only on device connection notifications. An idle selection
+moves that UID to the front of the persisted priority order, rebuilds the session off the main
+thread, and preserves lower-ranked fallbacks. A lock-protected admission gate makes capture start
+and manual replacement mutually exclusive; pre-roll is cleared before replacement, so a note
+cannot span two microphones. Failed switches roll back to the prior priority/session configuration.
+
 ### `AudioDevices`
 
 CoreAudio enumeration and selection: `parrot devices` lists inputs with transport type and saved

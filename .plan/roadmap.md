@@ -82,8 +82,10 @@ share the same serialized, bounded-backoff recovery path.
 `UnsafeBufferPointer` directly for capture, pre-roll, and RMS instead of materializing an
 `Array` for every buffer. The short lock remains to synchronize hotkey stop/start handoff.
 
-**2.7 Live mic switching** — now that the device is a session input rather than a global
-default, a menu-bar "Microphone" submenu could switch without restarting.
+**2.7 Live mic switching** — ✅ **done.** The menu-bar microphone submenu shows the actual input,
+fallback state, and Bluetooth/virtual warnings. Idle selection safely rebuilds the session without
+restarting, persists the chosen device at the front of the existing fallback order, and refreshes
+only on connection events.
 
 ---
 
@@ -225,6 +227,11 @@ insertion remains the clipboard-free default and no longer splits surrogate pair
 clipboard/Command-V compatibility path preserves every readable pasteboard type, restores after
 a bounded configurable delay, and never overwrites a newer user copy. The idle menu can reinsert
 the last finalized result without inference, duplicate history, or retained audio.
+
+**6.17 Event-driven live microphone control** — ✅ **complete.** The menu bar exposes the current
+AVFoundation input and connected devices without idle polling. A lock-protected input-swap gate,
+pre-roll reset, off-main session rebuild, and rollback path preserve note continuity and keep the
+saved priority fallback behavior intact.
 
 ---
 

@@ -93,6 +93,25 @@ struct AudioRecoveryState: Equatable {
     }
 }
 
+/// Lock-protected admission state for live input replacement. Both capture
+/// start and menu switching consult this while holding the same lock, making
+/// the pre-roll/device boundary an atomic decision rather than a timing bet.
+struct AudioInputSwitchGate: Equatable {
+    private(set) var isSwitching = false
+
+    var permitsCaptureStart: Bool { !isSwitching }
+
+    mutating func begin(isCapturing: Bool) -> Bool {
+        guard !isCapturing, !isSwitching else { return false }
+        isSwitching = true
+        return true
+    }
+
+    mutating func end() {
+        isSwitching = false
+    }
+}
+
 /// Captures microphone audio and returns 16 kHz mono Float32 when stopped.
 ///
 /// Built on `AVCaptureSession` rather than `AVAudioEngine`, for one decisive
@@ -130,6 +149,19 @@ struct CapturedAudio: Sendable {
 }
 
 final class AudioCapture: NSObject {
+    struct InputStatus: Equatable, Sendable {
+        let uid: String
+        let name: String
+        let isTemporaryFallback: Bool
+    }
+
+    enum InputSwitchResult: Equatable, Sendable {
+        case switched(InputStatus)
+        case busy
+        case unavailable(String)
+        case failed(String)
+    }
+
     enum MemoryAction: Equatable {
         case append
         case switchToFile
@@ -194,7 +226,9 @@ final class AudioCapture: NSObject {
     private var ringWrite = 0
     private var ringCount = 0
 
-    private let preferredDeviceUIDs: [String]
+    /// Accessed only on `sessionQueue`. A menu selection moves one device to
+    /// the front while preserving the remaining automatic fallback order.
+    private var preferredDeviceUIDs: [String]
     /// Startup's already-resolved automatic fallback (including an explicitly
     /// allowed Bluetooth default) when no ranked device is currently present.
     private let startupFallbackDeviceUID: String?
@@ -214,6 +248,9 @@ final class AudioCapture: NSObject {
     /// Protected by `lock`. A better mic that appears mid-dictation is
     /// promoted only after that capture ends, preserving one continuous source.
     private var pendingPreferredDevice: (uid: String, name: String)?
+    /// Protected by `lock`. Starting a capture while the session input is
+    /// being replaced could seed a note with pre-roll from the previous mic.
+    private var inputSwitchGate = AudioInputSwitchGate()
     private var sessionObservers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
 
@@ -222,6 +259,14 @@ final class AudioCapture: NSObject {
 
     /// Operational messages such as disconnect/recovery. Arbitrary thread.
     var onStatus: ((String) -> Void)?
+
+    /// Reports the input actually opened by AVFoundation, including temporary
+    /// fallback state. Arbitrary thread; callers should hop to their UI queue.
+    var onDeviceChanged: ((InputStatus) -> Void)?
+
+    /// Connection notifications invalidate the menu's device list without
+    /// requiring a timer or idle polling. Arbitrary thread.
+    var onAvailableDevicesChanged: (() -> Void)?
 
     /// A partial recording was discarded because its audio stream became
     /// discontinuous. Arbitrary thread; callers should hop to their UI queue.
@@ -284,6 +329,11 @@ final class AudioCapture: NSObject {
             try LiveRecordingSpool(fileURL: $0, sampleRate: Int(Self.targetSampleRate))
         }
         lock.lock()
+        guard inputSwitchGate.permitsCaptureStart else {
+            newSpool?.cancel()
+            lock.unlock()
+            throw CaptureError.temporarilyUnavailable
+        }
         captured.removeAll(keepingCapacity: true)
         recordingIsFileBacked = false
         if usePreRoll, ringCount > 0 {
@@ -429,6 +479,97 @@ final class AudioCapture: NSObject {
         }
     }
 
+    /// Replace the live AVCaptureSession input without blocking the main
+    /// thread. Switching is deliberately rejected during capture so one note
+    /// can never contain audio from two microphones.
+    func switchInput(
+        toUID uid: String,
+        name: String,
+        priorityUIDs: [String],
+        completion: @escaping @Sendable (InputSwitchResult) -> Void
+    ) {
+        let priorities = AudioDevices.priorities(selecting: uid, existing: priorityUIDs)
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+
+            self.lock.lock()
+            guard self.inputSwitchGate.begin(
+                isCapturing: self.recoveryState.isCapturing
+            ) else {
+                self.lock.unlock()
+                completion(.busy)
+                return
+            }
+            self.lock.unlock()
+
+            defer {
+                self.lock.lock()
+                self.inputSwitchGate.end()
+                self.lock.unlock()
+            }
+
+            guard let selected = AVCaptureDevice(uniqueID: uid),
+                  selected.isConnected,
+                  selected.hasMediaType(.audio)
+            else {
+                completion(.unavailable(name))
+                return
+            }
+
+            let previousPriorities = self.preferredDeviceUIDs
+            self.preferredDeviceUIDs = priorities
+            if self.activeDeviceUID == uid {
+                let status = self.currentInputStatus()
+                self.onDeviceChanged?(status)
+                completion(.switched(status))
+                return
+            }
+
+            self.lock.lock()
+            self.ringWrite = 0
+            self.ringCount = 0
+            self.pendingPreferredDevice = nil
+            self.lock.unlock()
+            self.recoveryGeneration += 1
+            self.recoveryScheduled = false
+            self.recoveryFailures = 0
+
+            do {
+                self.resetConfiguration()
+                try self.configureIfNeeded()
+                if self.usePreRoll, !self.session.isRunning {
+                    self.session.startRunning()
+                }
+                self.clearReconfigurationRequirement()
+                let status = self.currentInputStatus()
+                guard status.uid == uid else {
+                    throw CaptureError.deviceNotFound(name)
+                }
+                completion(.switched(status))
+            } catch {
+                let selectionError = error.localizedDescription
+                self.preferredDeviceUIDs = previousPriorities
+                self.resetConfiguration()
+                do {
+                    try self.configureIfNeeded()
+                    if self.usePreRoll, !self.session.isRunning {
+                        self.session.startRunning()
+                    }
+                    self.clearReconfigurationRequirement()
+                } catch {
+                    self.lock.lock()
+                    self.reconfigurationRequired = true
+                    self.lock.unlock()
+                    self.requestRecovery(
+                        reconfigure: true,
+                        reason: "restoring microphone after failed live switch"
+                    )
+                }
+                completion(.failed(selectionError))
+            }
+        }
+    }
+
     // MARK: -
 
     private func configureIfNeeded() throws {
@@ -469,6 +610,16 @@ final class AudioCapture: NSObject {
         activeDeviceUID = device.uniqueID
         activeDeviceName = device.localizedName
         configured = true
+        onDeviceChanged?(currentInputStatus())
+    }
+
+    private func currentInputStatus() -> InputStatus {
+        let uid = activeDeviceUID ?? ""
+        return InputStatus(
+            uid: uid,
+            name: activeDeviceName ?? "system default",
+            isTemporaryFallback: preferredDeviceUIDs.first.map { $0 != uid } ?? false
+        )
     }
 
     /// Tear down stale input objects after wake, media-service reset, or a
@@ -558,6 +709,7 @@ final class AudioCapture: NSObject {
             queue: nil
         ) { [weak self] notification in
             guard let device = notification.object as? AVCaptureDevice else { return }
+            self?.onAvailableDevicesChanged?()
             self?.sessionQueue.async { [weak self] in
                 guard let self, device.uniqueID == self.activeDeviceUID else { return }
                 self.handleRecoveryEvent(
@@ -573,6 +725,7 @@ final class AudioCapture: NSObject {
             guard let self,
                   let device = notification.object as? AVCaptureDevice
             else { return }
+            self.onAvailableDevicesChanged?()
             let uid = device.uniqueID
             let name = device.localizedName
             self.sessionQueue.async { [weak self] in

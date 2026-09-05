@@ -1,5 +1,23 @@
 import AppKit
 
+enum MicrophoneMenuPresentation {
+    static func label(name: String?, isTemporaryFallback: Bool) -> String {
+        "microphone: \(name ?? "unavailable")"
+            + (isTemporaryFallback ? " · temporary fallback" : "")
+    }
+
+    static func sorted(_ devices: [AudioInputDevice]) -> [AudioInputDevice] {
+        devices.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    static func itemTitle(_ device: AudioInputDevice) -> String {
+        let warning = device.isBluetooth || device.isVirtual ? " ⚠" : ""
+        return "\(device.name) · \(device.transportName)\(warning)"
+    }
+}
+
 /// Status bar item in the top-right of the menu bar. Shows recording state at
 /// a glance and provides the only persistent control surface for the daemon
 /// (since we run as `.accessory` — no dock icon, no main window).
@@ -8,6 +26,8 @@ final class MenuBarController {
     private let statusItem: NSStatusItem
     private let modelLabel: NSMenuItem
     private let stateLabel: NSMenuItem
+    private let microphoneLabel: NSMenuItem
+    private let microphoneMenu: NSMenu
     private let modeLabel: NSMenuItem
     private let dictationModeItem: NSMenuItem
     private let notesModeItem: NSMenuItem
@@ -19,6 +39,7 @@ final class MenuBarController {
     private let idleTitle: String
     private var updateAction: (() -> Void)?
     private var modeAction: ((DictationMode) -> Void)?
+    private var microphoneAction: ((AudioInputDevice) -> Void)?
     private var insertLastTranscriptAction: (() -> Void)?
     private var retryRecordingAction: (() -> Void)?
     private var forgetRecordingAction: (() -> Void)?
@@ -26,6 +47,11 @@ final class MenuBarController {
     private var recordingRecoveryBusy = false
     private var interactionBusy = false
     private var lastTranscriptAvailable = false
+    private var microphoneSwitchInProgress = false
+    private var microphoneDevices: [String: AudioInputDevice] = [:]
+    private var activeMicrophoneUID: String?
+    private var activeMicrophoneName: String?
+    private var activeMicrophoneIsFallback = false
 
     init(
         modelID: String,
@@ -56,6 +82,16 @@ final class MenuBarController {
         )
         modelLabel.isEnabled = false
         menu.addItem(modelLabel)
+
+        microphoneLabel = NSMenuItem(
+            title: "microphone: discovering…",
+            action: nil,
+            keyEquivalent: ""
+        )
+        microphoneMenu = NSMenu()
+        microphoneMenu.autoenablesItems = false
+        microphoneLabel.submenu = microphoneMenu
+        menu.addItem(microphoneLabel)
 
         updateLabel = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         modeLabel = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -129,25 +165,117 @@ final class MenuBarController {
     func setRecording(_ recording: Bool) {
         interactionBusy = recording
         stateLabel.title = recording ? "● recording" : idleTitle
-        updateInsertLastTranscriptItem()
+        updateInteractiveItems()
     }
 
     func setTranscribing() {
         interactionBusy = true
         stateLabel.title = "transcribing…"
-        updateInsertLastTranscriptItem()
+        updateInteractiveItems()
     }
 
     func setLastTranscript(available: Bool, action: (() -> Void)? = nil) {
         if let action { insertLastTranscriptAction = action }
         lastTranscriptAvailable = available
-        updateInsertLastTranscriptItem()
+        updateInteractiveItems()
     }
 
-    private func updateInsertLastTranscriptItem() {
+    private func updateInteractiveItems() {
         insertLastTranscriptItem.isEnabled = lastTranscriptAvailable
             && insertLastTranscriptAction != nil
             && !interactionBusy
+        microphoneLabel.isEnabled = !interactionBusy
+            && !microphoneSwitchInProgress
+            && !microphoneDevices.isEmpty
+        for item in microphoneMenu.items where item.representedObject != nil {
+            item.isEnabled = !interactionBusy && !microphoneSwitchInProgress
+        }
+    }
+
+    func setMicrophones(
+        _ devices: [AudioInputDevice],
+        activeUID: String? = nil,
+        activeName: String? = nil,
+        isTemporaryFallback: Bool? = nil,
+        action: ((AudioInputDevice) -> Void)? = nil
+    ) {
+        var uniqueDevices: [String: AudioInputDevice] = [:]
+        for device in devices where !device.uid.isEmpty {
+            uniqueDevices[device.uid] = device
+        }
+        microphoneDevices = uniqueDevices
+        if let activeUID { activeMicrophoneUID = activeUID }
+        if let activeName { activeMicrophoneName = activeName }
+        if let isTemporaryFallback { activeMicrophoneIsFallback = isTemporaryFallback }
+        if let action { microphoneAction = action }
+        updateMicrophoneLabel()
+        rebuildMicrophoneMenu()
+        updateInteractiveItems()
+    }
+
+    func setActiveMicrophone(_ status: AudioCapture.InputStatus) {
+        activeMicrophoneUID = status.uid
+        activeMicrophoneName = status.name
+        activeMicrophoneIsFallback = status.isTemporaryFallback
+        microphoneSwitchInProgress = false
+        updateMicrophoneLabel()
+        rebuildMicrophoneMenu()
+        updateInteractiveItems()
+    }
+
+    func setMicrophoneSwitching(to name: String) {
+        microphoneSwitchInProgress = true
+        microphoneLabel.title = "microphone: switching to \(name)…"
+        updateInteractiveItems()
+    }
+
+    func setMicrophoneSwitchFailed(_ message: String) {
+        microphoneSwitchInProgress = false
+        updateMicrophoneLabel()
+        microphoneLabel.toolTip = message
+        updateInteractiveItems()
+    }
+
+    private func updateMicrophoneLabel() {
+        microphoneLabel.title = MicrophoneMenuPresentation.label(
+            name: activeMicrophoneName,
+            isTemporaryFallback: activeMicrophoneIsFallback
+        )
+        microphoneLabel.toolTip = activeMicrophoneIsFallback
+            ? "The preferred microphone is unavailable; Parrot is using this input temporarily."
+            : nil
+    }
+
+    private func rebuildMicrophoneMenu() {
+        microphoneMenu.removeAllItems()
+        let devices = MicrophoneMenuPresentation.sorted(Array(microphoneDevices.values))
+        guard !devices.isEmpty else {
+            let unavailable = NSMenuItem(
+                title: "No microphones connected",
+                action: nil,
+                keyEquivalent: ""
+            )
+            unavailable.isEnabled = false
+            microphoneMenu.addItem(unavailable)
+            return
+        }
+        for device in devices {
+            let item = NSMenuItem(
+                title: MicrophoneMenuPresentation.itemTitle(device),
+                action: #selector(microphoneClicked(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = device.uid
+            item.state = device.uid == activeMicrophoneUID ? .on : .off
+            item.isEnabled = !interactionBusy && !microphoneSwitchInProgress
+            if device.isBluetooth {
+                item.toolTip = "Bluetooth microphone use can reduce headset playback to call quality."
+            } else if device.isVirtual {
+                item.toolTip = "Virtual inputs may be silent unless their source app is routing audio."
+            }
+            microphoneMenu.addItem(item)
+        }
     }
 
     func setRecordingRecovery(
@@ -256,6 +384,17 @@ final class MenuBarController {
     @objc private func dictationModeClicked() {
         modeAction?(.dictation)
         setMode(.dictation)
+    }
+
+    @objc private func microphoneClicked(_ sender: NSMenuItem) {
+        guard !interactionBusy,
+              !microphoneSwitchInProgress,
+              let uid = sender.representedObject as? String,
+              let device = microphoneDevices[uid],
+              let microphoneAction
+        else { return }
+        setMicrophoneSwitching(to: device.name)
+        microphoneAction(device)
     }
 
     @objc private func notesModeClicked() {

@@ -13,7 +13,7 @@ import Foundation
 /// or built-in mic is available. Dictation loses nothing — Whisper resamples to
 /// 16 kHz regardless, and a headset mic *is* 16 kHz mono — while your music
 /// stays in A2DP.
-struct AudioInputDevice {
+struct AudioInputDevice: Equatable, Sendable {
     let id: AudioDeviceID
     let name: String
     let uid: String
@@ -133,6 +133,13 @@ enum AudioDevices {
             if result.count == maximumPriorityCount { break }
         }
         return result
+    }
+
+    /// Move a user-selected microphone to the front without throwing away
+    /// their existing fallback order. This is shared by the CLI and menu-bar
+    /// paths so a live choice remains useful after a disconnect or restart.
+    static func priorities(selecting uid: String, existing: [String]) -> [String] {
+        normalizedPriorityUIDs([uid] + existing.filter { $0 != uid })
     }
 
     /// Select the first currently connected device in the user's saved order.

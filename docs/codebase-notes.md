@@ -445,6 +445,15 @@ reinsert the last finalized transcript without inference, duplicate history, or 
 history seeds the action across restarts while `--no-history` still supports current-session
 recovery.
 
+**3.34 — Changing microphones requires restarting an otherwise healthy daemon.** ✅ **FIXED**
+
+The menu bar now lists connected inputs, the device AVFoundation actually opened, transport risk,
+and temporary-fallback state. An idle selection moves that UID to the front of the existing saved
+fallback order and rebuilds the live session on its serial queue. Device notifications refresh the
+menu without polling. A shared lock gate excludes simultaneous capture start, pre-roll is cleared
+at the boundary, and failure rolls back the previous session instead of stranding dictation or
+mixing two microphones in one note.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

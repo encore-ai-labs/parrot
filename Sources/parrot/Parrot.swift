@@ -844,6 +844,75 @@ struct Run: ParsableCommand {
                 }
             }
         }
+        let initiallyAvailableMicrophones = AudioDevices.inputs()
+        MainActor.assumeIsolated {
+            menuBar.setMicrophones(
+                initiallyAvailableMicrophones,
+                activeUID: chosenDevice?.uid,
+                activeName: chosenDevice?.name,
+                isTemporaryFallback: capturePriorityUIDs.first.map {
+                    $0 != chosenDevice?.uid
+                } ?? false
+            ) { [weak capture, weak menuBar] device in
+                guard let capture, let menuBar else { return }
+                let latestConfig = Config.load()
+                let existingPriorities = latestConfig.savedInputDeviceUIDs.isEmpty
+                    ? capturePriorityUIDs
+                    : latestConfig.savedInputDeviceUIDs
+                let selectedPriorities = AudioDevices.priorities(
+                    selecting: device.uid,
+                    existing: existingPriorities
+                )
+                capture.switchInput(
+                    toUID: device.uid,
+                    name: device.name,
+                    priorityUIDs: selectedPriorities
+                ) { result in
+                    DispatchQueue.main.async {
+                        switch result {
+                        case .switched(let status):
+                            var latest = Config.load()
+                            latest.inputDeviceUID = device.uid
+                            latest.inputDeviceUIDs = selectedPriorities
+                            latest.save()
+                            menuBar.setActiveMicrophone(status)
+                            FileHandle.standardError.write(Data(
+                                "✓ microphone switched · \(status.name)\n".utf8
+                            ))
+                            if let warning = AudioDevices.bluetoothWarning(for: device) {
+                                FileHandle.standardError.write(Data("\(warning)\n".utf8))
+                            }
+                        case .busy:
+                            menuBar.setMicrophoneSwitchFailed(
+                                "Finish or cancel the current dictation before switching microphones."
+                            )
+                        case .unavailable(let name):
+                            menuBar.setMicrophones(AudioDevices.inputs())
+                            menuBar.setMicrophoneSwitchFailed(
+                                "\(name) disconnected before Parrot could switch to it."
+                            )
+                        case .failed(let reason):
+                            menuBar.setMicrophoneSwitchFailed(
+                                "Couldn't switch microphones: \(reason)"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        capture.onDeviceChanged = { [weak menuBar] status in
+            DispatchQueue.main.async {
+                menuBar?.setActiveMicrophone(status)
+            }
+        }
+        capture.onAvailableDevicesChanged = { [weak menuBar] in
+            DispatchQueue.global(qos: .utility).async {
+                let devices = AudioDevices.inputs()
+                DispatchQueue.main.async {
+                    menuBar?.setMicrophones(devices)
+                }
+            }
+        }
         let history = noHistory
             ? nil
             : TranscriptHistory(retentionDays: defaults.historyRetentionDays)

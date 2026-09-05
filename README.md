@@ -42,6 +42,31 @@ stop. The exit key is consumed, so it will not type or submit before the transcr
 Press **Escape** at any point while recording to cancel and discard the audio without
 transcribing, saving history, or injecting text. Escape is consumed as part of cancellation.
 
+### Local note mode
+
+Start Parrot with `--notes` (or `--note-mode`) to turn explicit spoken structure into
+Markdown without an LLM or network request:
+
+```sh
+parrot --notes
+```
+
+| Say | Markdown result |
+|---|---|
+| `new paragraph`, `new line` | Paragraph or line break |
+| `bullet point`, `new bullet`, `next bullet` | `- ` list item |
+| `numbered item`, `next numbered item` | `1. ` list item |
+| `checkbox`, `new task`, `task item` | `- [ ] ` task |
+| `heading`, `heading two` | `## ` heading |
+| `heading one`, `heading three` | `# ` or `### ` heading |
+| `period`, `comma`, `colon`, `semicolon` | Punctuation |
+| `question mark`, `exclamation point`, `em dash` | Punctuation |
+
+Note mode changes only these exact commands; it does not summarize, invent, or rewrite your
+words. To speak a command literally, prefix it with `literal`—for example, `literal new
+paragraph`. Normal dictation stays unchanged unless `--notes` is present. Formatted Markdown
+is what gets pasted and saved to local history.
+
 ### Transcript history
 
 Successful dictations are also appended to daily Markdown files under
@@ -198,6 +223,7 @@ parrot vocabulary add "rust pond" --as RustPond
 parrot history                         # list recent local transcripts
 parrot history search project roadmap # search private Markdown history
 parrot history copy                    # recover the latest transcript to clipboard
+parrot --notes                         # explicit spoken commands → local Markdown
 parrot --input-device brio             # pick a specific mic
 parrot --no-pick-mic                   # skip the mic prompt
 parrot --lowercase                     # lowercase all transcribed text

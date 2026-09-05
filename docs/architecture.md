@@ -188,6 +188,20 @@ After transcription and annotation cleanup, a single deterministic replacement p
 against the original transcript, so replacements cannot cascade. This gives exact results for
 recurring names and jargon without an LLM, network request, or variable post-processing latency.
 
+### `NoteFormatter`
+
+`--notes` enables an explicit spoken-command layer after transcription and vocabulary
+replacement. It converts commands such as `new paragraph`, `bullet point`, `numbered item`,
+`new task`, and `heading two` into Markdown structure, along with a small set of spoken
+punctuation commands. `literal <command>` protects command words when they should appear as
+text. Normal dictation bypasses the formatter entirely.
+
+All command patterns are compiled once as static regular expressions. Formatting is a bounded,
+deterministic local string pass: it does not invoke a language model, inspect the destination
+application, or make a network request. The command phrases are included in Whisper's existing
+96-token prompt budget only when note mode is active, improving their recognition without an
+unbounded latency cost.
+
 ### `TranscriptHistory`
 
 Successful, non-empty transcripts are appended to one Markdown file per local calendar day
@@ -322,9 +336,10 @@ Models currently live in `~/Documents/huggingface/` (WhisperKit's default). Not 
 8. `HotkeyMonitor` fires `.released`. Overlay switches to spinner. Status: `transcribing`.
 9. `AudioCapture` stops, hands buffer to active `Transcriber`.
 10. `Transcriber` runs CoreML inference. Returns string.
-11. `TextInjector` posts the string at the cursor.
-12. Overlay hides. Status: `listening`. Loop.
-13. User hits `^C`. Process exits cleanly.
+11. If `--notes` is active, `NoteFormatter` applies explicit Markdown structure commands.
+12. `TextInjector` posts the string at the cursor and `TranscriptHistory` saves it locally.
+13. Overlay hides. Status: `listening`. Loop.
+14. User hits `^C`. Process exits cleanly.
 
 End-to-end latency target: <500 ms after hotkey release for utterances under 10 seconds, on Apple Silicon.
 

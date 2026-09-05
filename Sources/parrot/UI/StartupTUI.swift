@@ -6,6 +6,7 @@ enum StartupTUI {
         let hotkey: String
         let model: String
         let microphone: String
+        let mode: String
         let vocabularyCount: Int
         let historyPath: String?
         let systemHotkeyAction: String?
@@ -31,7 +32,8 @@ enum StartupTUI {
             let systemAction = details.systemHotkeyAction.map { " · \($0)" } ?? ""
             write(
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
-                " · mic: \(details.microphone) · vocabulary: \(details.vocabularyCount)" +
+                " · mic: \(details.microphone) · mode: \(details.mode)" +
+                " · vocabulary: \(details.vocabularyCount)" +
                 "\(history)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
@@ -46,6 +48,7 @@ enum StartupTUI {
             write(row("macOS key", systemHotkeyAction))
         }
         write(row("model", details.model))
+        write(row("mode", details.mode + (details.mode == "notes" ? "  (spoken Markdown commands)" : "")))
         write(row("microphone", details.microphone))
         let vocabulary = details.vocabularyCount == 1
             ? "1 term"

@@ -137,6 +137,12 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Don't save successful transcripts to local Markdown history.")
     var noHistory: Bool = false
 
+    @Flag(
+        name: [.customLong("notes"), .customLong("note-mode")],
+        help: "Format explicit spoken commands into Markdown notes, entirely on-device."
+    )
+    var noteMode: Bool = false
+
     @Flag(name: .long, help: "Re-run first-time setup and overwrite saved preferences.")
     var reconfigure: Bool = false
 
@@ -308,7 +314,11 @@ struct Run: ParsableCommand {
             ))
             vocabulary = PersonalVocabulary()
         }
-        let transcriber = WhisperKitTranscriber(model: chosenModel, vocabulary: vocabulary)
+        let transcriber = WhisperKitTranscriber(
+            model: chosenModel,
+            vocabulary: vocabulary,
+            additionalPromptTerms: noteMode ? NoteFormatter.promptTerms : []
+        )
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
         Task.detached {
@@ -404,7 +414,8 @@ struct Run: ParsableCommand {
                 let started = Date()
                 do {
                     let raw = try await transcriber.transcribe(samples)
-                    let text = lowercaseMode ? raw.lowercased() : raw
+                    let formatted = noteMode ? NoteFormatter.format(raw) : raw
+                    let text = lowercaseMode ? formatted.lowercased() : formatted
                     let elapsed = Date().timeIntervalSince(started)
                     FileHandle.standardError.write(Data(
                         String(format: "→ %.2fs · %@\n", elapsed, text).utf8
@@ -515,6 +526,7 @@ struct Run: ParsableCommand {
             hotkey: chosenHotkey.name,
             model: chosenModel.id,
             microphone: micName,
+            mode: noteMode ? "notes" : "dictation",
             vocabularyCount: vocabulary.entries.count,
             historyPath: historyPath,
             systemHotkeyAction: systemHotkeyAction

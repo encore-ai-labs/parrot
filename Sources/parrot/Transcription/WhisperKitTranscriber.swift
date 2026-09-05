@@ -4,17 +4,22 @@ import WhisperKit
 actor WhisperKitTranscriber: Transcriber {
     let modelID: String
     private let model: TranscriptionModel
-    private let vocabulary: PersonalVocabulary
     private let vocabularyReplacer: VocabularyReplacer
     private var pipeline: WhisperKit?
     private var decodingOptions: DecodingOptions?
 
-    init(model: TranscriptionModel, vocabulary: PersonalVocabulary = PersonalVocabulary()) {
+    init(
+        model: TranscriptionModel,
+        vocabulary: PersonalVocabulary = PersonalVocabulary(),
+        additionalPromptTerms: [String] = []
+    ) {
         self.modelID = model.id
         self.model = model
-        self.vocabulary = vocabulary
         vocabularyReplacer = VocabularyReplacer(entries: vocabulary.entries)
+        promptTerms = additionalPromptTerms + vocabulary.promptTerms
     }
+
+    private let promptTerms: [String]
 
     /// Loads the model into memory; downloads first if not already on disk.
     /// Call once at startup so the first hotkey press isn't blocked on model
@@ -29,7 +34,7 @@ actor WhisperKitTranscriber: Transcriber {
         let loadedPipeline = try await WhisperKit(config)
         pipeline = loadedPipeline
         decodingOptions = Self.decodingOptions(
-            promptTerms: vocabulary.promptTerms,
+            promptTerms: promptTerms,
             tokenizer: loadedPipeline.tokenizer
         )
         FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))

@@ -192,6 +192,17 @@ dictation/notes at recording start without reading screen content or retaining a
 history. The menu bar switches the fallback live, and both modes use precomputed prompt
 options on the same model pipeline.
 
+**6.11 Local file transcription** — ✅ **done.** `parrot transcribe` turns one file or a
+sequential batch into timestamped Markdown, text, or compact JSON using one warmed model.
+WhisperKit's incremental loader bounds long-recording memory, saved local text-processing
+defaults apply consistently, output collisions are rejected before inference, and private
+atomic writes never modify the source media.
+
+**6.12 Atomic self-updates** — ✅ **done.** Released binaries fetch a cache-busted installer
+from their immutable source tag. Installs swap the executable's directory entry rather than
+overwriting a running signed Mach-O inode, and protected directories use the standard macOS
+administrator authorization dialog.
+
 ---
 
 ## Suggested release cadence

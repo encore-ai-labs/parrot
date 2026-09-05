@@ -23,10 +23,23 @@ enum UpdateInstaller {
         }
     }
 
-    private static let installerURL = URL(
-        string: "https://raw.githubusercontent.com/encore-ai-labs/parrot/master/scripts/install.sh"
-    )!
     static let installedBinaryURL = URL(fileURLWithPath: "/usr/local/bin/parrot")
+
+    /// Release builds fetch the installer from their own immutable tag. A
+    /// nonce also bypasses intermediary caches for development builds and
+    /// older GitHub/CDN responses.
+    static func installerURL(
+        appVersion: String = AppVersion.current,
+        cacheToken: String = UUID().uuidString
+    ) -> URL {
+        let revision = appVersion == "development" ? "master" : "v\(appVersion)"
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "raw.githubusercontent.com"
+        components.path = "/encore-ai-labs/parrot/\(revision)/scripts/install.sh"
+        components.queryItems = [URLQueryItem(name: "parrot-cache", value: cacheToken)]
+        return components.url!
+    }
 
     /// Fetch the installer as a file rather than piping remote code directly
     /// into a shell. The installer verifies the release archive's published
@@ -38,9 +51,15 @@ enum UpdateInstaller {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let script = directory.appendingPathComponent("install.sh")
+        let sourceURL = installerURL()
         try run(
             executable: URL(fileURLWithPath: "/usr/bin/curl"),
-            arguments: ["-fsSL", installerURL.absoluteString, "-o", script.path],
+            arguments: [
+                "-fsSL",
+                "-H", "Cache-Control: no-cache",
+                sourceURL.absoluteString,
+                "-o", script.path,
+            ],
             label: "downloading the updater"
         )
         try run(

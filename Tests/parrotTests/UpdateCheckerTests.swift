@@ -37,6 +37,38 @@ final class UpdateCheckerTests: XCTestCase {
         )
     }
 
+    func testReleasedUpdaterUsesImmutableVersionedInstallerWithCacheBuster() {
+        let url = UpdateInstaller.installerURL(
+            appVersion: "0.16.0",
+            cacheToken: "test-token"
+        )
+
+        XCTAssertEqual(
+            url.path,
+            "/encore-ai-labs/parrot/v0.16.0/scripts/install.sh"
+        )
+        XCTAssertEqual(
+            URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+            [URLQueryItem(name: "parrot-cache", value: "test-token")]
+        )
+    }
+
+    func testDevelopmentUpdaterUsesCacheBustedMasterInstaller() {
+        let url = UpdateInstaller.installerURL(
+            appVersion: "development",
+            cacheToken: "development-token"
+        )
+
+        XCTAssertEqual(
+            url.path,
+            "/encore-ai-labs/parrot/master/scripts/install.sh"
+        )
+        XCTAssertEqual(
+            URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+            [URLQueryItem(name: "parrot-cache", value: "development-token")]
+        )
+    }
+
     func testUpdaterRunnerPassesArgumentsAndEnvironment() throws {
         XCTAssertNoThrow(
             try UpdateInstaller.run(

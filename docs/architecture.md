@@ -75,7 +75,11 @@ $ parrot
 
 ### `main.swift` (ParrotCLI)
 
-Argument parsing (via `swift-argument-parser`), config loading, module wiring. Calls `NSApplication.shared.setActivationPolicy(.accessory)` so the process has no dock icon and no menu bar entry, then runs `NSApp.run()` to keep the process alive and drive the AppKit run loop (needed for `NSWindow`, `CGEventTap`, and AVFoundation). Exits cleanly on SIGINT. Logs status to stderr so a user running it in a terminal can see what's happening.
+Argument parsing (via `swift-argument-parser`), config loading, module wiring. The daemon calls
+`NSApplication.shared.setActivationPolicy(.accessory)` so it has no Dock icon, creates its own
+status item, then runs `NSApp.run()` to drive the AppKit event loop. File-oriented subcommands do
+not initialize the app or microphone. The daemon exits cleanly on SIGINT and logs operational
+status to stderr.
 
 Subcommands:
 - `parrot` (default) — run the daemon
@@ -83,6 +87,8 @@ Subcommands:
 - `parrot models download <id>` — pre-fetch a model
 - `parrot doctor` — check microphone and accessibility permissions, print remediation steps
 - `parrot vocabulary` — manage local recognition hints and exact text replacements
+- `parrot transcribe <files...>` — bounded-memory local file transcription to Markdown,
+  text, or JSON
 
 ### `HotkeyMonitor`
 
@@ -232,6 +238,25 @@ New entries also include a hidden metrics comment with audio and transcription m
 speaking pace, processing speed, and an optional typing-time comparison. Counts and streaks
 include old entries without timing metadata. All calculation reads the local Markdown directly;
 there is no telemetry store or network call.
+
+### File transcription
+
+`parrot transcribe` accepts AVFoundation-readable audio and video without starting AppKit,
+the microphone, Accessibility APIs, or the daemon. It resolves saved model/mode/casing defaults,
+then loads vocabulary and snippets once. One `WhisperKitTranscriber` is warmed for the batch and
+files are processed sequentially, so model memory is not multiplied.
+
+The file path uses WhisperKit's incremental loader with 120-second staging and one buffered
+chunk; decoder/VAD segment timestamps remain relative to the original media. Parrot projects
+WhisperKit's token-heavy result into a compact report containing final text, language, duration,
+processing time, real-time factor, and segment start/end/text.
+
+Markdown is the default output and includes both the deterministically formatted note and a
+timestamped timeline. Text and schema-versioned JSON are also supported. Output planning occurs
+before model load, rejects duplicate destinations and input replacement, and refuses existing
+files unless `--force` is explicit. `SafeTranscriptWriter` uses a `0600` temporary file, `fsync`,
+then an atomic no-clobber or replacement rename; newly created output directories are `0700`. Input media is
+opened read-only and never added to normal dictation history.
 
 ### Daemon lifecycle and logs
 
@@ -466,6 +491,7 @@ parrot/
     Transcription/
       Transcriber.swift         # protocol (decorative for now — see roadmap 6.5)
       WhisperKitTranscriber.swift
+      FileTranscription.swift   # incremental import, reports, safe output writer
 
     Models/
       ModelRegistry.swift       # hardcoded array, not JSON

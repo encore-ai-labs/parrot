@@ -23,9 +23,10 @@ gets an **Update Parrot…** action. You can update directly at any time with `p
 Downloaded release archives are checked against their published SHA-256 checksum before
 installation. Network failures do not affect startup and are retried on the next launch.
 
-If an update needs administrator access, Parrot uses the standard macOS authorization prompt;
-otherwise it updates without prompting. A failed or cancelled update leaves the existing binary
-in place; run `parrot update` again to retry.
+If the install directory needs administrator access, Parrot uses the standard macOS authorization
+prompt; otherwise it updates without prompting. Parrot always swaps in a fresh executable instead
+of overwriting the running binary. A failed or cancelled update leaves the existing binary in place;
+run `parrot update` again to retry.
 
 ## How to use
 
@@ -126,6 +127,29 @@ transcript history, run:
 ```sh
 parrot --no-history
 ```
+
+### Transcribe voice memos and recordings
+
+Turn an existing audio or video file into a private local Markdown note with the same saved
+model, mode, casing, vocabulary, and snippets used by live dictation:
+
+```sh
+parrot transcribe voice-memo.m4a
+parrot transcribe interview.mp3 --notes
+parrot transcribe lecture.mp4 --format json --output lecture.json
+parrot transcribe *.m4a --output-directory ./transcripts
+```
+
+Without an output option, Parrot writes `voice-memo.md` beside `voice-memo.m4a`. Markdown is
+the default and contains the processed note plus a timestamped recognition timeline. `text`
+and `json` are also available; `--stdout` makes a single-file result pipe-friendly, and
+`--no-timestamps` omits the timeline. Existing files are never replaced unless you pass
+`--force`, which performs an atomic replacement.
+
+Files are decoded through AVFoundation and transcribed entirely on-device. Long recordings
+are streamed in bounded chunks, batches reuse one warmed model and run one file at a time,
+and source media is never copied, changed, or added to dictation history. Created directories
+and transcript files use private `0700`/`0600` permissions.
 
 ### Private usage stats
 
@@ -357,6 +381,8 @@ parrot models download <id>            # pre-download a model
 parrot models path                     # show managed and legacy model locations
 parrot models migrate                  # safely move known legacy model bundles
 parrot models benchmark <id> --audio sample.wav
+parrot transcribe voice-memo.m4a       # adjacent timestamped Markdown
+parrot transcribe *.m4a --output-directory ./notes
 parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones
 parrot apps add Notes --mode notes     # local automatic mode rule

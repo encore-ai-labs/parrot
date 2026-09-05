@@ -92,8 +92,12 @@ struct ModelBenchmark: ParsableCommand {
             let started = ContinuousClock.now
             let mode: DictationMode = notes ? .notes : .dictation
             let raw = try waitForAsync { try await transcriber.transcribe(samples, mode: mode) }
-            let formatted = notes ? NoteFormatter.format(raw) : raw
-            transcript = snippetExpander.applying(to: formatted)
+            transcript = TranscriptProcessing.process(
+                raw,
+                mode: mode,
+                lowercase: false,
+                snippets: snippetExpander
+            )
             let seconds = elapsedSeconds(since: started)
             timings.append(seconds)
             if !json {

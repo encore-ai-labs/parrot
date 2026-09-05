@@ -4,7 +4,7 @@ import Foundation
 import WhisperKit
 
 @main
-struct Parrot: ParsableCommand {
+struct Parrot: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "parrot",
         abstract: "Minimal macOS dictation daemon. Hold to talk or double-tap for hands-free.",
@@ -12,7 +12,8 @@ struct Parrot: ParsableCommand {
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
             Hotkeys.self, Devices.self, Apps.self, Vocabulary.self, Snippets.self,
-            History.self, Stats.self, Settings.self, Install.self, Daemon.self, Update.self,
+            History.self, Stats.self, Transcribe.self, Settings.self,
+            Install.self, Daemon.self, Update.self,
         ],
         defaultSubcommand: Run.self
     )
@@ -502,9 +503,12 @@ struct Run: ParsableCommand {
                 let started = Date()
                 do {
                     let raw = try await transcriber.transcribe(samples, mode: modeForCapture)
-                    let formatted = modeForCapture == .notes ? NoteFormatter.format(raw) : raw
-                    let cased = lowercaseMode ? formatted.lowercased() : formatted
-                    let text = snippetExpander.applying(to: cased)
+                    let text = TranscriptProcessing.process(
+                        raw,
+                        mode: modeForCapture,
+                        lowercase: lowercaseMode,
+                        snippets: snippetExpander
+                    )
                     let elapsed = Date().timeIntervalSince(started)
                     let completionLog = logTranscripts
                         ? String(format: "→ %.2fs · %@\n", elapsed, text)

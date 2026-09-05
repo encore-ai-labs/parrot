@@ -23,9 +23,12 @@ enum NoteFormatter {
             marker: "\u{E003}"
         ),
         Command(phrases: ["checkbox", "check box", "new task", "task item"], marker: "\u{E004}"),
-        Command(phrases: ["heading one", "heading 1"], marker: "\u{E005}"),
-        Command(phrases: ["heading two", "heading 2", "heading"], marker: "\u{E006}"),
-        Command(phrases: ["heading three", "heading 3"], marker: "\u{E007}"),
+        Command(phrases: ["heading one", "heading won", "heading 1"], marker: "\u{E005}"),
+        Command(
+            phrases: ["heading two", "heading to", "heading too", "heading 2", "heading"],
+            marker: "\u{E006}"
+        ),
+        Command(phrases: ["heading three", "heading tree", "heading 3"], marker: "\u{E007}"),
         Command(phrases: ["full stop", "period"], marker: "\u{E008}"),
         Command(phrases: ["comma"], marker: "\u{E009}"),
         Command(phrases: ["colon"], marker: "\u{E00A}"),

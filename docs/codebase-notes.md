@@ -64,6 +64,7 @@ than described — see the banner below. Everything else still stands.
 | `devices` | `Parrot.swift` → `AudioDevices.swift` | List microphones |
 | `apps list\|add\|remove\|clear\|current` | `Apps.swift` → `AppModeRules.swift` | Private automatic mode rules |
 | `settings show\|set\|reset` | `Settings.swift` → `Config.swift` | Persistent local daemon defaults |
+| `transcribe <files...>` | `FileTranscription.swift` | Local timestamped Markdown/text/JSON file transcription |
 | `install` | `Install.swift` | LaunchAgent write/remove |
 
 Because `Run` is the `defaultSubcommand`, `parrot --model X`, `--no-overlay`, `--hotkey`, and

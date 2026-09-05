@@ -59,7 +59,14 @@ CHECKSUM_URL="https://github.com/${REPO}/releases/download/${TAG}/${CHECKSUM}"
 
 # 3. download + extract
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+STAGED=""
+cleanup() {
+    rm -rf "$TMP"
+    if [ -n "$STAGED" ]; then
+        rm -f "$STAGED"
+    fi
+}
+trap cleanup EXIT
 
 dim "→ downloading ${ASSET}..."
 curl -fsSL "$URL" -o "$TMP/${ASSET}"
@@ -84,17 +91,21 @@ xattr -d com.apple.quarantine "$TMP/${BIN_NAME}" 2>/dev/null || true
 # 5. install
 TARGET="${INSTALL_DIR}/${BIN_NAME}"
 
-# A first install into /usr/local/bin commonly needs administrator approval.
-# `mv` keeps the downloaded file owned by the user, so future updates can
-# replace the writable target directly even when its parent is root-owned.
-if [ -f "$TARGET" ] && [ -w "$TARGET" ]; then
-    dim "→ updating ${TARGET}..."
-    cp "$TMP/${BIN_NAME}" "$TARGET"
-    chmod +x "$TARGET"
-elif [ -w "$INSTALL_DIR" ]; then
-    dim "→ installing to ${TARGET}..."
-    mv "$TMP/${BIN_NAME}" "$TARGET"
-    chmod +x "$TARGET"
+# Always replace the executable with a new inode. Overwriting a running,
+# signed Mach-O binary in place can leave macOS killing later launches even
+# when the new bytes and signature are valid. Replacing the directory entry
+# avoids that executable-vnode cache failure.
+if [ -w "$INSTALL_DIR" ]; then
+    if [ -e "$TARGET" ]; then
+        dim "→ updating ${TARGET}..."
+    else
+        dim "→ installing to ${TARGET}..."
+    fi
+    STAGED=$(mktemp "${INSTALL_DIR}/.parrot-update.XXXXXX")
+    cp "$TMP/${BIN_NAME}" "$STAGED"
+    chmod 755 "$STAGED"
+    mv -f "$STAGED" "$TARGET"
+    STAGED=""
 else
     dim "→ administrator access required"
     dim "  approve the standard macOS prompt to finish the update"

@@ -34,6 +34,13 @@ final class NoteFormatterTests: XCTestCase {
         )
     }
 
+    func testHeadingNumberHomophonesFromSpeechRecognition() {
+        XCTAssertEqual(
+            NoteFormatter.format("heading won Overview heading to Details heading tree Appendix"),
+            "# Overview\n\n## Details\n\n### Appendix"
+        )
+    }
+
     func testSpokenPunctuation() {
         XCTAssertEqual(
             NoteFormatter.format(

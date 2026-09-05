@@ -32,10 +32,10 @@ case from notes §3.2.
 floor before they reach Whisper. `computeRMS` is already being calculated and thrown away at
 `Parrot.swift:114`. Kills the "accidental Fn brush injects a hallucination" failure.
 
-**1.4 Move the model cache out of `~/Documents` (3.3)** — set
-`WhisperKitConfig(downloadBase:)` to `~/Library/Application Support/parrot/models`. Add a
-one-time migration that moves an existing `~/Documents/huggingface` tree rather than
-re-downloading 145 MB–1.6 GB, and leaves it alone if anything else put it there.
+**1.4 Move the model cache out of `~/Documents` (3.3)** — ✅ **done.** New downloads use
+`~/Library/Application Support/Parrot/models`. Existing complete models are reused in place;
+an explicit migration moves only known variants, never overwrites, and leaves compatibility
+links rather than moving another tool's whole Hugging Face tree.
 
 ---
 
@@ -114,9 +114,9 @@ logs move from world-readable `/tmp/parrot.err.log` to `~/Library/Logs/parrot/` 
 rotation. A permanent plaintext record of everything ever dictated contradicts the product's
 whole pitch.
 
-**4.2 Download progress (3.13)** — wire WhisperKit's progress callback to a `\r` stderr bar so
-the first run doesn't look hung through a 145 MB–1.6 GB fetch. Make `parrot models download`
-print something, including on success.
+**4.2 Download progress (3.13)** — ✅ **done.** WhisperKit's callback drives a 1% repainting
+stderr indicator in terminals and bounded 10% lines in daemon logs. Model warmup and explicit
+downloads both print a ready result.
 
 **4.3 Trailing space on injection** — back-to-back dictations currently concatenate into
 `helloworld`. Default to appending a space, with `--no-trailing-space` to opt out.

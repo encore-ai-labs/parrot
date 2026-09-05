@@ -23,6 +23,10 @@ gets an **Update Parrot…** action. You can update directly at any time with `p
 Downloaded release archives are checked against their published SHA-256 checksum before
 installation. Network failures do not affect startup and are retried on the next launch.
 
+If an update needs administrator access, Parrot hands the real terminal through to `sudo`,
+so its password prompt remains interactive. A failed or cancelled update leaves the existing
+binary in place; run `parrot update` again to retry.
+
 ## How to use
 
 1. **Run it** in any terminal tab — `parrot`, or `parrot --hotkey end` to pick your own key.
@@ -230,6 +234,22 @@ sent to a server.
 
 ### Benchmark local models
 
+New model downloads are stored locally at
+`~/Library/Application Support/Parrot/models/`, outside Documents and iCloud Drive. Parrot
+continues to use models downloaded by older releases from `~/Documents/huggingface/`, so an
+upgrade never forces a large redownload. Inspect the exact locations and status with:
+
+```sh
+parrot models list
+parrot models path
+```
+
+To move known legacy Parrot model folders into managed storage, first stop the daemon and run
+`parrot models migrate`. Migration never overwrites an existing managed model and leaves
+compatibility links at the old paths for other local tools. Tokenizer metadata may remain in
+the shared legacy Hugging Face cache; the large Core ML model bundles are what Parrot moves.
+Downloads show percentage progress in both interactive terminals and daemon logs.
+
 Measure a model with the same audio on your own Mac instead of relying on generic benchmark
 claims. Record a short representative sample (running Parrot once with `--dump-wav` writes the
 last capture to `/tmp/parrot-last.wav`), then run:
@@ -295,6 +315,8 @@ parrot daemon logs --lines 100         # inspect private operational logs
 parrot doctor                          # check permissions + fn key setting
 parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
+parrot models path                     # show managed and legacy model locations
+parrot models migrate                  # safely move known legacy model bundles
 parrot models benchmark <id> --audio sample.wav
 parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones

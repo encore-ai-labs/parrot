@@ -299,16 +299,23 @@ word-error rate. JSON output includes the hardware model, macOS version, exact r
 note-mode state, and vocabulary count so results remain comparable. No audio, reference, or
 transcript leaves the Mac.
 
-### `ModelDownloader` — not built
+### Model storage and download progress
 
-WhisperKit handles downloading itself, so there is no `ModelDownloader.swift`.
-Two consequences:
+`ModelStorage` passes an explicit `downloadBase` to WhisperKit, so all new model downloads
+land under `~/Library/Application Support/Parrot/models/` instead of the library default in
+Documents. Before downloading, it recognizes a complete model in either managed storage or
+the older `~/Documents/huggingface/` layout. Managed storage wins when both exist; otherwise
+the legacy model is loaded in place with its existing tokenizer cache, avoiding a redownload.
 
-- **Models land wherever `swift-transformers` puts them**, which defaults to
-  `~/Documents/huggingface` — the user's Documents folder, iCloud-synced on many
-  Macs. `WhisperKitConfig(downloadBase:)` fixes this; tracked as 1.4 in the roadmap.
-- **There is no progress output.** `verbose: false` means the first run prints
-  nothing through a 145 MB–1.6 GB fetch and looks hung. Tracked as 4.2.
+`parrot models migrate` is deliberately explicit because the old Hugging Face tree may be
+shared with another local tool. It moves only complete model variants known to Parrot, never
+overwrites an existing destination, and leaves an absolute compatibility symlink for each
+moved model. The daemon ownership lock must be available before migration begins.
+
+WhisperKit still performs the transfer. `ModelDownloadProgress` consumes its progress
+callback, repainting stderr at 1% increments in a terminal and emitting newline-delimited
+10% increments for noninteractive logs. This keeps first-run feedback visible without
+flooding LaunchAgent logs.
 
 ### `Config`
 
@@ -361,7 +368,10 @@ Current registry:
 | WhisperKit | `whisper-small.en` | ~488 MB | More accurate English, higher latency |
 | WhisperKit | `whisper-large-v3-turbo` | ~1.62 GB | Highest-capacity multilingual option |
 
-Models currently live in `~/Documents/huggingface/` (WhisperKit's default). Not bundled — fetched on first selection or via `parrot models download`.
+Models are not bundled. New downloads live in
+`~/Library/Application Support/Parrot/models/`; complete models from the legacy
+`~/Documents/huggingface/` layout remain usable until the user runs
+`parrot models migrate`.
 
 ## Data flow, end-to-end
 
@@ -426,6 +436,8 @@ parrot/
 
     Models/
       ModelRegistry.swift       # hardcoded array, not JSON
+      ModelStorage.swift        # managed cache, legacy reuse, explicit migration
+      ModelDownloadProgress.swift # bounded interactive/log progress output
       TranscriptionModel.swift  # Codable types
 
     Audio/
@@ -451,8 +463,9 @@ parrot/
   README.md
 ```
 
-Not built: `Config.swift`, `ModelDownloader.swift`, `ParakeetTranscriber.swift`,
-`Resources/models.json`. No test target yet (roadmap 1.2).
+Not built: `ParakeetTranscriber.swift` and `Resources/models.json`. Model downloads remain
+delegated to WhisperKit, with Parrot owning storage resolution and progress reporting. The
+SwiftPM test target lives at `Tests/parrotTests/`.
 
 Build: `swift build -c release`. Resulting binary at `.build/release/parrot`. Install: copy to `~/.local/bin/` or `/usr/local/bin/`.
 

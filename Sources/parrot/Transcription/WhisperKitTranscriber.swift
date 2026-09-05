@@ -5,16 +5,22 @@ actor WhisperKitTranscriber: Transcriber {
     let modelID: String
     private let model: TranscriptionModel
     private let vocabularyReplacer: VocabularyReplacer
+    private let storage: ModelStorage
+    private let downloadProgress: ModelDownloadProgress
     private var pipeline: WhisperKit?
     private var decodingOptions: DecodingOptions?
 
     init(
         model: TranscriptionModel,
         vocabulary: PersonalVocabulary = PersonalVocabulary(),
-        additionalPromptTerms: [String] = []
+        additionalPromptTerms: [String] = [],
+        storage: ModelStorage = .default,
+        downloadProgress: ModelDownloadProgress = ModelDownloadProgress()
     ) {
         self.modelID = model.id
         self.model = model
+        self.storage = storage
+        self.downloadProgress = downloadProgress
         vocabularyReplacer = VocabularyReplacer(entries: vocabulary.entries)
         promptTerms = additionalPromptTerms + vocabulary.promptTerms
     }
@@ -30,7 +36,28 @@ actor WhisperKitTranscriber: Transcriber {
             throw TranscriberError.missingEngineID
         }
         FileHandle.standardError.write(Data("loading \(model.id)...\n".utf8))
-        let config = WhisperKitConfig(model: whisperKitID, verbose: false, prewarm: true, load: true)
+        let resolved: ResolvedModelStorage
+        do {
+            resolved = try await storage.resolve(
+                variant: whisperKitID,
+                progressCallback: { [downloadProgress] progress in
+                    downloadProgress.update(progress)
+                }
+            )
+        } catch {
+            downloadProgress.finish()
+            throw error
+        }
+        downloadProgress.finish()
+        let config = WhisperKitConfig(
+            model: whisperKitID,
+            downloadBase: resolved.downloadBase,
+            modelFolder: resolved.modelFolder.path,
+            tokenizerFolder: resolved.tokenizerFolder,
+            verbose: false,
+            prewarm: true,
+            load: true
+        )
         let loadedPipeline = try await WhisperKit(config)
         pipeline = loadedPipeline
         decodingOptions = Self.decodingOptions(

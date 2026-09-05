@@ -761,18 +761,26 @@ struct Vocabulary: ParsableCommand {
 struct Models: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Manage transcription models.",
-        subcommands: [List.self, Download.self, ModelBenchmark.self]
+        subcommands: [List.self, Download.self, Path.self, Migrate.self, ModelBenchmark.self]
     )
 
     struct List: ParsableCommand {
         func run() throws {
+            let storage = ModelStorage.default
             for m in ModelRegistry.shared {
                 let star = m.recommended ? "★" : " "
                 let id = m.id.padding(toLength: 26, withPad: " ", startingAt: 0)
                 let langs = "[\(m.languages.joined(separator: ","))]"
                     .padding(toLength: 9, withPad: " ", startingAt: 0)
                 let size = String(format: "%5d MB", m.sizeMB)
-                print("\(star) \(id) \(size)  \(langs)  \(m.displayName)")
+                let stored: String
+                if let variant = m.whisperKitID,
+                   let existing = storage.existingModel(variant: variant) {
+                    stored = existing.source == .managed ? "✓ local" : "↪ legacy"
+                } else {
+                    stored = "not downloaded"
+                }
+                print("\(star) \(id) \(size)  \(langs)  \(stored)  \(m.displayName)")
             }
         }
     }
@@ -795,6 +803,62 @@ struct Models: ParsableCommand {
             }
             sem.wait()
             if let e = capturedError { throw e }
+        }
+    }
+
+    struct Path: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Show managed and legacy model storage paths."
+        )
+
+        func run() {
+            let storage = ModelStorage.default
+            print("managed  \(storage.managedBase.path)")
+            print("legacy   \(storage.legacyBase.path)")
+            print("\nNew downloads use managed storage. `parrot models migrate` moves known legacy models.")
+        }
+    }
+
+    struct Migrate: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Move known Parrot models out of Documents without redownloading."
+        )
+
+        func run() throws {
+            let daemonLock: DaemonLock
+            do {
+                daemonLock = try DaemonLock.acquire()
+            } catch let error as DaemonLock.LockError {
+                switch error {
+                case .alreadyRunning:
+                    throw ValidationError(
+                        "stop the running Parrot daemon before migrating models"
+                    )
+                default:
+                    throw error
+                }
+            }
+            defer { daemonLock.release() }
+            let storage = ModelStorage.default
+            let results = try storage.migrateKnownModels(ModelRegistry.shared)
+
+            guard !results.isEmpty else {
+                print("no legacy Parrot models found")
+                print("managed: \(storage.managedBase.path)")
+                return
+            }
+            for result in results {
+                switch result.outcome {
+                case .moved:
+                    print("✓ moved \(result.modelID)")
+                case .alreadyMigrated:
+                    print("✓ already migrated \(result.modelID)")
+                case .destinationExists:
+                    print("! kept both copies of \(result.modelID); managed destination already exists")
+                }
+            }
+            print("managed: \(storage.managedBase.path)")
+            print("legacy compatibility links preserve access for other local tools")
         }
     }
 }

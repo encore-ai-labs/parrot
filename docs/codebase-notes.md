@@ -220,17 +220,12 @@ So it removes content it shouldn't and misses the case it was written for (`54fd
 Should match a known-token allowlist (`BLANK_AUDIO`, `MUSIC`, `Applause`, `silence`,
 `nospeech`, …), and/or only strip when the bracketed span is the entire output.
 
-**3.3 — Models download into `~/Documents/huggingface`. [measured]** — still open (the
-*Bluetooth* problem found while investigating this is fixed; the download path is not)
+**3.3 — Models download into `~/Documents/huggingface`.** ✅ **FIXED**
 
-143 MB is sitting there now. `whisper-large-v3-turbo` would put 1.6 GB in the user's
-Documents folder — which is iCloud-synced on any Mac with Desktop & Documents sync on.
-`architecture.md:193` claims `~/Library/Application Support/parrot/models/`; nothing in the
-code sets a path, so `swift-transformers`' `HubApi` default wins
-(`HubApi.swift:121`: `documents.appending(component: "huggingface")`).
-
-One-line fix — `WhisperKitConfig` already exposes `downloadBase: URL?`
-(`Configurations.swift:11`). Needs a migration for existing installs.
+New downloads use `~/Library/Application Support/Parrot/models/`. Complete legacy models are
+detected and loaded in place so updating Parrot never forces a redownload. The explicit
+`parrot models migrate` command moves only known, complete model bundles, refuses to
+overwrite an existing managed destination, and leaves legacy compatibility symlinks.
 
 **3.4 — Overlapping recordings cross-talk.** ✅ **FIXED**
 
@@ -293,22 +288,22 @@ privacy-sensitive `--log-transcripts` flag. LaunchAgent output moved to user-onl
 `~/Library/Logs/Parrot/`, capped at 5 MiB on launch; legacy `/tmp/parrot.*.log` files are no
 longer written.
 
-**3.13 — First run looks hung.**
+**3.13 — First run looks hung.** ✅ **FIXED**
 
-`verbose: false` and no progress callback, so the 145 MB (or 1.6 GB) download prints nothing
-between `loading whisper-base.en...` and `✓ ready`. `parrot models download` prints nothing
-at all — not even on success. WhisperKit exposes a progress callback; the plan called for a
-`\r` progress bar (`architecture.md:151`) that was never built.
+WhisperKit's progress callback now produces visible percentage progress. Interactive output
+repaints at 1% increments; noninteractive output uses bounded 10% newline increments so
+LaunchAgent logs remain readable. Both first-run warmup and `parrot models download` end with
+an explicit ready message.
 
 ### P3 — docs/code drift
 
 | Claim | Reality |
 |---|---|
 | ~~README: `parrot --hotkey right-option`~~ | ✅ **FIXED** — implemented, plus `parrot hotkeys`. |
-| `architecture.md`: config at `~/.config/parrot/config.toml` | No `Config.swift`. Flags only. |
-| `architecture.md`: models in `~/Library/Application Support/parrot/models/` | `~/Documents/huggingface` (3.3). |
+| ~~`architecture.md`: config at `~/.config/parrot/config.toml`~~ | ✅ **FIXED** — JSON config is documented and implemented. |
+| ~~`architecture.md`: models in `~/Library/Application Support/parrot/models/`~~ | ✅ **FIXED** — explicit managed storage plus safe legacy reuse/migration. |
 | `architecture.md`: non-goals include "menubar" and "auto-launch at login" | Both shipped (`MenuBarController`, `Install.swift`). |
-| `architecture.md`: `ModelDownloader` with progress bar | Doesn't exist; WhisperKit handles it silently. |
+| ~~`architecture.md`: `ModelDownloader` with progress bar~~ | ✅ **FIXED** — WhisperKit downloads; Parrot owns bounded progress reporting. |
 | ~~No `--version` flag~~ | ✅ **FIXED** — release builds are stamped from their tag. |
 
 Dead code: `ModelsManifest` (`TranscriptionModel.swift:19`, orphaned by `abc17a0`),

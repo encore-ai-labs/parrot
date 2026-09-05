@@ -7,27 +7,27 @@ import Foundation
 /// second press, recording stops when that grace period expires.
 struct HotkeyGesture {
     enum Input: Equatable {
-        case hotkeyPressed
-        case hotkeyReleased
+        case hotkeyPressed(source: String)
+        case hotkeyReleased(source: String)
         case cancelKeyPressed
         case timeout
     }
 
     enum Effect: Equatable {
-        case startRecording
+        case startRecording(source: String)
         case stopRecording
         case cancelRecording
-        case setLatched(Bool)
+        case setLatched(Bool, source: String)
         case scheduleTimeout(after: TimeInterval)
         case cancelTimeout
     }
 
     private enum State: Equatable {
         case idle
-        case firstPress(startedAt: TimeInterval)
-        case awaitingSecondPress(deadline: TimeInterval)
-        case secondPress
-        case latched
+        case firstPress(source: String, startedAt: TimeInterval)
+        case awaitingSecondPress(source: String, deadline: TimeInterval)
+        case secondPress(source: String)
+        case latched(source: String)
     }
 
     static let defaultDoubleTapInterval: TimeInterval = 0.55
@@ -44,44 +44,49 @@ struct HotkeyGesture {
 
         // A late second press is a fresh recording, not a double-tap. Expire
         // the first recording before processing that new press.
-        if case .awaitingSecondPress(let deadline) = state, now >= deadline {
+        if case .awaitingSecondPress(_, let deadline) = state, now >= deadline {
             state = .idle
             effects.append(contentsOf: [.cancelTimeout, .stopRecording])
             if input == .timeout { return effects }
         }
 
         switch (state, input) {
-        case (.idle, .hotkeyPressed):
-            state = .firstPress(startedAt: now)
-            effects.append(.startRecording)
+        case (.idle, .hotkeyPressed(let source)):
+            state = .firstPress(source: source, startedAt: now)
+            effects.append(.startRecording(source: source))
 
-        case (.firstPress(let startedAt), .hotkeyReleased):
+        case (.firstPress(let active, let startedAt), .hotkeyReleased(let source))
+            where source == active:
             let deadline = startedAt + doubleTapInterval
             if now < deadline {
-                state = .awaitingSecondPress(deadline: deadline)
+                state = .awaitingSecondPress(source: source, deadline: deadline)
                 effects.append(.scheduleTimeout(after: deadline - now))
             } else {
                 state = .idle
                 effects.append(.stopRecording)
             }
 
-        case (.awaitingSecondPress, .hotkeyPressed):
-            state = .secondPress
+        case (.awaitingSecondPress(let active, _), .hotkeyPressed(let source))
+            where source == active:
+            state = .secondPress(source: source)
             effects.append(.cancelTimeout)
 
-        case (.awaitingSecondPress(let deadline), .timeout):
+        case (.awaitingSecondPress(let source, let deadline), .timeout):
             // Dispatch timers can occasionally wake early. Keep the original
             // deadline rather than ending a recording ahead of time.
-            state = .awaitingSecondPress(deadline: deadline)
+            state = .awaitingSecondPress(source: source, deadline: deadline)
             effects.append(.scheduleTimeout(after: max(0, deadline - now)))
 
-        case (.secondPress, .hotkeyReleased):
-            state = .latched
-            effects.append(.setLatched(true))
+        case (.secondPress(let active), .hotkeyReleased(let source)) where source == active:
+            state = .latched(source: source)
+            effects.append(.setLatched(true, source: source))
 
-        case (.latched, .hotkeyPressed):
+        case (.latched(let active), .hotkeyPressed(let source)) where source == active:
             state = .idle
-            effects.append(contentsOf: [.setLatched(false), .stopRecording])
+            effects.append(contentsOf: [
+                .setLatched(false, source: source),
+                .stopRecording,
+            ])
 
         case (.firstPress, .cancelKeyPressed), (.secondPress, .cancelKeyPressed):
             state = .idle
@@ -91,9 +96,12 @@ struct HotkeyGesture {
             state = .idle
             effects.append(contentsOf: [.cancelTimeout, .cancelRecording])
 
-        case (.latched, .cancelKeyPressed):
+        case (.latched(let source), .cancelKeyPressed):
             state = .idle
-            effects.append(contentsOf: [.setLatched(false), .cancelRecording])
+            effects.append(contentsOf: [
+                .setLatched(false, source: source),
+                .cancelRecording,
+            ])
 
         default:
             break

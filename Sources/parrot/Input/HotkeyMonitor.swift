@@ -3,14 +3,18 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-/// Watches a single push-to-talk key (default: Fn) and emits press/release
-/// edges. Requires Accessibility permission. If the tap fails to register,
-/// callers will see an error from `start()`.
+/// Watches one or more push-to-talk keys and emits source-labelled edges from
+/// a single event tap. Requires Accessibility permission. If the tap fails to
+/// register, callers will see an error from `start()`.
 final class HotkeyMonitor {
-    enum Event { case pressed, released, cancelKeyPressed }
+    enum Event: Equatable {
+        case pressed(source: String)
+        case released(source: String)
+        case cancelKeyPressed
+    }
     enum HotkeyError: Error { case tapCreateFailed }
 
-    private let hotkey: Hotkey
+    private let hotkeys: [Hotkey]
     private let debug: Bool
     private var onEvent: ((Event) -> Void)?
     private var tap: CFMachPort?
@@ -18,10 +22,16 @@ final class HotkeyMonitor {
     private var exitKeyTap: CFMachPort?
     private var exitKeyRunLoopSource: CFRunLoopSource?
     private var swallowedExitKeyCode: Int64?
-    private var isPressed = false
+    private var pressedHotkeys: Set<String> = []
 
     init(hotkey: Hotkey = .default, debug: Bool = false) {
-        self.hotkey = hotkey
+        self.hotkeys = [hotkey]
+        self.debug = debug
+    }
+
+    init(hotkeys: [Hotkey], debug: Bool = false) {
+        precondition(!hotkeys.isEmpty, "HotkeyMonitor requires at least one hotkey")
+        self.hotkeys = hotkeys
         self.debug = debug
     }
 
@@ -37,12 +47,12 @@ final class HotkeyMonitor {
             throw HotkeyError.tapCreateFailed
         }
 
-        // Only subscribe to what this hotkey actually needs. A modifier is
-        // reported entirely through flagsChanged, so staying off keyDown/keyUp
-        // means we aren't copying every keystroke on the system — including
-        // ones typed into password fields.
+        // Only subscribe to what the configured hotkeys actually need. A
+        // modifier is reported entirely through flagsChanged, so staying off
+        // keyDown/keyUp means we aren't receiving every keystroke on the
+        // system — including ones typed into password fields.
         var mask: CGEventMask = 1 << CGEventType.flagsChanged.rawValue
-        if hotkey.needsKeyEvents || debug {
+        if hotkeys.contains(where: \.needsKeyEvents) || debug {
             mask |= (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
         }
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
@@ -51,7 +61,9 @@ final class HotkeyMonitor {
         // need `.defaultTap` to be able to swallow it. Modifiers are inert on
         // their own, so they use `.listenOnly` — which is safer, and means we
         // can never accidentally eat someone's Option key.
-        let options: CGEventTapOptions = hotkey.needsKeyEvents ? .defaultTap : .listenOnly
+        let options: CGEventTapOptions = hotkeys.contains(where: \.needsKeyEvents)
+            ? .defaultTap
+            : .listenOnly
 
         // .cgSessionEventTap is the right level for an accessibility-granted
         // user process (.cghidEventTap requires root).
@@ -80,9 +92,22 @@ final class HotkeyMonitor {
     fileprivate func reenable() {
         guard let tap else { return }
         CGEvent.tapEnable(tap: tap, enable: true)
-        // A stuck-down state would otherwise swallow the next press edge.
-        isPressed = false
+        // If macOS disabled the tap while a key was down, its release may be
+        // gone forever. Cancel that partial recording instead of stranding it.
+        let interruptedCapture = resetPressedStateAfterTapDisable()
+        if interruptedCapture {
+            DispatchQueue.main.async { [weak self] in
+                self?.onEvent?(.cancelKeyPressed)
+            }
+        }
         FileHandle.standardError.write(Data("hotkey tap was disabled by the system — re-enabled\n".utf8))
+    }
+
+    @discardableResult
+    func resetPressedStateAfterTapDisable() -> Bool {
+        let interruptedCapture = !pressedHotkeys.isEmpty
+        pressedHotkeys.removeAll()
+        return interruptedCapture
     }
 
     func stop() {
@@ -152,9 +177,9 @@ final class HotkeyMonitor {
     func handleExitKey(type: CGEventType, event: CGEvent) -> Bool {
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
 
-        // The activation key itself remains under the primary monitor's
+        // Activation keys remain under the primary event tap's
         // control, allowing one more press to end latched recording too.
-        if keycode == hotkey.keyEventCode {
+        if hotkeys.contains(where: { $0.keyEventCode == keycode }) {
             return false
         }
 
@@ -188,10 +213,31 @@ final class HotkeyMonitor {
     /// Whether this event should be withheld from the focused app. Decided
     /// synchronously on the tap thread — the callback has to return the verdict
     /// before it can hand off to the main queue.
-    fileprivate func shouldSwallow(type: CGEventType, event: CGEvent) -> Bool {
-        guard case .key(_, let wanted) = hotkey else { return false }
+    func shouldSwallow(type: CGEventType, event: CGEvent) -> Bool {
         guard type == .keyDown || type == .keyUp else { return false }
-        return event.getIntegerValueField(.keyboardEventKeycode) == wanted
+        let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+        return hotkeys.contains { hotkey in
+            guard case .key(_, let wanted) = hotkey else { return false }
+            return keycode == wanted
+        }
+    }
+
+    /// Even when a plain hotkey requires keyDown/keyUp subscription, ordinary
+    /// keystrokes are neither copied nor dispatched onto the main queue.
+    func shouldRoute(type: CGEventType, event: CGEvent) -> Bool {
+        if debug { return true }
+        if type == .flagsChanged {
+            return hotkeys.contains { hotkey in
+                if case .modifier = hotkey { return true }
+                return false
+            }
+        }
+        guard type == .keyDown || type == .keyUp else { return false }
+        let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+        return hotkeys.contains { hotkey in
+            guard case .key(_, let wanted) = hotkey else { return false }
+            return keycode == wanted
+        }
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) {
@@ -204,37 +250,58 @@ final class HotkeyMonitor {
                         .utf8
                 ))
         }
+        for routedEvent in route(type: type, event: event) {
+            onEvent?(routedEvent)
+        }
+    }
+
+    /// Convert a CoreGraphics event into source-labelled hotkey edges. Kept
+    /// separate from the tap callback so multi-key routing is deterministic
+    /// and testable without installing a global event tap.
+    func route(type: CGEventType, event: CGEvent) -> [Event] {
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+        var routedEvents: [Event] = []
 
-        switch hotkey {
-        case .modifier(_, let wanted, let flag):
-            guard type == .flagsChanged else { return }
-            // Left/right pairs share a flag, so the physical keycode is what
-            // tells them apart. Keys that exist only once (Fn, Caps Lock) pass
-            // nil and match on the flag edge alone.
-            if let wanted, keycode != wanted { return }
-            let pressed = event.flags.contains(flag)
-            guard pressed != isPressed else { return }
-            isPressed = pressed
-            onEvent?(pressed ? .pressed : .released)
+        for hotkey in hotkeys {
+            switch hotkey {
+            case .modifier(_, let wanted, let flag):
+                guard type == .flagsChanged else { continue }
+                // Left/right pairs share a flag, so the physical keycode is what
+                // tells them apart. Keys that exist only once (Fn, Caps Lock) pass
+                // nil and match on the flag edge alone.
+                if let wanted, keycode != wanted { continue }
+                let pressed = event.flags.contains(flag)
+                let wasPressed = pressedHotkeys.contains(hotkey.name)
+                guard pressed != wasPressed else { continue }
+                if pressed {
+                    pressedHotkeys.insert(hotkey.name)
+                    routedEvents.append(.pressed(source: hotkey.name))
+                } else {
+                    pressedHotkeys.remove(hotkey.name)
+                    routedEvents.append(.released(source: hotkey.name))
+                }
 
-        case .key(_, let wanted):
-            guard keycode == wanted else { return }
-            switch type {
-            case .keyDown:
-                // Holding a key auto-repeats; only the first one is a press.
-                guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return }
-                guard !isPressed else { return }
-                isPressed = true
-                onEvent?(.pressed)
-            case .keyUp:
-                guard isPressed else { return }
-                isPressed = false
-                onEvent?(.released)
-            default:
-                return
+            case .key(_, let wanted):
+                guard keycode == wanted else { continue }
+                switch type {
+                case .keyDown:
+                    // Holding a key auto-repeats; only the first one is a press.
+                    guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else {
+                        continue
+                    }
+                    guard !pressedHotkeys.contains(hotkey.name) else { continue }
+                    pressedHotkeys.insert(hotkey.name)
+                    routedEvents.append(.pressed(source: hotkey.name))
+                case .keyUp:
+                    guard pressedHotkeys.contains(hotkey.name) else { continue }
+                    pressedHotkeys.remove(hotkey.name)
+                    routedEvents.append(.released(source: hotkey.name))
+                default:
+                    continue
+                }
             }
         }
+        return routedEvents
     }
 }
 
@@ -276,6 +343,9 @@ private func hotkeyCallback(
 
     // Must be decided here, synchronously, before we hand off to the main queue.
     let swallow = monitor.shouldSwallow(type: type, event: event)
+    guard monitor.shouldRoute(type: type, event: event) else {
+        return swallow ? nil : Unmanaged.passUnretained(event)
+    }
 
     let copy = event.copy()
     DispatchQueue.main.async {

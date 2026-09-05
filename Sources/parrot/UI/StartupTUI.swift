@@ -4,6 +4,7 @@ enum StartupTUI {
     struct Details {
         let version: String
         let hotkey: String
+        let noteHotkey: String?
         let model: String
         let language: String
         let microphone: String
@@ -43,6 +44,7 @@ enum StartupTUI {
             let audioHistory = details.audioHistoryRetentionDays.map { " · audio history: \($0)d" }
                 ?? " · audio history: off"
             let systemAction = details.systemHotkeyAction.map { " · \($0)" } ?? ""
+            let noteHotkey = details.noteHotkey.map { " · notes key: \($0)" } ?? ""
             write(
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
                 " · mic: \(details.microphone) · mode: \(details.mode)" +
@@ -54,7 +56,7 @@ enum StartupTUI {
                 " · cleanup: \(details.cleanup ? "on (English speech)" : "off")" +
                 " · paragraphs: \(details.automaticParagraphs ? "on in notes" : "off")" +
                 " · capture: \(details.warmMicrophone ? "warm/pre-roll" : "cold/on press")" +
-                "\(history)\(audioHistory)\(systemAction) · ^C to quit\n"
+                "\(history)\(audioHistory)\(noteHotkey)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
             return
@@ -66,6 +68,9 @@ enum StartupTUI {
         write("\n")
         write(row("version", details.version))
         write(row("hotkey", "\(details.hotkey)  ·  hold to talk / double-tap to lock / esc to cancel"))
+        if let noteHotkey = details.noteHotkey {
+            write(row("notes key", "\(noteHotkey)  ·  always starts note mode"))
+        }
         if let systemHotkeyAction = details.systemHotkeyAction {
             write(row("macOS key", systemHotkeyAction))
         }

@@ -24,6 +24,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(config.inputDeviceUID, "mic-1")
         XCTAssertEqual(config.setupCompleted, true)
         XCTAssertNil(config.hotkey)
+        XCTAssertNil(config.noteHotkey)
         XCTAssertNil(config.model)
         XCTAssertNil(config.language)
         XCTAssertNil(config.mode)
@@ -46,6 +47,7 @@ final class ConfigTests: XCTestCase {
         let url = root.appendingPathComponent("nested/config.json")
         var config = Config()
         config.hotkey = "right-option"
+        config.noteHotkey = "right-command"
         config.model = "whisper-small.en"
         config.language = "en"
         config.mode = .notes
@@ -83,6 +85,7 @@ final class ConfigTests: XCTestCase {
     func testRuntimeDefaultsUseSavedValuesAndCLIOverrides() throws {
         var config = Config()
         config.hotkey = "right-option"
+        config.noteHotkey = "right-command"
         config.model = "whisper-small.en"
         config.mode = .notes
 
@@ -97,6 +100,7 @@ final class ConfigTests: XCTestCase {
             ),
             RuntimeDefaults(
                 hotkey: "right-option",
+                noteHotkey: "right-command",
                 model: "whisper-small.en",
                 language: "auto",
                 mode: .notes,
@@ -121,6 +125,7 @@ final class ConfigTests: XCTestCase {
             ),
             RuntimeDefaults(
                 hotkey: "end",
+                noteHotkey: "right-command",
                 model: "whisper-base.en",
                 language: "auto",
                 mode: .dictation,
@@ -456,11 +461,82 @@ final class ConfigTests: XCTestCase {
         )
     }
 
+    func testRuntimeDefaultsResolveAndValidateDedicatedNoteHotkey() throws {
+        var config = Config()
+        config.hotkey = "fn"
+        config.noteHotkey = "right-option"
+
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(saved.noteHotkey, "right-option")
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            noteHotkeyOverride: "end",
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(overridden.noteHotkey, "end")
+
+        let disabled = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            disableNoteHotkey: true,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertNil(disabled.noteHotkey)
+
+        config.noteHotkey = "globe"
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ))
+
+        config.hotkey = "end"
+        config.noteHotkey = "keycode:119"
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ))
+
+        let run = try XCTUnwrap(try Run.parseAsRoot([
+            "--hotkey", "fn", "--note-hotkey", "right-option",
+        ]) as? Run)
+        XCTAssertEqual(run.noteHotkey, "right-option")
+        XCTAssertTrue(try XCTUnwrap(
+            try Run.parseAsRoot(["--no-note-hotkey"]) as? Run
+        ).noNoteHotkey)
+        XCTAssertThrowsError(try Run.parseAsRoot([
+            "--note-hotkey", "end", "--no-note-hotkey",
+        ]))
+    }
+
     func testSettingsCommandsParseAndValidateValues() throws {
         XCTAssertTrue(try Settings.parseAsRoot([]) is Settings.Show)
         let set = try XCTUnwrap(
             try Settings.parseAsRoot([
                 "set", "--hotkey", "ralt", "--model", "whisper-small.en",
+                "--note-hotkey", "right-command",
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
                 "--no-space-after-paste", "--cold-mic",
@@ -468,6 +544,7 @@ final class ConfigTests: XCTestCase {
             ]) as? Settings.Set
         )
         XCTAssertEqual(set.hotkey, "ralt")
+        XCTAssertEqual(set.noteHotkey, "right-command")
         XCTAssertEqual(set.model, "whisper-small.en")
         XCTAssertEqual(set.language, "English")
         XCTAssertEqual(set.mode, "notes")
@@ -493,6 +570,18 @@ final class ConfigTests: XCTestCase {
 
         XCTAssertThrowsError(try Settings.parseAsRoot(["set"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--hotkey", "space"]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--note-hotkey", "space",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--hotkey", "fn", "--note-hotkey", "globe",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--note-hotkey", "end", "--no-note-hotkey",
+        ]))
+        XCTAssertTrue(try Settings.parseAsRoot([
+            "set", "--no-note-hotkey",
+        ]) is Settings.Set)
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--model", "imaginary"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--language", "Klingon"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--mode", "email"]))

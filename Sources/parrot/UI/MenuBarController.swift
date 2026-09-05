@@ -27,11 +27,14 @@ final class MenuBarController {
         modelID: String,
         language: String,
         hotkeyName: String,
+        noteHotkeyName: String?,
         mode: DictationMode,
         onModeChange: @escaping (DictationMode) -> Void
     ) {
         self.modelID = modelID
-        self.idleTitle = "idle · hold or double-tap \(hotkeyName)"
+        self.idleTitle = noteHotkeyName.map {
+            "idle · \(hotkeyName) · notes: \($0)"
+        } ?? "idle · hold or double-tap \(hotkeyName)"
         self.modeAction = onModeChange
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 

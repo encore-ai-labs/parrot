@@ -53,7 +53,7 @@ struct Devices: ParsableCommand {
 
 struct Hotkeys: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "List the push-to-talk keys you can pass to --hotkey."
+        abstract: "List keys you can pass to --hotkey or --note-hotkey."
     )
 
     func run() throws {
@@ -72,7 +72,8 @@ struct Hotkeys: ParsableCommand {
         }
         print()
         print("anything else — find its number with `parrot run --debug-hotkey`,")
-        print("then pass it as `--hotkey keycode:<n>`. It'll be swallowed too.")
+        print("then pass it as `--hotkey keycode:<n>` or `--note-hotkey keycode:<n>`.")
+        print("It'll be swallowed too.")
         print()
         print("★ = default")
         print()
@@ -114,6 +115,18 @@ struct Run: ParsableCommand {
         help: "Push-to-talk key for this run. Overrides the saved default."
     )
     var hotkey: String?
+
+    @Option(
+        name: .customLong("note-hotkey"),
+        help: "Second key that always records in note mode for this run."
+    )
+    var noteHotkey: String?
+
+    @Flag(
+        name: .customLong("no-note-hotkey"),
+        help: "Disable a saved note-mode shortcut for this run."
+    )
+    var noNoteHotkey: Bool = false
 
     @Option(
         name: .long,
@@ -240,6 +253,9 @@ struct Run: ParsableCommand {
         guard !(warmMic && coldMic) else {
             throw ValidationError("pass at most one of --warm-mic or --cold-mic")
         }
+        guard !(noteHotkey != nil && noNoteHotkey) else {
+            throw ValidationError("pass at most one of --note-hotkey or --no-note-hotkey")
+        }
         if let journal {
             _ = try MarkdownJournal.resolveURL(journal)
         }
@@ -281,6 +297,8 @@ struct Run: ParsableCommand {
             defaults = try RuntimeDefaults.resolve(
                 config: config,
                 hotkeyOverride: hotkey,
+                noteHotkeyOverride: noteHotkey,
+                disableNoteHotkey: noNoteHotkey,
                 modelOverride: model,
                 languageOverride: language,
                 notes: noteMode,
@@ -312,6 +330,22 @@ struct Run: ParsableCommand {
             throw ExitCode(1)
         }
         chosenHotkey = parsedHotkey
+        let chosenNoteHotkey: Hotkey?
+        if let rawNoteHotkey = defaults.noteHotkey {
+            guard let parsed = Hotkey.parse(rawNoteHotkey) else {
+                let kind = noteHotkey == nil ? "saved note hotkey" : "note hotkey"
+                FileHandle.standardError.write(Data("unknown \(kind): \(rawNoteHotkey)\n".utf8))
+                FileHandle.standardError.write(Data(
+                    "run `parrot settings set --no-note-hotkey` to repair it.\n".utf8
+                ))
+                throw ExitCode(1)
+            }
+            chosenNoteHotkey = parsed
+        } else {
+            chosenNoteHotkey = nil
+        }
+        let configuredHotkeys = [chosenHotkey] + (chosenNoteHotkey.map { [$0] } ?? [])
+        let usesFnHotkey = configuredHotkeys.contains(where: \.needsSystemActionDisabled)
 
         // Validate pure configuration before changing a system preference or
         // asking macOS for hardware permissions.
@@ -345,7 +379,7 @@ struct Run: ParsableCommand {
         }
 
         let fnSystemAction: FnSystemActionOverride?
-        if chosenHotkey.needsSystemActionDisabled {
+        if usesFnHotkey {
             do {
                 fnSystemAction = try FnSystemActionOverride()
             } catch {
@@ -372,7 +406,7 @@ struct Run: ParsableCommand {
         defer { restoreFnSystemAction() }
 
         if !skipDoctor {
-            let checks = DoctorReport.run(includeFnKeyMapping: chosenHotkey.needsSystemActionDisabled)
+            let checks = DoctorReport.run(includeFnKeyMapping: usesFnHotkey)
             if !DoctorReport.allOK(checks) {
                 FileHandle.standardError.write(Data("startup checks failed:\n".utf8))
                 DoctorReport.print(checks)
@@ -543,7 +577,7 @@ struct Run: ParsableCommand {
         }
         defer { NotificationCenter.default.removeObserver(terminationObserver) }
 
-        let monitor = HotkeyMonitor(hotkey: chosenHotkey, debug: debugHotkey)
+        let monitor = HotkeyMonitor(hotkeys: configuredHotkeys, debug: debugHotkey)
         let capture = AudioCapture(device: chosenDevice, usePreRoll: defaults.warmMicrophone)
         capture.onStatus = { message in
             FileHandle.standardError.write(Data("\(message)\n".utf8))
@@ -567,6 +601,7 @@ struct Run: ParsableCommand {
                     model: chosenModel
                 ),
                 hotkeyName: chosenHotkey.name,
+                noteHotkeyName: chosenNoteHotkey?.name,
                 mode: defaults.mode
             ) { mode in
                 modeController.setFallbackMode(mode)
@@ -838,19 +873,27 @@ struct Run: ParsableCommand {
             }
         }
 
-        let startRecording = {
+        let startRecording = { (source: String) in
             guard let sessionID = lifecycle.start() else { return }
             recordingPersonalizationUpdate = preparePersonalization()
-            let selection = modeController.selection(
-                frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            )
+            let usedNoteHotkey = source == chosenNoteHotkey?.name
+            let selection = HotkeyModeRouter.selection(
+                source: source,
+                noteHotkeyName: chosenNoteHotkey?.name
+            ) {
+                modeController.selection(
+                    frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                )
+            }
             recordingMode = selection.mode
             do {
                 try capture.start()
                 _ = monitor.startExitKeyMonitoring()
-                let automatic = selection.isAutomatic ? " · automatic" : ""
+                let selectionSource = selection.isAutomatic
+                    ? " · automatic"
+                    : (usedNoteHotkey ? " · note hotkey" : "")
                 FileHandle.standardError.write(Data(
-                    "● recording · \(selection.mode.rawValue)\(automatic)\n".utf8
+                    "● recording · \(selection.mode.rawValue)\(selectionSource)\n".utf8
                 ))
                 MainActor.assumeIsolated {
                     menuBar.setMode(
@@ -996,19 +1039,19 @@ struct Run: ParsableCommand {
 
         let gesture = HotkeyGestureController { effect in
             switch effect {
-            case .startRecording:
-                startRecording()
+            case .startRecording(let source):
+                startRecording(source)
             case .stopRecording:
                 stopRecording()
             case .cancelRecording:
                 cancelRecording()
-            case .setLatched(true):
+            case .setLatched(true, let source):
                 if monitor.startExitKeyMonitoring() {
                     FileHandle.standardError.write(Data(
-                        "↔ recording locked · tap \(chosenHotkey.name) to transcribe · esc cancels\n".utf8
+                        "↔ recording locked · tap \(source) to transcribe · esc cancels\n".utf8
                     ))
                 }
-            case .setLatched(false):
+            case .setLatched(false, _):
                 monitor.stopExitKeyMonitoring()
             case .scheduleTimeout, .cancelTimeout:
                 break
@@ -1039,16 +1082,16 @@ struct Run: ParsableCommand {
         do {
             try monitor.start { event in
                 switch event {
-                case .pressed:
+                case .pressed(let source):
                     guard !lifecycle.isTranscribing else {
                         FileHandle.standardError.write(Data(
                             "still transcribing — hotkey ignored\n".utf8
                         ))
                         return
                     }
-                    gesture.handle(.hotkeyPressed)
-                case .released:
-                    gesture.handle(.hotkeyReleased)
+                    gesture.handle(.hotkeyPressed(source: source))
+                case .released(let source):
+                    gesture.handle(.hotkeyReleased(source: source))
                 case .cancelKeyPressed:
                     gesture.handle(.cancelKeyPressed)
                 }
@@ -1089,6 +1132,7 @@ struct Run: ParsableCommand {
         StartupTUI.show(.init(
             version: AppVersion.current,
             hotkey: chosenHotkey.name,
+            noteHotkey: chosenNoteHotkey?.name,
             model: chosenModel.id,
             language: RecognitionLanguage.displaySelection(defaults.language, model: chosenModel),
             microphone: micName,

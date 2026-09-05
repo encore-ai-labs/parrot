@@ -17,6 +17,22 @@ struct AppModeSelection: Equatable {
     var isAutomatic: Bool { automaticApplicationName != nil }
 }
 
+/// A dedicated note shortcut has explicit per-capture precedence over app
+/// rules and the fallback mode. The primary selection stays lazy so hitting
+/// the note key does not inspect or retain the frontmost application at all.
+enum HotkeyModeRouter {
+    static func selection(
+        source: String,
+        noteHotkeyName: String?,
+        primarySelection: () -> AppModeSelection
+    ) -> AppModeSelection {
+        guard source != noteHotkeyName else {
+            return AppModeSelection(mode: .notes, automaticApplicationName: nil)
+        }
+        return primarySelection()
+    }
+}
+
 /// Small in-memory policy object used on the main event-tap path. It performs
 /// no I/O and never retains or records the active application identifier.
 final class DictationModeController {

@@ -4,6 +4,30 @@ import XCTest
 @testable import parrot
 
 final class AppModeRulesTests: XCTestCase {
+    func testDedicatedNoteHotkeyBypassesPrimaryAppSelection() {
+        var primarySelectionWasRead = false
+        let notes = HotkeyModeRouter.selection(
+            source: "right-option",
+            noteHotkeyName: "right-option"
+        ) {
+            primarySelectionWasRead = true
+            return AppModeSelection(mode: .dictation, automaticApplicationName: "Messages")
+        }
+
+        XCTAssertEqual(notes, AppModeSelection(mode: .notes, automaticApplicationName: nil))
+        XCTAssertFalse(primarySelectionWasRead)
+
+        let primary = HotkeyModeRouter.selection(source: "fn", noteHotkeyName: "right-option") {
+            primarySelectionWasRead = true
+            return AppModeSelection(mode: .dictation, automaticApplicationName: "Messages")
+        }
+        XCTAssertEqual(
+            primary,
+            AppModeSelection(mode: .dictation, automaticApplicationName: "Messages")
+        )
+        XCTAssertTrue(primarySelectionWasRead)
+    }
+
     func testRuleOverridesFallbackAndRevertsForAnotherApp() {
         let controller = DictationModeController(
             fallbackMode: .dictation,

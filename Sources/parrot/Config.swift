@@ -18,6 +18,8 @@ struct Config: Codable, Equatable {
     var setupCompleted: Bool?
     /// Default push-to-talk key. Command-line options remain one-run overrides.
     var hotkey: String?
+    /// Optional second shortcut that always starts a note-mode capture.
+    var noteHotkey: String?
     /// Default transcription model id.
     var model: String?
     /// Whisper language code, or `auto` for per-recording detection.
@@ -129,6 +131,7 @@ enum DictationMode: String, Codable, CaseIterable {
 /// the CLI > saved config > built-in precedence explicit and regression-testable.
 struct RuntimeDefaults: Equatable {
     let hotkey: String
+    let noteHotkey: String?
     let model: String
     let language: String
     let mode: DictationMode
@@ -144,6 +147,8 @@ struct RuntimeDefaults: Equatable {
     static func resolve(
         config: Config,
         hotkeyOverride: String?,
+        noteHotkeyOverride: String? = nil,
+        disableNoteHotkey: Bool = false,
         modelOverride: String?,
         languageOverride: String? = nil,
         notes: Bool,
@@ -159,6 +164,9 @@ struct RuntimeDefaults: Equatable {
     ) throws -> RuntimeDefaults {
         guard !(notes && dictation) else {
             throw RuntimeDefaultsError.conflictingModes
+        }
+        guard !(noteHotkeyOverride != nil && disableNoteHotkey) else {
+            throw RuntimeDefaultsError.conflictingNoteHotkeyOverrides
         }
         let destinationOverrides = [journalOverride != nil, commandOverride != nil, paste]
             .filter { $0 }.count
@@ -203,8 +211,19 @@ struct RuntimeDefaults: Equatable {
             resolvedJournalPath = config.journalPath
             resolvedDeliveryCommand = config.deliveryCommand
         }
+        let resolvedHotkey = hotkeyOverride ?? config.hotkey ?? Hotkey.default.name
+        let resolvedNoteHotkey = disableNoteHotkey
+            ? nil
+            : (noteHotkeyOverride ?? config.noteHotkey)
+        if let resolvedNoteHotkey,
+           let primary = Hotkey.parse(resolvedHotkey),
+           let notes = Hotkey.parse(resolvedNoteHotkey),
+           primary.conflicts(with: notes) {
+            throw RuntimeDefaultsError.conflictingHotkeys(primary.name)
+        }
         return RuntimeDefaults(
-            hotkey: hotkeyOverride ?? config.hotkey ?? Hotkey.default.name,
+            hotkey: resolvedHotkey,
+            noteHotkey: resolvedNoteHotkey,
             model: modelOverride ?? config.model ?? recommendedModel,
             language: resolvedLanguage,
             mode: resolvedMode,
@@ -226,6 +245,8 @@ struct RuntimeDefaults: Equatable {
 
 enum RuntimeDefaultsError: LocalizedError {
     case conflictingModes
+    case conflictingNoteHotkeyOverrides
+    case conflictingHotkeys(String)
     case conflictingDestinations
     case conflictingSavedDestinations
     case invalidLanguage(String)
@@ -236,6 +257,10 @@ enum RuntimeDefaultsError: LocalizedError {
         switch self {
         case .conflictingModes:
             return "pass at most one of --notes or --dictation"
+        case .conflictingNoteHotkeyOverrides:
+            return "pass at most one of --note-hotkey or --no-note-hotkey"
+        case .conflictingHotkeys(let hotkey):
+            return "the primary and note hotkeys are both '\(hotkey)'; choose two different keys"
         case .conflictingDestinations:
             return "pass at most one of --journal, --command, or --paste"
         case .conflictingSavedDestinations:

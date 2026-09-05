@@ -103,6 +103,14 @@ to the same inode, so it performs no second PCM conversion, byte copy, or length
 allocation. Age/orphan scans run at startup and at most hourly after successful delivery, outside
 capture and inference.
 
+## Dedicated note-hotkey routing cost
+
+Primary and note shortcuts share one `CGEventTap` and one gesture controller; they do not load or
+warm a second transcription pipeline. In the debug test harness, 10,000 irrelevant key-routing
+checks with two configured modifier hotkeys averaged 3–5 ms, or **0.3–0.5 microseconds per event**.
+Modifier-only pairs never subscribe to ordinary keyDown/keyUp events. If a plain key is configured,
+unrelated keystrokes are rejected synchronously before Parrot copies or dispatches them.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

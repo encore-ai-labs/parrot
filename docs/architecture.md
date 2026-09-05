@@ -92,8 +92,10 @@ Subcommands:
 
 ### `HotkeyMonitor`
 
-Global hotkey via `CGEventTap` (requires Accessibility permission). Default: **hold Fn**.
-Configurable with `--hotkey`; `parrot hotkeys` lists the options. Two kinds, handled
+Global hotkeys via one `CGEventTap` (requires Accessibility permission). Default: **hold Fn**.
+The primary is configurable with `--hotkey`; an optional `--note-hotkey` always starts its capture
+in note mode without reading the frontmost application. `parrot hotkeys` lists the options. Both
+keys support hold and double-tap, and two identical canonical keys are rejected. Two kinds are handled
 differently (see `Hotkey.swift`):
 
 - **Modifiers** — Fn, and the left/right Option/Command/Control/Shift pairs. Detected as
@@ -105,19 +107,23 @@ differently (see `Hotkey.swift`):
   something in the focused app, so the tap switches to `.defaultTap` and swallows that one
   key's events — otherwise dictating on End would jump the cursor to end-of-line every time.
 
-The tap subscribes to `keyDown`/`keyUp` only when the chosen hotkey needs them (or under
-`--debug-hotkey`). With a modifier hotkey it listens to `flagsChanged` alone, so parrot isn't
-copying every keystroke on the system.
+The single tap subscribes to `keyDown`/`keyUp` only when either chosen hotkey needs them (or under
+`--debug-hotkey`). With modifier-only hotkeys it listens to `flagsChanged` alone. When one chosen
+key is plain, the tap must receive key events to swallow it, but rejects unrelated keycodes before
+copying or dispatching them onto the main queue.
 
 A quick double-tap locks recording on. A first release inside the 550 ms double-tap window
 waits out that window; longer push-to-talk holds still stop immediately. Once locked, only
-pressing the selected hotkey again ends and transcribes the recording. A temporary event tap
+pressing the same hotkey that initiated that gesture ends and transcribes the recording; the other
+configured key cannot complete the double-tap or stop the latch. Source-labelled edges keep this
+invariant inside the deterministic gesture state machine. A temporary event tap
 watches only for Escape so it can cancel and discard; all other ordinary keystrokes pass
 through to the focused application without ending the recording.
 
 When macOS disables the tap (`tapDisabledByTimeout` / `tapDisabledByUserInput`) it is
-re-armed immediately. Left unhandled, parrot keeps running — menu bar icon and all — while
-the hotkey silently stops working.
+re-armed immediately. If a selected key was physically down, Parrot cancels that partial capture
+because macOS may have dropped its release edge; this prevents a held recording from becoming
+stranded. A latched recording has no down key and remains available after the tap is restored.
 
 **Fn key caveats, two of them:**
 

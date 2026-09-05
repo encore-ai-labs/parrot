@@ -59,6 +59,16 @@ enum Hotkey {
         }
     }
 
+    /// Whether two spellings resolve to the same physical keyboard control.
+    /// This catches custom forms such as `keycode:119` colliding with `end`,
+    /// in addition to the named aliases canonicalized by `parse`.
+    func conflicts(with other: Hotkey) -> Bool {
+        guard let keyEventCode, let otherKeyEventCode = other.keyEventCode else {
+            return name == other.name
+        }
+        return keyEventCode == otherKeyEventCode
+    }
+
     static let all: [Hotkey] = [
         .modifier(name: "fn", keyCode: nil, flag: .maskSecondaryFn),
         .modifier(name: "right-option", keyCode: 61, flag: .maskAlternate),

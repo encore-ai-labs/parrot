@@ -25,6 +25,7 @@ struct Settings: ParsableCommand {
                 recommendedModel: recommended
             )
             print("hotkey      \(defaults.hotkey)\(config.hotkey == nil ? "  (default)" : "")")
+            print("note key    \(defaults.noteHotkey ?? "off")")
             print("model       \(defaults.model)\(config.model == nil ? "  (recommended)" : "")")
             print("language    \(defaults.language)\(config.language == nil ? "  (default)" : "")")
             print("mode        \(defaults.mode.rawValue)\(config.mode == nil ? "  (default)" : "")")
@@ -72,6 +73,18 @@ struct Settings: ParsableCommand {
 
         @Option(name: .long, help: "Push-to-talk key from `parrot hotkeys`.")
         var hotkey: String?
+
+        @Option(
+            name: .customLong("note-hotkey"),
+            help: "Optional second key that always records in note mode."
+        )
+        var noteHotkey: String?
+
+        @Flag(
+            name: .customLong("no-note-hotkey"),
+            help: "Disable the dedicated note-mode shortcut."
+        )
+        var noNoteHotkey: Bool = false
 
         @Option(name: .long, help: "Model id from `parrot models list`.")
         var model: String?
@@ -161,7 +174,8 @@ struct Settings: ParsableCommand {
         var noAudioHistory: Bool = false
 
         func validate() throws {
-            guard hotkey != nil || model != nil || language != nil || mode != nil
+            guard hotkey != nil || noteHotkey != nil || noNoteHotkey
+                    || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || spaceAfterPaste || noSpaceAfterPaste
@@ -201,6 +215,11 @@ struct Settings: ParsableCommand {
                     "pass at most one of --audio-history-days or --no-audio-history"
                 )
             }
+            guard !(noteHotkey != nil && noNoteHotkey) else {
+                throw ValidationError(
+                    "pass at most one of --note-hotkey or --no-note-hotkey"
+                )
+            }
             if let historyRetentionDays {
                 _ = try HistoryRetentionPolicy(days: historyRetentionDays)
             }
@@ -209,6 +228,14 @@ struct Settings: ParsableCommand {
             }
             if let hotkey, Hotkey.parse(hotkey) == nil {
                 throw ValidationError("unknown hotkey '\(hotkey)'; run `parrot hotkeys`")
+            }
+            if let noteHotkey, Hotkey.parse(noteHotkey) == nil {
+                throw ValidationError("unknown note hotkey '\(noteHotkey)'; run `parrot hotkeys`")
+            }
+            if let hotkey = hotkey.flatMap(Hotkey.parse),
+               let noteHotkey = noteHotkey.flatMap(Hotkey.parse),
+               hotkey.conflicts(with: noteHotkey) {
+                throw ValidationError("the primary and note hotkeys must be different")
             }
             if let model, ModelRegistry.find(model) == nil {
                 throw ValidationError("unknown model '\(model)'; run `parrot models list`")
@@ -228,7 +255,8 @@ struct Settings: ParsableCommand {
         }
 
         func run() throws {
-            guard hotkey != nil || model != nil || language != nil || mode != nil
+            guard hotkey != nil || noteHotkey != nil || noNoteHotkey
+                    || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || spaceAfterPaste || noSpaceAfterPaste
@@ -245,6 +273,21 @@ struct Settings: ParsableCommand {
                     throw ValidationError("unknown hotkey '\(hotkey)'; run `parrot hotkeys`")
                 }
                 config.hotkey = parsed.name
+            }
+            if let noteHotkey {
+                guard let parsed = Hotkey.parse(noteHotkey) else {
+                    throw ValidationError(
+                        "unknown note hotkey '\(noteHotkey)'; run `parrot hotkeys`"
+                    )
+                }
+                config.noteHotkey = parsed.name
+            } else if noNoteHotkey {
+                config.noteHotkey = nil
+            }
+            if let noteHotkey = config.noteHotkey.flatMap(Hotkey.parse),
+               let primaryHotkey = Hotkey.parse(config.hotkey ?? Hotkey.default.name),
+               noteHotkey.conflicts(with: primaryHotkey) {
+                throw ValidationError("the primary and note hotkeys must be different")
             }
             if let model {
                 guard let registered = ModelRegistry.find(model) else {
@@ -327,6 +370,7 @@ struct Settings: ParsableCommand {
         func run() throws {
             var config = Config.load()
             config.hotkey = nil
+            config.noteHotkey = nil
             config.model = nil
             config.language = nil
             config.mode = nil

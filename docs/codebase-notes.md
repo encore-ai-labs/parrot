@@ -371,6 +371,16 @@ cap, exact-name and symlink guards, transcript-bounded rolling retention, orphan
 explicit audio-only clear command bound privacy and storage. `parrot history audio` can list, play,
 or reprocess an older recording through the current entirely local model and note pipeline.
 
+**3.26 — A single shortcut makes note mode costly to reach from mixed workflows.** ✅ **FIXED**
+
+An optional dedicated note hotkey now bypasses fallback/app matching for one capture while sharing
+the already loaded model and one global event tap. Every edge carries its source through the
+gesture state machine, so only the initiating key can complete a double-tap or stop its locked
+recording; the alternate key is ignored and Escape remains the explicit discard path. Unrelated
+keyDown/keyUp events are rejected synchronously before copying to the main queue. If macOS disables
+the tap while either key is down, the partial capture is cancelled instead of losing the release
+edge and becoming stranded; an already latched capture remains active.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

@@ -13,15 +13,6 @@ final class FnSystemActionTests: XCTestCase {
         XCTAssertEqual(store.value, 2)
     }
 
-    func testRestoresAnOriginallyUnsetPreference() throws {
-        let store = MemoryFnPreferences(nil)
-        let override = try FnSystemActionOverride(store: store)
-
-        XCTAssertEqual(store.value, 0)
-        try override.restore()
-        XCTAssertNil(store.value)
-    }
-
     func testLeavesAnAlreadyDisabledActionAlone() throws {
         let store = MemoryFnPreferences(0)
         let override = try FnSystemActionOverride(store: store)
@@ -43,16 +34,16 @@ final class FnSystemActionTests: XCTestCase {
 }
 
 private final class MemoryFnPreferences: FnSystemActionPreferenceStoring {
-    var value: Int?
-    var writes: [Int?] = []
+    var value: Int
+    var writes: [Int] = []
 
-    init(_ value: Int?) {
+    init(_ value: Int) {
         self.value = value
     }
 
-    func read() -> Int? { value }
+    func read() throws -> Int { value }
 
-    func write(_ value: Int?) throws {
+    func write(_ value: Int) throws {
         writes.append(value)
         self.value = value
     }

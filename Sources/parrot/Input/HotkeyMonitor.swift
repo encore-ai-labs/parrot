@@ -7,7 +7,7 @@ import Foundation
 /// edges. Requires Accessibility permission. If the tap fails to register,
 /// callers will see an error from `start()`.
 final class HotkeyMonitor {
-    enum Event { case pressed, released, exitKeyPressed }
+    enum Event { case pressed, released, exitKeyPressed, cancelKeyPressed }
     enum HotkeyError: Error { case tapCreateFailed }
 
     private let hotkey: Hotkey
@@ -18,6 +18,7 @@ final class HotkeyMonitor {
     private var exitKeyTap: CFMachPort?
     private var exitKeyRunLoopSource: CFRunLoopSource?
     private var swallowedExitKeyCode: Int64?
+    private var exitOnAnyKey = false
     private var isPressed = false
 
     init(hotkey: Hotkey = .default, debug: Bool = false) {
@@ -98,12 +99,12 @@ final class HotkeyMonitor {
         onEvent = nil
     }
 
-    /// While recording is latched, watch for the first ordinary keypress and
-    /// consume it so Return does not submit before the transcript is inserted.
-    /// This separate tap keeps normal push-to-talk mode from observing every
-    /// key typed on the system.
+    /// While recording, consume Escape as a cancel key. In latched mode, also
+    /// consume the first ordinary keypress so Return does not submit before the
+    /// transcript is inserted. The tap exists only while the mic is recording.
     @discardableResult
-    func startExitKeyMonitoring() -> Bool {
+    func startExitKeyMonitoring(exitOnAnyKey: Bool) -> Bool {
+        self.exitOnAnyKey = exitOnAnyKey
         guard exitKeyTap == nil else { return true }
 
         let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
@@ -117,7 +118,7 @@ final class HotkeyMonitor {
             userInfo: userInfo
         ) else {
             FileHandle.standardError.write(Data(
-                "failed to register the latched-mode exit key tap\n".utf8
+                "failed to register the recording exit-key tap\n".utf8
             ))
             return false
         }
@@ -143,6 +144,7 @@ final class HotkeyMonitor {
         }
         exitKeyTap = nil
         exitKeyRunLoopSource = nil
+        exitOnAnyKey = false
     }
 
     fileprivate func reenableExitKeyTap() {
@@ -170,6 +172,8 @@ final class HotkeyMonitor {
             return true
         }
 
+        let isEscape = keycode == 53
+        guard isEscape || exitOnAnyKey else { return false }
         guard type == .keyDown else { return false }
         guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return false }
         if debug {
@@ -179,7 +183,7 @@ final class HotkeyMonitor {
         }
         swallowedExitKeyCode = keycode
         DispatchQueue.main.async { [weak self] in
-            self?.onEvent?(.exitKeyPressed)
+            self?.onEvent?(isEscape ? .cancelKeyPressed : .exitKeyPressed)
         }
         return true
     }

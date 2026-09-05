@@ -39,6 +39,8 @@ normal quit. Other hotkeys do not change this system preference.
 For hands-free dictation, quickly double-tap the push-to-talk key. Recording stays on after
 the second release; press Return, any other ordinary key, or the push-to-talk key again to
 stop. The exit key is consumed, so it will not type or submit before the transcript arrives.
+Press **Escape** at any point while recording to cancel and discard the audio without
+transcribing, saving history, or injecting text. Escape is consumed as part of cancellation.
 
 ### Transcript history
 

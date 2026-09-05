@@ -39,7 +39,7 @@ enum StartupTUI {
         let history = details.historyPath ?? "off (--no-history)"
         write("\n")
         write(row("version", details.version))
-        write(row("hotkey", "\(details.hotkey)  ·  hold to talk / double-tap to lock"))
+        write(row("hotkey", "\(details.hotkey)  ·  hold to talk / double-tap to lock / esc to cancel"))
         if let systemHotkeyAction = details.systemHotkeyAction {
             write(row("macOS key", systemHotkeyAction))
         }

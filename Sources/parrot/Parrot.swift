@@ -352,6 +352,7 @@ struct Run: ParsableCommand {
         let startRecording = {
             do {
                 try capture.start()
+                _ = monitor.startExitKeyMonitoring(exitOnAnyKey: false)
                 FileHandle.standardError.write(Data("● recording\n".utf8))
                 MainActor.assumeIsolated {
                     overlay?.show(.recording)
@@ -363,6 +364,7 @@ struct Run: ParsableCommand {
         }
 
         let stopRecording = {
+            monitor.stopExitKeyMonitoring()
             let samples = capture.stop()
             MainActor.assumeIsolated {
                 overlay?.show(.transcribing)
@@ -422,15 +424,29 @@ struct Run: ParsableCommand {
             }
         }
 
+        let cancelRecording = {
+            monitor.stopExitKeyMonitoring()
+            _ = capture.stop()
+            FileHandle.standardError.write(Data("× recording cancelled\n".utf8))
+            MainActor.assumeIsolated {
+                overlay?.hide()
+                menuBar.setRecording(false)
+            }
+        }
+
         let gesture = HotkeyGestureController { effect in
             switch effect {
             case .startRecording:
                 startRecording()
             case .stopRecording:
                 stopRecording()
+            case .cancelRecording:
+                cancelRecording()
             case .setLatched(true):
-                if monitor.startExitKeyMonitoring() {
-                    FileHandle.standardError.write(Data("↔ recording locked · press any key to stop\n".utf8))
+                if monitor.startExitKeyMonitoring(exitOnAnyKey: true) {
+                    FileHandle.standardError.write(Data(
+                        "↔ recording locked · any key transcribes · esc cancels\n".utf8
+                    ))
                 }
             case .setLatched(false):
                 monitor.stopExitKeyMonitoring()
@@ -448,6 +464,8 @@ struct Run: ParsableCommand {
                     gesture.handle(.hotkeyReleased)
                 case .exitKeyPressed:
                     gesture.handle(.otherKeyPressed)
+                case .cancelKeyPressed:
+                    gesture.handle(.cancelKeyPressed)
                 }
             }
         } catch {

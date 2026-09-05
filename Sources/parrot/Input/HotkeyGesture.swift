@@ -10,12 +10,14 @@ struct HotkeyGesture {
         case hotkeyPressed
         case hotkeyReleased
         case otherKeyPressed
+        case cancelKeyPressed
         case timeout
     }
 
     enum Effect: Equatable {
         case startRecording
         case stopRecording
+        case cancelRecording
         case setLatched(Bool)
         case scheduleTimeout(after: TimeInterval)
         case cancelTimeout
@@ -82,6 +84,18 @@ struct HotkeyGesture {
              (.latched, .hotkeyPressed):
             state = .idle
             effects.append(contentsOf: [.setLatched(false), .stopRecording])
+
+        case (.firstPress, .cancelKeyPressed), (.secondPress, .cancelKeyPressed):
+            state = .idle
+            effects.append(.cancelRecording)
+
+        case (.awaitingSecondPress, .cancelKeyPressed):
+            state = .idle
+            effects.append(contentsOf: [.cancelTimeout, .cancelRecording])
+
+        case (.latched, .cancelKeyPressed):
+            state = .idle
+            effects.append(contentsOf: [.setLatched(false), .cancelRecording])
 
         default:
             break

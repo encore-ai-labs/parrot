@@ -81,4 +81,41 @@ final class HotkeyGestureTests: XCTestCase {
             [.cancelTimeout, .stopRecording, .startRecording]
         )
     }
+
+    func testEscapeCancelsAHeldRecording() {
+        var gesture = HotkeyGesture(doubleTapInterval: 0.4)
+
+        _ = gesture.handle(.hotkeyPressed, at: 1.0)
+        XCTAssertEqual(
+            gesture.handle(.cancelKeyPressed, at: 1.2),
+            [.cancelRecording]
+        )
+        XCTAssertEqual(gesture.handle(.hotkeyReleased, at: 1.3), [])
+    }
+
+    func testEscapeCancelsWhileWaitingForSecondTap() {
+        var gesture = HotkeyGesture(doubleTapInterval: 0.4)
+
+        _ = gesture.handle(.hotkeyPressed, at: 1.0)
+        _ = gesture.handle(.hotkeyReleased, at: 1.1)
+        XCTAssertEqual(
+            gesture.handle(.cancelKeyPressed, at: 1.2),
+            [.cancelTimeout, .cancelRecording]
+        )
+        XCTAssertEqual(gesture.handle(.timeout, at: 1.4), [])
+    }
+
+    func testEscapeCancelsLatchedRecordingInsteadOfTranscribing() {
+        var gesture = HotkeyGesture(doubleTapInterval: 0.4)
+
+        _ = gesture.handle(.hotkeyPressed, at: 1.0)
+        _ = gesture.handle(.hotkeyReleased, at: 1.1)
+        _ = gesture.handle(.hotkeyPressed, at: 1.2)
+        _ = gesture.handle(.hotkeyReleased, at: 1.3)
+
+        XCTAssertEqual(
+            gesture.handle(.cancelKeyPressed, at: 2.0),
+            [.setLatched(false), .cancelRecording]
+        )
+    }
 }

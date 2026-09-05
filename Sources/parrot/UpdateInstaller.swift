@@ -81,6 +81,12 @@ enum UpdateInstaller {
                 uniquingKeysWith: { _, new in new }
             )
         }
+        // Process does not reliably preserve an interactive terminal when
+        // Parrot is itself a packaged CLI. Forward all three streams
+        // explicitly so sudo can display and read its password prompt.
+        task.standardInput = FileHandle.standardInput
+        task.standardOutput = FileHandle.standardOutput
+        task.standardError = FileHandle.standardError
         try task.run()
         task.waitUntilExit()
         guard task.terminationStatus == 0 else {

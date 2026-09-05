@@ -82,20 +82,33 @@ chmod +x "$TMP/${BIN_NAME}"
 xattr -d com.apple.quarantine "$TMP/${BIN_NAME}" 2>/dev/null || true
 
 # 5. install
-SUDO=""
-if [ ! -w "$INSTALL_DIR" ]; then
+TARGET="${INSTALL_DIR}/${BIN_NAME}"
+
+# A first install into /usr/local/bin commonly needs sudo, but `sudo mv` keeps
+# the downloaded file owned by the user. Future updates can therefore replace
+# the writable target directly even though its parent directory is root-owned.
+# This is also what makes menu-bar and daemon-start updates non-interactive.
+if [ -f "$TARGET" ] && [ -w "$TARGET" ]; then
+    dim "→ updating ${TARGET}..."
+    cp "$TMP/${BIN_NAME}" "$TARGET"
+    chmod +x "$TARGET"
+elif [ -w "$INSTALL_DIR" ]; then
+    dim "→ installing to ${TARGET}..."
+    mv "$TMP/${BIN_NAME}" "$TARGET"
+    chmod +x "$TARGET"
+else
     if [ ! -d "$INSTALL_DIR" ]; then
         dim "→ creating ${INSTALL_DIR} (sudo)..."
         sudo mkdir -p "$INSTALL_DIR"
     fi
-    SUDO="sudo"
+    dim "→ installing to ${TARGET} (sudo)..."
+    sudo mv "$TMP/${BIN_NAME}" "$TARGET"
+    sudo chmod +x "$TARGET"
 fi
 
-dim "→ installing to ${INSTALL_DIR}/${BIN_NAME}..."
-$SUDO mv "$TMP/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
-$SUDO chmod +x "${INSTALL_DIR}/${BIN_NAME}"
+xattr -d com.apple.quarantine "$TARGET" 2>/dev/null || true
 
-green "✓ parrot ${TAG} installed at ${INSTALL_DIR}/${BIN_NAME}"
+green "✓ parrot ${TAG} installed at ${TARGET}"
 if [ "${PARROT_UPDATE_MODE:-0}" != "1" ]; then
     echo
     echo "next:"

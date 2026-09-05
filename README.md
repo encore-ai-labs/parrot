@@ -604,6 +604,20 @@ recording or transcribing; input replacement runs away from the UI, clears cross
 and a hotkey press racing the swap is rejected rather than creating a mixed-microphone note.
 Connect/disconnect notifications refresh the list, so the daemon does not poll CoreAudio at idle.
 
+If dictation is empty, faint, or unreliable, test the exact input before loading a model:
+
+```sh
+parrot devices test
+parrot devices test --input-device "Logitech BRIO" --seconds 8
+parrot devices test --json
+```
+
+Speak normally for 2–15 seconds. Parrot reports level and peak in dBFS, voiced-frame activity,
+clipping, and a concrete fix when the signal is silent, quiet, or too loud. The check stays local:
+it neither transcribes nor saves audio, changes preferences, writes history, or contacts a network.
+Healthy input exits with status 0; a signal that needs attention exits with status 2, which makes
+the JSON form useful in setup scripts.
+
 **Don't record from Bluetooth headphones if you're listening to music on them.** macOS can't
 run high-quality playback and mic capture on the same Bluetooth device at once — opening a
 headset's mic drags it from A2DP (stereo, 44.1 kHz) down to HFP (mono, 16 kHz), and your audio
@@ -829,6 +843,7 @@ parrot transcribe voice-memo.m4a       # adjacent timestamped Markdown
 parrot transcribe *.m4a --output-directory ./notes
 parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones
+parrot devices test [--input-device NAME] [--seconds 5] [--json]
 parrot devices prioritize "USB mic" "MacBook Pro Microphone" # ranked fallback
 parrot devices automatic               # clear saved microphone priorities
 parrot apps add Notes --mode notes     # local automatic mode rule

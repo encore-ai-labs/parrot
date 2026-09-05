@@ -233,6 +233,11 @@ AVFoundation input and connected devices without idle polling. A lock-protected 
 pre-roll reset, off-main session rebuild, and rollback path preserve note continuity and keep the
 saved priority fallback behavior intact.
 
+**6.18 Private microphone-quality diagnostic** — ✅ **complete.** `parrot devices test` measures
+an explicit or preferred microphone for a bounded 2–15 seconds and reports local RMS/peak dBFS,
+20 ms activity, and clipping with actionable guidance or structured JSON. It loads no model, saves
+no audio/history, changes no preference, makes no network request, and adds no daemon-idle work.
+
 ---
 
 ## Suggested release cadence

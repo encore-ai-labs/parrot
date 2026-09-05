@@ -454,6 +454,14 @@ menu without polling. A shared lock gate excludes simultaneous capture start, pr
 at the boundary, and failure rolls back the previous session instead of stranding dictation or
 mixing two microphones in one note.
 
+**3.35 — A selected microphone can be present but effectively unusable.** ✅ **FIXED**
+
+`parrot devices test` now records a bounded 2–15 second sample from an explicit or preferred input
+and computes RMS/peak dBFS, 20 ms activity, and clipping in one local pass. It distinguishes silence,
+quiet speech, healthy signal, and clipping with actionable macOS guidance and structured JSON. The
+diagnostic does not initialize a recognizer, save audio or history, change device preferences, or
+perform network work; non-healthy results use exit status 2 for setup automation.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

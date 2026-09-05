@@ -1,5 +1,6 @@
 import AppKit
 import ArgumentParser
+import AVFoundation
 import Foundation
 import WhisperKit
 
@@ -21,8 +22,8 @@ struct Parrot: ParsableCommand {
 
 struct Devices: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "List microphones and set automatic priority order.",
-        subcommands: [List.self, Prioritize.self, Automatic.self],
+        abstract: "List, test, and prioritize microphones.",
+        subcommands: [List.self, Test.self, Prioritize.self, Automatic.self],
         defaultSubcommand: List.self
     )
 
@@ -78,6 +79,154 @@ struct Devices: ParsableCommand {
                 print()
                 print(warning)
             }
+        }
+    }
+
+    struct Test: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Measure a microphone's signal locally without transcribing or saving audio."
+        )
+
+        @Option(
+            name: .customLong("input-device"),
+            help: "Microphone name or UID. Defaults to Parrot's current preferred input."
+        )
+        var inputDevice: String?
+
+        @Option(
+            name: .customLong("seconds"),
+            help: "Test duration from 2 through 15 seconds."
+        )
+        var seconds: Double = 5
+
+        @Flag(name: .long, help: "Print the result as JSON on stdout.")
+        var json = false
+
+        func validate() throws {
+            guard seconds.isFinite, (2...15).contains(seconds) else {
+                throw ValidationError("--seconds must be between 2 and 15")
+            }
+        }
+
+        func run() throws {
+            try ensureMicrophonePermission()
+
+            let connected = AudioDevices.inputs()
+            guard !connected.isEmpty else {
+                throw ValidationError("no input devices found")
+            }
+
+            let selected: AudioInputDevice
+            if let inputDevice {
+                guard let match = AudioDevices.find(inputDevice, in: connected) else {
+                    throw ValidationError(
+                        "unknown connected microphone '\(inputDevice)'; run `parrot devices`"
+                    )
+                }
+                selected = match
+            } else if let preferred = AudioDevices.highestPriority(
+                from: connected,
+                priorityUIDs: Config.load().savedInputDeviceUIDs
+            ) ?? AudioDevices.preferred(allowBluetooth: false) {
+                selected = preferred
+            } else {
+                throw ValidationError("couldn't choose an input device; pass --input-device")
+            }
+
+            writeStatus(String(
+                format: "testing %@ · speak normally for %.1f seconds…\n",
+                selected.name,
+                seconds
+            ))
+            if let warning = AudioDevices.bluetoothWarning(for: selected) {
+                writeStatus("\(warning)\n")
+            }
+
+            let capture = AudioCapture(
+                device: selected,
+                preferredDeviceUIDs: [selected.uid],
+                usePreRoll: true,
+                liveRecordingURL: nil
+            )
+            capture.onStatus = { writeStatus("\($0)\n") }
+            try capture.startSession()
+            defer { capture.stopSession() }
+
+            // Fill the normal 300 ms pre-roll, then discard it from the
+            // analysis so the requested duration describes only the test.
+            Thread.sleep(forTimeInterval: AudioCapture.preRollSeconds + 0.05)
+            try capture.start()
+            var isCapturing = true
+            defer {
+                if isCapturing { capture.cancel() }
+            }
+            writeStatus("● recording\n")
+            Thread.sleep(forTimeInterval: seconds)
+            let recorded = try capture.stop()
+            isCapturing = false
+
+            guard let samples = recorded.samples else {
+                throw ValidationError("microphone test unexpectedly used file-backed capture")
+            }
+            let requestedSamples = min(
+                samples.count,
+                Int(seconds * Double(recorded.sampleRate))
+            )
+            let analysis = MicrophoneSignalAnalysis.analyze(
+                samples.suffix(requestedSamples),
+                sampleRate: recorded.sampleRate
+            )
+            let result = MicrophoneTestResult(
+                deviceName: selected.name,
+                deviceUID: selected.uid,
+                transport: selected.transportName,
+                analysis: analysis
+            )
+
+            if json {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                var data = try encoder.encode(result)
+                data.append(0x0A)
+                FileHandle.standardOutput.write(data)
+            } else {
+                print(result.textReport())
+            }
+
+            guard analysis.rating == .healthy else { throw ExitCode(2) }
+        }
+
+        private func ensureMicrophonePermission() throws {
+            switch AVCaptureDevice.authorizationStatus(for: .audio) {
+            case .authorized:
+                return
+            case .notDetermined:
+                writeStatus("requesting microphone access…\n")
+                let semaphore = DispatchSemaphore(value: 0)
+                var granted = false
+                AVCaptureDevice.requestAccess(for: .audio) { allowed in
+                    granted = allowed
+                    semaphore.signal()
+                }
+                semaphore.wait()
+                guard granted else {
+                    throw ValidationError(
+                        "microphone access was denied; enable your terminal in "
+                            + "System Settings → Privacy & Security → Microphone"
+                    )
+                }
+            case .denied, .restricted:
+                throw ValidationError(
+                    "microphone access is denied; enable your terminal in "
+                        + "System Settings → Privacy & Security → Microphone"
+                )
+            @unknown default:
+                throw ValidationError("microphone permission is in an unknown state")
+            }
+        }
+
+        private func writeStatus(_ message: String) {
+            FileHandle.standardError.write(Data(message.utf8))
         }
     }
 

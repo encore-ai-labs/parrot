@@ -160,6 +160,16 @@ performance harness, 10,000 selected-device reorderings at the maximum eight sav
 replacement is a one-time asynchronous hardware operation on the existing serial session queue;
 it does not block the menu, run during capture, add idle polling, or touch transcription/model work.
 
+## Local microphone-test cost
+
+`parrot devices test` is an explicit diagnostic, so it adds no daemon-idle or ordinary-dictation
+work. The capture is bounded to 2–15 seconds at 16 kHz mono Float32 (at most about 960 KB), keeps no
+recovery file, and discards its normal 300 ms warm pre-roll before analysis. The analyzer makes one
+pass for RMS, peak, 20 ms active-frame share, and clipped-sample share; it does no model or network
+work. In the debug test harness, ten analyses of the same ten-second signal completed in **137 ms**
+on this Mac, about **13.7 ms per diagnostic**. AVCaptureSession startup and the requested listening
+period are intentionally excluded because they depend on physical hardware and chosen duration.
+
 ## Local history export cost
 
 History export is an explicit CLI operation and adds no capture, delivery, model, or daemon-idle

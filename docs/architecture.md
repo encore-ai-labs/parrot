@@ -87,6 +87,7 @@ Subcommands:
 - `parrot models list` — show registered models, mark which are downloaded
 - `parrot models download <id>` — pre-fetch a model
 - `parrot doctor` — check microphone and accessibility permissions, print remediation steps
+- `parrot devices test` — bounded local microphone level/activity/clipping diagnosis
 - `parrot vocabulary` — manage local recognition hints and exact text replacements
 - `parrot transcribe <files...>` — bounded-memory local file transcription to Markdown,
   text, or JSON
@@ -818,6 +819,7 @@ parrot/
     Audio/
       AudioCapture.swift        # AVCaptureSession + pre-roll ring buffer
       AudioDevices.swift        # CoreAudio input enumeration/selection
+      MicrophoneSignalAnalysis.swift # bounded local level/activity/clipping diagnosis
 
     Input/
       HotkeyMonitor.swift       # CGEventTap

@@ -46,6 +46,11 @@ struct Settings: ParsableCommand {
                     + (defaults.historyRetentionDays.map { "keep \($0) days" } ?? "keep forever")
                     + "\(config.historyRetentionDays == nil ? "  (default)" : "")"
             )
+            print(
+                "audio history "
+                    + (defaults.audioHistoryRetentionDays.map { "keep \($0) days" } ?? "off")
+                    + "\(config.audioHistoryRetentionDays == nil ? "  (default)" : "")"
+            )
             if let journalPath = defaults.journalPath {
                 print("delivery    journal → \(StartupTUI.displayPath(URL(fileURLWithPath: journalPath)))")
             } else if defaults.deliveryCommand != nil {
@@ -143,13 +148,26 @@ struct Settings: ParsableCommand {
         )
         var keepHistoryForever: Bool = false
 
+        @Option(
+            name: .customLong("audio-history-days"),
+            help: "Retain private local recording audio for 1...3650 rolling days."
+        )
+        var audioHistoryRetentionDays: Int?
+
+        @Flag(
+            name: .customLong("no-audio-history"),
+            help: "Stop saving delivered recording audio; existing files remain until cleared."
+        )
+        var noAudioHistory: Bool = false
+
         func validate() throws {
             guard hotkey != nil || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || spaceAfterPaste || noSpaceAfterPaste
                     || warmMicrophone || coldMicrophone
-                    || historyRetentionDays != nil || keepHistoryForever else {
+                    || historyRetentionDays != nil || keepHistoryForever
+                    || audioHistoryRetentionDays != nil || noAudioHistory else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
@@ -178,8 +196,16 @@ struct Settings: ParsableCommand {
                     "pass at most one of --history-retention-days or --keep-history-forever"
                 )
             }
+            guard !(audioHistoryRetentionDays != nil && noAudioHistory) else {
+                throw ValidationError(
+                    "pass at most one of --audio-history-days or --no-audio-history"
+                )
+            }
             if let historyRetentionDays {
                 _ = try HistoryRetentionPolicy(days: historyRetentionDays)
+            }
+            if let audioHistoryRetentionDays {
+                _ = try HistoryRetentionPolicy(days: audioHistoryRetentionDays)
             }
             if let hotkey, Hotkey.parse(hotkey) == nil {
                 throw ValidationError("unknown hotkey '\(hotkey)'; run `parrot hotkeys`")
@@ -207,7 +233,8 @@ struct Settings: ParsableCommand {
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || spaceAfterPaste || noSpaceAfterPaste
                     || warmMicrophone || coldMicrophone
-                    || historyRetentionDays != nil || keepHistoryForever else {
+                    || historyRetentionDays != nil || keepHistoryForever
+                    || audioHistoryRetentionDays != nil || noAudioHistory else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
@@ -268,6 +295,12 @@ struct Settings: ParsableCommand {
             } else if keepHistoryForever {
                 config.historyRetentionDays = nil
             }
+            if let audioHistoryRetentionDays {
+                _ = try HistoryRetentionPolicy(days: audioHistoryRetentionDays)
+                config.audioHistoryRetentionDays = audioHistoryRetentionDays
+            } else if noAudioHistory {
+                config.audioHistoryRetentionDays = nil
+            }
             let effectiveModelID = config.model ?? ModelRegistry.recommended()?.id ?? ""
             guard let effectiveModel = ModelRegistry.find(effectiveModelID) else {
                 throw ValidationError("no transcription model is available")
@@ -304,6 +337,7 @@ struct Settings: ParsableCommand {
             config.spaceAfterPaste = nil
             config.warmMicrophone = nil
             config.historyRetentionDays = nil
+            config.audioHistoryRetentionDays = nil
             try config.write()
             print("✓ reset transcription, formatting, capture, history, and delivery defaults")
             print("restart a running Parrot daemon to apply the change")

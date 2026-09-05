@@ -393,7 +393,31 @@ the latest successful samples only in memory so **Retry Last Recording** can reu
 model and current mode; a new accepted capture replaces them, and **Forget Last Recording**
 clears memory and disk. Recovery therefore does not become an unbounded audio history.
 
-Each new entry includes an HTML-comment marker containing a stable, timestamp-derived ID. The
+`HistoryAudioArchive` is a separate, explicit opt-in for users who need older-note recovery. After
+successful delivery and Markdown-history append, it pairs that entry's ID with a private 16 kHz
+mono PCM WAV under `transcripts/audio/`. The source is the already-synchronized recovery WAV and
+the archive operation is a same-volume hard link: no second encode, copy, allocation, model pass,
+or length-dependent delivery work. Removing the recovery pathname after delivery leaves the
+archived inode intact. A 256 MiB per-file cap and required finite `audioHistoryRetentionDays`
+bound both corrupt-input allocation and long-term disk use.
+
+Audio maintenance runs at daemon startup and at most hourly after delivery. It removes exact
+Parrot-shaped regular WAVs older than the effective rolling cutoff or lacking a corresponding
+Markdown entry; a shorter transcript policy always bounds the audio policy. Directory/file modes
+are forced to `0700`/`0600`, symlinked directories and source files are rejected, and unrelated
+files or symlinks are never cleanup targets. Cross-process operations share the transcript-history
+lock. Disabling future audio storage leaves existing files for an explicit `history audio clear`.
+
+`parrot history audio` lists retained files beside transcript excerpts, opens one through macOS,
+or passes one to the existing `parrot transcribe --stdout --format text` path. Reprocessing defaults
+to the current saved local model/mode and accepts explicit model, language, mode, cleanup, casing,
+paragraph, and personalization overrides. Individual delete and full clear operations remove only
+exact retained WAVs while leaving Markdown intact. Reprocessing reuses the normal vocabulary,
+filler, snippet, and note pipeline without adding a cloud service or a second transcription
+implementation.
+
+Each new entry includes an HTML-comment marker containing a stable, timestamp-derived ID. Captures
+that somehow finish in the same millisecond receive a deterministic numeric suffix. The
 comment stays invisible in rendered Markdown while allowing `TranscriptHistoryReader` to parse
 note bodies containing arbitrary Markdown headings. A compatibility parser reads unmarked files
 from older releases. `parrot history` exposes recent listing, local full-text search, exact show,
@@ -624,7 +648,9 @@ Models are not bundled. New downloads live in
     are never passed through cleanup or note formatting.
 13. `TextInjector` posts the string at the cursor, or `MarkdownJournal` durably appends it when
     journal delivery is selected. `TranscriptHistory` independently saves the recovery copy.
-14. The safety WAV is removed after delivery; the samples remain in memory for one-click retry.
+14. When finite audio history is explicitly enabled, `HistoryAudioArchive` hard-links the staged
+    safety WAV to the transcript ID in constant time. The safety pathname is then removed; the
+    samples remain in memory for one-click retry.
     Overlay hides. Status: `listening`. Loop.
 15. User hits `^C`. Process exits cleanly.
 
@@ -641,7 +667,8 @@ End-to-end latency target: <500 ms after hotkey release for utterances under 10 
 
 - No streaming partial transcripts in v1. Press, speak, release, get full text.
 - No VAD-based hands-free mode. Push-to-talk is more reliable and uses zero idle CPU.
-- No cloud transcript sync or hosted account. History, vocabulary, and settings stay local.
+- No cloud transcript/audio sync or hosted account. History, recordings, vocabulary, and settings
+  stay local.
 - No general-purpose AI rewriting in the core dictation path. Vocabulary prompting and exact
   replacements are bounded, deterministic, and on-device.
 - No settings window or dock app. Configuration remains CLI-first; runtime status and actions

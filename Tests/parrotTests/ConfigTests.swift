@@ -35,6 +35,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.spaceAfterPaste)
         XCTAssertNil(config.warmMicrophone)
         XCTAssertNil(config.historyRetentionDays)
+        XCTAssertNil(config.audioHistoryRetentionDays)
         XCTAssertEqual(permissions(at: root), 0o700)
         XCTAssertEqual(permissions(at: url), 0o600)
     }
@@ -54,6 +55,7 @@ final class ConfigTests: XCTestCase {
         config.spaceAfterPaste = false
         config.warmMicrophone = false
         config.historyRetentionDays = 30
+        config.audioHistoryRetentionDays = 7
 
         try config.write(to: url)
 
@@ -104,7 +106,8 @@ final class ConfigTests: XCTestCase {
                 automaticParagraphs: true,
                 spaceAfterPaste: true,
                 warmMicrophone: true,
-                historyRetentionDays: nil
+                historyRetentionDays: nil,
+                audioHistoryRetentionDays: nil
             )
         )
         XCTAssertEqual(
@@ -127,7 +130,8 @@ final class ConfigTests: XCTestCase {
                 automaticParagraphs: true,
                 spaceAfterPaste: true,
                 warmMicrophone: true,
-                historyRetentionDays: nil
+                historyRetentionDays: nil,
+                audioHistoryRetentionDays: nil
             )
         )
     }
@@ -405,6 +409,38 @@ final class ConfigTests: XCTestCase {
             dictation: false,
             recommendedModel: "whisper-base.en"
         ))
+
+        config.historyRetentionDays = nil
+        config.audioHistoryRetentionDays = 7
+        XCTAssertEqual(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ).audioHistoryRetentionDays, 7)
+
+        config.historyRetentionDays = 3
+        XCTAssertEqual(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ).audioHistoryRetentionDays, 3)
+
+        config.historyRetentionDays = nil
+        config.audioHistoryRetentionDays = 0
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ))
     }
 
     func testRuntimeDefaultsRejectConflictingModeOverrides() {
@@ -428,7 +464,7 @@ final class ConfigTests: XCTestCase {
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
                 "--no-space-after-paste", "--cold-mic",
-                "--history-retention-days", "30",
+                "--history-retention-days", "30", "--audio-history-days", "7",
             ]) as? Settings.Set
         )
         XCTAssertEqual(set.hotkey, "ralt")
@@ -441,6 +477,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(set.noSpaceAfterPaste)
         XCTAssertTrue(set.coldMicrophone)
         XCTAssertEqual(set.historyRetentionDays, 30)
+        XCTAssertEqual(set.audioHistoryRetentionDays, 7)
         XCTAssertTrue(try Settings.parseAsRoot(["reset"]) is Settings.Reset)
 
         let paste = try XCTUnwrap(
@@ -486,6 +523,15 @@ final class ConfigTests: XCTestCase {
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--history-retention-days", "30", "--keep-history-forever",
         ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--audio-history-days", "0",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--audio-history-days", "7", "--no-audio-history",
+        ]))
+        XCTAssertTrue(try Settings.parseAsRoot([
+            "set", "--no-audio-history",
+        ]) is Settings.Set)
     }
 
     func testRuntimeDefaultsCanonicalizeSavedAndOneRunLanguages() throws {

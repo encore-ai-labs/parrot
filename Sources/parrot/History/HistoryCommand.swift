@@ -5,7 +5,9 @@ import Foundation
 struct History: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Find and recover locally saved dictations.",
-        subcommands: [List.self, Search.self, Show.self, Last.self, Copy.self, Path.self, Prune.self],
+        subcommands: [
+            List.self, Search.self, Show.self, Last.self, Copy.self, Audio.self, Path.self, Prune.self,
+        ],
         defaultSubcommand: List.self
     )
 
@@ -78,6 +80,199 @@ struct History: ParsableCommand {
         }
     }
 
+    struct Audio: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Review or reprocess explicitly retained local recording audio.",
+            subcommands: [List.self, Path.self, Play.self, Reprocess.self, Delete.self, Clear.self],
+            defaultSubcommand: List.self
+        )
+
+        struct List: ParsableCommand {
+            @Option(name: [.short, .long], help: "Maximum recordings to show (1...200).")
+            var limit: Int = 20
+
+            func run() throws {
+                let recordings = try HistoryAudioArchive().recordings()
+                let records = try TranscriptHistoryReader().all()
+                var textByID: [String: String] = [:]
+                for record in records { textByID[record.id] = record.text }
+                let selected = recordings.prefix(try validatedLimit(limit))
+                guard !selected.isEmpty else {
+                    print("no retained recording audio")
+                    print("enable it with: parrot settings set --audio-history-days 7")
+                    return
+                }
+                for recording in selected {
+                    let size = ByteCountFormatter.string(
+                        fromByteCount: recording.bytes,
+                        countStyle: .file
+                    )
+                    let summary = textByID[recording.id].map { "  \(excerpt($0))" } ?? ""
+                    print("\(recording.id)  \(size)\(summary)")
+                }
+            }
+        }
+
+        struct Path: ParsableCommand {
+            func run() {
+                print(HistoryAudioArchive.defaultDirectory.path)
+            }
+        }
+
+        struct Play: ParsableCommand {
+            @Argument(help: "Recording ID from `parrot history audio`, or 'latest'.")
+            var id: String = "latest"
+
+            func run() throws {
+                let recording = try requireArchivedRecording(id)
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                task.arguments = [recording.url.path]
+                try task.run()
+                task.waitUntilExit()
+                guard task.terminationStatus == 0 else {
+                    throw ValidationError("macOS could not open recording \(recording.id)")
+                }
+            }
+        }
+
+        struct Reprocess: ParsableCommand {
+            @Argument(help: "Recording ID from `parrot history audio`, or 'latest'.")
+            var id: String = "latest"
+
+            @Option(name: .long, help: "Model id; defaults to the current saved model.")
+            var model: String?
+
+            @Option(name: .long, help: "Language code/name, or auto; defaults to the saved value.")
+            var language: String?
+
+            @Flag(name: .long, help: "Reprocess with local Markdown note formatting.")
+            var notes = false
+
+            @Flag(name: .long, help: "Reprocess with plain dictation formatting.")
+            var dictation = false
+
+            @Flag(name: .long, help: "Apply deterministic local speech cleanup.")
+            var cleanup = false
+
+            @Flag(name: .customLong("no-cleanup"), help: "Preserve speech disfluencies.")
+            var noCleanup = false
+
+            @Flag(name: .long, help: "Lowercase the reprocessed text.")
+            var lowercase = false
+
+            @Flag(name: .customLong("no-lowercase"), help: "Preserve transcript casing.")
+            var noLowercase = false
+
+            @Flag(name: .customLong("auto-paragraphs"), help: "Use pause-aware note paragraphs.")
+            var automaticParagraphs = false
+
+            @Flag(name: .customLong("no-auto-paragraphs"), help: "Keep note output continuous.")
+            var noAutomaticParagraphs = false
+
+            @Flag(name: .customLong("no-vocabulary"), help: "Ignore saved personal vocabulary.")
+            var noVocabulary = false
+
+            @Flag(name: .customLong("no-fillers"), help: "Preserve saved personal filler phrases.")
+            var noFillers = false
+
+            @Flag(name: .customLong("no-snippets"), help: "Ignore saved voice snippets.")
+            var noSnippets = false
+
+            func validate() throws {
+                guard !(notes && dictation) else {
+                    throw ValidationError("pass at most one of --notes or --dictation")
+                }
+                guard !(cleanup && noCleanup) else {
+                    throw ValidationError("pass at most one of --cleanup or --no-cleanup")
+                }
+                guard !(lowercase && noLowercase) else {
+                    throw ValidationError("pass at most one of --lowercase or --no-lowercase")
+                }
+                guard !(automaticParagraphs && noAutomaticParagraphs) else {
+                    throw ValidationError(
+                        "pass at most one of --auto-paragraphs or --no-auto-paragraphs"
+                    )
+                }
+            }
+
+            func run() throws {
+                let recording = try requireArchivedRecording(id)
+                let arguments = transcriptionArguments(for: recording.url)
+                guard var command = try Transcribe.parseAsRoot(arguments) as? Transcribe else {
+                    throw ValidationError("couldn't prepare local reprocessing")
+                }
+                try command.run()
+            }
+
+            func transcriptionArguments(for url: URL) -> [String] {
+                var arguments = [url.path, "--stdout", "--format", "text"]
+                if let model { arguments.append(contentsOf: ["--model", model]) }
+                if let language { arguments.append(contentsOf: ["--language", language]) }
+                if notes { arguments.append("--notes") }
+                if dictation { arguments.append("--dictation") }
+                if cleanup { arguments.append("--cleanup") }
+                if noCleanup { arguments.append("--no-cleanup") }
+                if lowercase { arguments.append("--lowercase") }
+                if noLowercase { arguments.append("--no-lowercase") }
+                if automaticParagraphs { arguments.append("--auto-paragraphs") }
+                if noAutomaticParagraphs { arguments.append("--no-auto-paragraphs") }
+                if noVocabulary { arguments.append("--no-vocabulary") }
+                if noFillers { arguments.append("--no-fillers") }
+                if noSnippets { arguments.append("--no-snippets") }
+                return arguments
+            }
+        }
+
+        struct Clear: ParsableCommand {
+            @Flag(name: .long, help: "Delete retained audio while keeping transcript text.")
+            var confirm = false
+
+            func run() throws {
+                guard confirm else {
+                    let count = try HistoryAudioArchive().recordings().count
+                    print("preview: delete \(count) retained recording\(count == 1 ? "" : "s")")
+                    print("transcript Markdown remains · rerun with --confirm to apply")
+                    return
+                }
+                let result = try HistoryAudioArchive().clear()
+                let bytes = ByteCountFormatter.string(
+                    fromByteCount: result.bytesRemoved,
+                    countStyle: .file
+                )
+                print(
+                    "✓ deleted \(result.recordingsRemoved) retained recording"
+                        + "\(result.recordingsRemoved == 1 ? "" : "s") · \(bytes)"
+                )
+            }
+        }
+
+        struct Delete: ParsableCommand {
+            @Argument(help: "Recording ID from `parrot history audio`, or 'latest'.")
+            var id: String = "latest"
+
+            @Flag(name: .long, help: "Delete this audio while keeping transcript text.")
+            var confirm = false
+
+            func run() throws {
+                let recording = try requireArchivedRecording(id)
+                guard confirm else {
+                    print("preview: delete retained audio \(recording.id)")
+                    print("transcript Markdown remains · rerun with --confirm to apply")
+                    return
+                }
+                guard let deleted = try HistoryAudioArchive().delete(recording.id) else {
+                    throw ValidationError("retained recording disappeared before deletion")
+                }
+                let size = ByteCountFormatter.string(
+                    fromByteCount: deleted.bytes,
+                    countStyle: .file
+                )
+                print("✓ deleted retained audio \(deleted.id) · \(size)")
+            }
+        }
+    }
+
     struct Prune: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Preview or remove transcript history outside a rolling retention window."
@@ -115,6 +310,28 @@ struct History: ParsableCommand {
                 ? pruner.prune(policy: policy)
                 : pruner.preview(policy: policy)
             printPrunePlan(plan, confirmed: confirm)
+            if confirm {
+                do {
+                    let validIDs = Set(try TranscriptHistoryReader().all().map(\.id))
+                    let audio = try HistoryAudioArchive().pruneOrphans(
+                        validTranscriptIDs: validIDs
+                    )
+                    if audio.recordingsRemoved > 0 {
+                        let bytes = ByteCountFormatter.string(
+                            fromByteCount: audio.bytesRemoved,
+                            countStyle: .file
+                        )
+                        print(
+                            "✓ deleted \(audio.recordingsRemoved) paired audio recording"
+                                + "\(audio.recordingsRemoved == 1 ? "" : "s") · \(bytes)"
+                        )
+                    }
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "warning: couldn't prune paired audio: \(error.localizedDescription)\n".utf8
+                    ))
+                }
+            }
         }
     }
 }
@@ -167,6 +384,13 @@ private func requireRecord(_ id: String) throws -> TranscriptRecord {
         throw ValidationError("no unique transcript matches '\(id)'")
     }
     return record
+}
+
+private func requireArchivedRecording(_ id: String) throws -> ArchivedRecording {
+    guard let recording = try HistoryAudioArchive().resolve(id) else {
+        throw ValidationError("no unique retained recording matches '\(id)'")
+    }
+    return recording
 }
 
 private func printRecords(_ records: [TranscriptRecord], emptyMessage: String) {

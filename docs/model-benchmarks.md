@@ -94,6 +94,15 @@ all 128 allowed phrases removed matches throughout a 40-sentence note 100 times 
 **2.19 ms per long note**. The matcher is compiled only when `fillers.json` changes and contributes
 no acoustic prompt, model inference, or network work.
 
+## Retained-audio delivery cost
+
+Opt-in recording history reuses the private WAV that Parrot already synchronizes for crash
+recovery. A focused test repeatedly archived and removed a one-minute recording 100 times; ten runs
+averaged 45 ms, or about **0.45 ms per archive-plus-delete cycle**. The archive itself is a hard link
+to the same inode, so it performs no second PCM conversion, byte copy, or length-dependent
+allocation. Age/orphan scans run at startup and at most hourly after successful delivery, outside
+capture and inference.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

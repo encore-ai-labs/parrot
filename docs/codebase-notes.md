@@ -362,6 +362,15 @@ precompiled, bounded regex removes those phrases before note formatting, repairs
 supports `literal` escaping, and cannot rewrite saved snippet bodies. The list hot-reloads as part
 of the daemon's coherent personalization revision and never enters model context or a network call.
 
+**3.25 — Only the latest recording can be replayed or reprocessed.** ✅ **FIXED**
+
+Finite retained audio is now an explicit default-off setting. Successfully delivered, indexed
+recordings are hard-linked from the existing crash-safety WAV to their stable Markdown IDs, so the
+delivery path does not copy or re-encode length-dependent audio. Private permissions, a per-file
+cap, exact-name and symlink guards, transcript-bounded rolling retention, orphan cleanup, and an
+explicit audio-only clear command bound privacy and storage. `parrot history audio` can list, play,
+or reprocess an older recording through the current entirely local model and note pipeline.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

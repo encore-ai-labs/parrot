@@ -1,5 +1,10 @@
 import Foundation
 
+struct TranscriptHistoryWrite: Equatable, Sendable {
+    let id: String
+    let fileURL: URL
+}
+
 /// Appends successful dictations to owner-readable daily Markdown files.
 actor TranscriptHistory {
     enum HistoryError: LocalizedError {
@@ -22,6 +27,8 @@ actor TranscriptHistory {
     private let calendar: Calendar
     private let retentionDays: Int?
     private var lastRetentionCheck: Date?
+    private var lastEntryIDBase: String?
+    private var entryIDOccurrence = 0
 
     init(
         directory: URL = TranscriptHistory.defaultDirectory,
@@ -57,6 +64,24 @@ actor TranscriptHistory {
         processingDuration: TimeInterval? = nil,
         language: String? = nil
     ) throws -> URL? {
+        try appendEntry(
+            transcript,
+            at: date,
+            audioDuration: audioDuration,
+            processingDuration: processingDuration,
+            language: language
+        )?.fileURL
+    }
+
+    /// Append and expose the stable entry ID used to pair optional retained
+    /// audio without putting private filesystem paths into Markdown.
+    func appendEntry(
+        _ transcript: String,
+        at date: Date = Date(),
+        audioDuration: TimeInterval? = nil,
+        processingDuration: TimeInterval? = nil,
+        language: String? = nil
+    ) throws -> TranscriptHistoryWrite? {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
 
@@ -71,13 +96,13 @@ actor TranscriptHistory {
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
 
         let url = Self.fileURL(for: date, directory: directory, calendar: calendar)
+        let id = nextEntryID(date)
         try HistoryFileLock.withLock(
             directory: directory,
             mode: .exclusive,
             createDirectory: true
         ) {
             let time = timestamp(date)
-            let id = entryID(date)
             // The HTML comment is invisible in rendered Markdown and gives history
             // commands an unambiguous boundary even when a dictated note contains
             // a heading that happens to look like a timestamp.
@@ -121,7 +146,7 @@ actor TranscriptHistory {
                 try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
             }
         }
-        return url
+        return TranscriptHistoryWrite(id: id, fileURL: url)
     }
 
     /// Applies the saved rolling retention at most hourly. The caller can run
@@ -152,12 +177,19 @@ actor TranscriptHistory {
         return formatter.string(from: date)
     }
 
-    private func entryID(_ date: Date) -> String {
+    private func nextEntryID(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
-        return formatter.string(from: date)
+        let base = formatter.string(from: date)
+        if base == lastEntryIDBase {
+            entryIDOccurrence += 1
+            return "\(base)-\(entryIDOccurrence)"
+        }
+        lastEntryIDBase = base
+        entryIDOccurrence = 1
+        return base
     }
 }

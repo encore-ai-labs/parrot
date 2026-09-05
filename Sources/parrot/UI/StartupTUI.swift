@@ -13,6 +13,7 @@ enum StartupTUI {
         let fillerCount: Int
         let historyPath: String?
         let historyRetentionDays: Int?
+        let audioHistoryRetentionDays: Int?
         let delivery: String
         let cleanup: Bool
         let automaticParagraphs: Bool
@@ -39,6 +40,8 @@ enum StartupTUI {
             let retention = details.historyRetentionDays.map { " · keep \($0)d" } ?? ""
             let history = details.historyPath.map { " · history: \($0)\(retention)" }
                 ?? " · history: off"
+            let audioHistory = details.audioHistoryRetentionDays.map { " · audio history: \($0)d" }
+                ?? " · audio history: off"
             let systemAction = details.systemHotkeyAction.map { " · \($0)" } ?? ""
             write(
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
@@ -51,7 +54,7 @@ enum StartupTUI {
                 " · cleanup: \(details.cleanup ? "on (English speech)" : "off")" +
                 " · paragraphs: \(details.automaticParagraphs ? "on in notes" : "off")" +
                 " · capture: \(details.warmMicrophone ? "warm/pre-roll" : "cold/on press")" +
-                "\(history)\(systemAction) · ^C to quit\n"
+                "\(history)\(audioHistory)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
             return
@@ -98,6 +101,12 @@ enum StartupTUI {
         ))
         write(row("delivery", details.delivery))
         write(row("history", history))
+        write(row(
+            "audio",
+            details.audioHistoryRetentionDays.map {
+                "private history · rolling \($0)d  (parrot history audio)"
+            } ?? "off  ·  opt in with parrot settings set --audio-history-days 7"
+        ))
         write(row("updates", "checking…"))
         write("\n  " + green("● ready") + dim("  ·  ^C to quit") + "\n\n")
     }

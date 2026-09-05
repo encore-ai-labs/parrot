@@ -260,6 +260,51 @@ versions without stable boundary markers are conservatively preserved. Deletion 
 files at the application level, but cannot promise forensic erasure from filesystem snapshots or
 storage backups.
 
+#### Optional recording history
+
+By default Parrot keeps no delivered audio—only the latest bounded retry samples in memory. If you
+want to replay or reprocess older notes, opt into a finite private audio window and restart the
+daemon:
+
+```sh
+parrot settings set --audio-history-days 7
+parrot daemon restart
+
+parrot history audio                         # retained recordings plus note excerpts
+parrot history audio play latest             # open locally in the default audio player
+parrot history audio reprocess latest        # current saved model and mode, text to stdout
+parrot history audio reprocess ID --notes --model whisper-small.en
+parrot history audio delete ID                  # preview; add --confirm to delete audio only
+parrot history audio path
+```
+
+Audio stays as 16 kHz mono PCM WAV under `~/.local/share/parrot/transcripts/audio/`, with the same
+stable ID as its Markdown entry and user-only directory/file permissions (`0700`/`0600`). At about
+1.9 MB per minute, the configured rolling limit keeps storage predictable; a shorter transcript
+retention automatically shortens audio retention too. Cleanup runs at startup and at most hourly,
+removing expired audio and recordings whose transcript was pruned. `parrot history prune
+--confirm` also removes paired audio immediately.
+
+Archiving hard-links Parrot's already-synchronized crash-recovery WAV, so it does not re-encode,
+copy, or allocate a second recording on the delivery path. Playback and reprocessing are entirely
+local; reprocessing uses the same saved vocabulary, fillers, snippets, formatting, and on-device
+model as file transcription. Only successfully delivered entries with successfully written
+Markdown history are archived. Cancelled, rejected, failed, `--no-history`, and command-delivery
+failure captures are not.
+
+Turn off future recording history without deleting existing files, or preview and explicitly clear
+only the retained WAVs while keeping transcript text:
+
+```sh
+parrot settings set --no-audio-history
+parrot history audio clear                      # preview
+parrot history audio clear --confirm
+```
+
+The archive accepts only Parrot-shaped regular WAV filenames, never follows symlinks, and caps one
+recording at 256 MiB. As with transcript deletion, clearing is application-level deletion rather
+than guaranteed forensic erasure from snapshots or backups.
+
 ### Direct Markdown journal
 
 For focused note-taking, route every finished dictation directly into one Markdown file instead
@@ -654,11 +699,15 @@ parrot snippets add meeting --file template.md
 parrot history                         # list recent local transcripts
 parrot history search project roadmap # search private Markdown history
 parrot history copy                    # recover the latest transcript to clipboard
+parrot history audio                   # list opt-in retained local recordings
+parrot history audio reprocess latest  # rerun one through the current local model/mode
 parrot history prune --keep-days 30    # preview; add --confirm to remove old entries
 parrot stats                            # private usage/timing insights from history
 parrot settings                         # show effective saved daemon defaults
 parrot settings set --hotkey end --mode notes
 parrot settings set --history-retention-days 30 # automatic rolling local cleanup
+parrot settings set --audio-history-days 7      # opt-in replay/reprocess window
+parrot settings set --no-audio-history          # stop retaining new audio
 parrot settings set --keep-history-forever      # default: never auto-delete history
 parrot settings set --no-space-after-paste # exact cursor text; default adds one boundary space
 parrot --journal ~/Documents/Notes/inbox.md # append there; don't type at cursor

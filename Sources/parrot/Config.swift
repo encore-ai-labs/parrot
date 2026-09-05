@@ -47,6 +47,9 @@ struct Config: Codable, Equatable {
     /// Optional rolling retention for private transcript history. Nil keeps
     /// history forever, preserving the existing default.
     var historyRetentionDays: Int?
+    /// Opt-in rolling retention for private recording history. Nil stores no
+    /// delivered audio. A finite limit keeps disk and privacy cost bounded.
+    var audioHistoryRetentionDays: Int?
 
     static var directory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -136,6 +139,7 @@ struct RuntimeDefaults: Equatable {
     let spaceAfterPaste: Bool
     let warmMicrophone: Bool
     let historyRetentionDays: Int?
+    let audioHistoryRetentionDays: Int?
 
     static func resolve(
         config: Config,
@@ -164,6 +168,10 @@ struct RuntimeDefaults: Equatable {
         if let days = config.historyRetentionDays,
            !HistoryRetentionPolicy.validDays.contains(days) {
             throw RuntimeDefaultsError.invalidHistoryRetention(days)
+        }
+        if let days = config.audioHistoryRetentionDays,
+           !HistoryRetentionPolicy.validDays.contains(days) {
+            throw RuntimeDefaultsError.invalidAudioHistoryRetention(days)
         }
         let requestedLanguage = languageOverride ?? config.language ?? RecognitionLanguage.automatic
         guard let resolvedLanguage = RecognitionLanguage.canonicalize(requestedLanguage) else {
@@ -208,7 +216,10 @@ struct RuntimeDefaults: Equatable {
                 ?? true,
             spaceAfterPaste: spaceAfterPasteOverride ?? config.spaceAfterPaste ?? true,
             warmMicrophone: warmMicrophoneOverride ?? config.warmMicrophone ?? true,
-            historyRetentionDays: config.historyRetentionDays
+            historyRetentionDays: config.historyRetentionDays,
+            audioHistoryRetentionDays: config.audioHistoryRetentionDays.map { configuredDays in
+                min(configuredDays, config.historyRetentionDays ?? configuredDays)
+            }
         )
     }
 }
@@ -219,6 +230,7 @@ enum RuntimeDefaultsError: LocalizedError {
     case conflictingSavedDestinations
     case invalidLanguage(String)
     case invalidHistoryRetention(Int)
+    case invalidAudioHistoryRetention(Int)
 
     var errorDescription: String? {
         switch self {
@@ -234,6 +246,9 @@ enum RuntimeDefaultsError: LocalizedError {
         case .invalidHistoryRetention(let days):
             return "saved history retention is \(days) days; use "
                 + "`parrot settings set --keep-history-forever` or choose 1...3650"
+        case .invalidAudioHistoryRetention(let days):
+            return "saved audio-history retention is \(days) days; use "
+                + "`parrot settings set --no-audio-history` or choose 1...3650"
         }
     }
 }

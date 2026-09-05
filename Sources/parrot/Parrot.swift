@@ -575,22 +575,43 @@ struct Run: ParsableCommand {
         let history = noHistory
             ? nil
             : TranscriptHistory(retentionDays: defaults.historyRetentionDays)
-        let pruneHistoryIfNeeded: (Bool) -> Void = { force in
+        let audioHistoryRetentionDays: Int? = noHistory
+            ? nil
+            : defaults.audioHistoryRetentionDays.map { configuredDays in
+                min(configuredDays, defaults.historyRetentionDays ?? configuredDays)
+            }
+        let audioArchive = HistoryAudioArchive()
+        let audioMaintenance = audioHistoryRetentionDays.map {
+            HistoryAudioMaintenance(archive: audioArchive, retentionDays: $0)
+        }
+        let pruneHistoryIfNeeded: @Sendable (Bool) -> Void = { force in
             guard let history else { return }
             Task(priority: .utility) {
                 do {
-                    guard let plan = try await history.pruneExpiredIfDue(force: force),
-                          plan.entriesRemoved > 0
-                    else { return }
-                    let entryNoun = plan.entriesRemoved == 1 ? "entry" : "entries"
-                    let fileNoun = plan.filesAffected == 1 ? "file" : "files"
-                    FileHandle.standardError.write(Data(
-                        "history retention removed \(plan.entriesRemoved) \(entryNoun) "
-                            .appending("from \(plan.filesAffected) \(fileNoun)\n").utf8
-                    ))
+                    if let plan = try await history.pruneExpiredIfDue(force: force),
+                       plan.entriesRemoved > 0 {
+                        let entryNoun = plan.entriesRemoved == 1 ? "entry" : "entries"
+                        let fileNoun = plan.filesAffected == 1 ? "file" : "files"
+                        FileHandle.standardError.write(Data(
+                            "history retention removed \(plan.entriesRemoved) \(entryNoun) "
+                                .appending("from \(plan.filesAffected) \(fileNoun)\n").utf8
+                        ))
+                    }
+                    if let audioMaintenance {
+                        let validIDs = Set(try TranscriptHistoryReader().all().map(\.id))
+                        if let result = try await audioMaintenance.pruneIfDue(
+                            validTranscriptIDs: validIDs,
+                            force: force
+                        ), result.recordingsRemoved > 0 {
+                            let noun = result.recordingsRemoved == 1 ? "recording" : "recordings"
+                            FileHandle.standardError.write(Data(
+                                "audio retention removed \(result.recordingsRemoved) \(noun)\n".utf8
+                            ))
+                        }
+                    }
                 } catch {
                     FileHandle.standardError.write(Data(
-                        "history retention failed: \(error.localizedDescription)\n".utf8
+                        "history maintenance failed: \(error.localizedDescription)\n".utf8
                     ))
                 }
             }
@@ -754,9 +775,10 @@ struct Run: ParsableCommand {
                         commandConfigured: commandDelivery != nil,
                         commandSucceeded: commandDeliverySucceeded
                     )
+                    var historyWrite: TranscriptHistoryWrite?
                     if deliveryDecision.deliveryCompleted, let history {
                         do {
-                            _ = try await history.append(
+                            historyWrite = try await history.appendEntry(
                                 text,
                                 audioDuration: seconds,
                                 processingDuration: elapsed,
@@ -765,6 +787,18 @@ struct Run: ParsableCommand {
                         } catch {
                             FileHandle.standardError.write(Data(
                                 "history write failed: \(error)\n".utf8
+                            ))
+                        }
+                    }
+                    if let historyWrite, audioHistoryRetentionDays != nil {
+                        do {
+                            _ = try audioArchive.archive(
+                                sourceWAV: recordingRecovery.fileURL,
+                                entryID: historyWrite.id
+                            )
+                        } catch {
+                            FileHandle.standardError.write(Data(
+                                "audio history save failed: \(error.localizedDescription)\n".utf8
                             ))
                         }
                     }
@@ -1064,6 +1098,7 @@ struct Run: ParsableCommand {
             fillerCount: fillers.entries.count,
             historyPath: historyPath,
             historyRetentionDays: defaults.historyRetentionDays,
+            audioHistoryRetentionDays: audioHistoryRetentionDays,
             delivery: journalWriter.map {
                 "journal → \(StartupTUI.displayPath($0.url))"
             } ?? (commandDelivery == nil

@@ -3,6 +3,30 @@ import XCTest
 @testable import parrot
 
 final class TranscriptHistoryTests: XCTestCase {
+    func testEntryIDsRemainUniqueForSameMillisecondCaptures() async throws {
+        let directory = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let calendar = utcCalendar()
+        let store = TranscriptHistory(directory: directory, calendar: calendar)
+        let instant = try date(
+            year: 2024, month: 9, day: 5, hour: 12, minute: 34, second: 56,
+            calendar: calendar
+        )
+
+        let first = try await store.appendEntry("first", at: instant)
+        let second = try await store.appendEntry("second", at: instant)
+
+        XCTAssertEqual(first?.id, "20240905-123456-000")
+        XCTAssertEqual(second?.id, "20240905-123456-000-2")
+        XCTAssertEqual(
+            Set(try TranscriptHistoryReader(
+                directory: directory,
+                calendar: calendar
+            ).all().map(\.id)),
+            Set([try XCTUnwrap(first).id, try XCTUnwrap(second).id])
+        )
+    }
+
     func testHistorySearchAcceptsMultipleWordsAndTrailingOptions() throws {
         let parsed = try History.Search.parseAsRoot([
             "project", "roadmap", "--limit", "7",

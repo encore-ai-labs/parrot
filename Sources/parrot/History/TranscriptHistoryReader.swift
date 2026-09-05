@@ -5,6 +5,8 @@ struct TranscriptRecord: Equatable {
     let recordedAt: Date
     let text: String
     let fileURL: URL
+    let audioDuration: TimeInterval?
+    let processingDuration: TimeInterval?
 }
 
 /// Read/search access over Parrot's user-owned Markdown history.
@@ -81,7 +83,7 @@ struct TranscriptHistoryReader {
     }
 
     private func parse(_ markdown: String, fileURL: URL) -> [TranscriptRecord] {
-        let markerPattern = #"(?m)^<!-- parrot-entry: ([A-Za-z0-9_-]+) -->\r?\n## ([0-2]\d:[0-5]\d:[0-5]\d)\s*$"#
+        let markerPattern = #"(?m)^<!-- parrot-entry: ([A-Za-z0-9_-]+) -->\r?\n(?:<!-- parrot-metrics: audio-ms=(\d+) processing-ms=(\d+) -->\r?\n)?## ([0-2]\d:[0-5]\d:[0-5]\d)\s*$"#
         guard let markerRegex = try? NSRegularExpression(pattern: markerPattern) else { return [] }
 
         let source = markdown as NSString
@@ -111,13 +113,15 @@ struct TranscriptHistoryReader {
             guard !content.isEmpty else { continue }
 
             let id = source.substring(with: marker.range(at: 1))
-            let time = source.substring(with: marker.range(at: 2))
+            let time = source.substring(with: marker.range(at: 4))
             guard let date = recordedDate(fileURL: fileURL, time: time) else { continue }
             records.append(TranscriptRecord(
                 id: id,
                 recordedAt: date,
                 text: content,
-                fileURL: fileURL
+                fileURL: fileURL,
+                audioDuration: duration(from: marker, group: 2, source: source),
+                processingDuration: duration(from: marker, group: 3, source: source)
             ))
         }
         return records
@@ -152,8 +156,27 @@ struct TranscriptHistoryReader {
             occurrences[base, default: 0] += 1
             let occurrence = occurrences[base] ?? 1
             let id = occurrence == 1 ? base : "\(base)-\(occurrence)"
-            return TranscriptRecord(id: id, recordedAt: date, text: text, fileURL: fileURL)
+            return TranscriptRecord(
+                id: id,
+                recordedAt: date,
+                text: text,
+                fileURL: fileURL,
+                audioDuration: nil,
+                processingDuration: nil
+            )
         }
+    }
+
+    private func duration(
+        from match: NSTextCheckingResult,
+        group: Int,
+        source: NSString
+    ) -> TimeInterval? {
+        let range = match.range(at: group)
+        guard range.location != NSNotFound,
+              let milliseconds = Int(source.substring(with: range))
+        else { return nil }
+        return TimeInterval(milliseconds) / 1_000
     }
 
     private func recordedDate(fileURL: URL, time: String) -> Date? {

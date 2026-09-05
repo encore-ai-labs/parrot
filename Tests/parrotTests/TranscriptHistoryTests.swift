@@ -79,6 +79,37 @@ final class TranscriptHistoryTests: XCTestCase {
         XCTAssertEqual(try reader.resolve("latest")?.id, all[0].id)
     }
 
+    func testStoresAndReadsOptionalLocalTimingMetrics() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("parrot-history-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let date = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2024, month: 9, day: 4, hour: 20, minute: 38, second: 27
+        )))
+        let store = TranscriptHistory(directory: directory, calendar: calendar)
+
+        let writtenURL = try await store.append(
+            "timed transcript",
+            at: date,
+            audioDuration: 3.364,
+            processingDuration: 0.084
+        )
+        let url = try XCTUnwrap(writtenURL)
+        let markdown = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(markdown.contains(
+            "<!-- parrot-metrics: audio-ms=3364 processing-ms=84 -->"
+        ))
+
+        let record = try XCTUnwrap(
+            TranscriptHistoryReader(directory: directory, calendar: calendar).all().first
+        )
+        XCTAssertEqual(try XCTUnwrap(record.audioDuration), 3.364, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(record.processingDuration), 0.084, accuracy: 0.0001)
+        XCTAssertEqual(record.text, "timed transcript")
+    }
+
     func testReadsLegacyHistoryAndDisambiguatesSameSecond() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("parrot-history-tests-\(UUID().uuidString)")

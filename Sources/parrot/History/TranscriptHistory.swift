@@ -32,7 +32,12 @@ actor TranscriptHistory {
 
     /// Returns nil for an empty transcript; otherwise returns the file written.
     @discardableResult
-    func append(_ transcript: String, at date: Date = Date()) throws -> URL? {
+    func append(
+        _ transcript: String,
+        at date: Date = Date(),
+        audioDuration: TimeInterval? = nil,
+        processingDuration: TimeInterval? = nil
+    ) throws -> URL? {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
 
@@ -52,7 +57,16 @@ actor TranscriptHistory {
         // The HTML comment is invisible in rendered Markdown and gives history
         // commands an unambiguous boundary even when a dictated note contains
         // a heading that happens to look like a timestamp.
-        let entry = "\n<!-- parrot-entry: \(id) -->\n## \(time)\n\n\(text)\n"
+        let metrics: String
+        if let audioDuration, let processingDuration {
+            let audioMilliseconds = max(0, Int((audioDuration * 1_000).rounded()))
+            let processingMilliseconds = max(0, Int((processingDuration * 1_000).rounded()))
+            metrics = "<!-- parrot-metrics: audio-ms=\(audioMilliseconds) "
+                + "processing-ms=\(processingMilliseconds) -->\n"
+        } else {
+            metrics = ""
+        }
+        let entry = "\n<!-- parrot-entry: \(id) -->\n\(metrics)## \(time)\n\n\(text)\n"
 
         if !fileManager.fileExists(atPath: url.path) {
             let dateName = url.deletingPathExtension().lastPathComponent

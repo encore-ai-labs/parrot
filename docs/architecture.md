@@ -227,6 +227,12 @@ note bodies containing arbitrary Markdown headings. A compatibility parser reads
 from older releases. `parrot history` exposes recent listing, local full-text search, exact show,
 latest-text output for pipes, clipboard recovery, and the underlying directory path.
 
+New entries also include a hidden metrics comment with audio and transcription milliseconds.
+`parrot stats` combines those measurements with localized word counts to report voice time,
+speaking pace, processing speed, and an optional typing-time comparison. Counts and streaks
+include old entries without timing metadata. All calculation reads the local Markdown directly;
+there is no telemetry store or network call.
+
 ### Daemon lifecycle and logs
 
 An advisory lock at `~/.config/parrot/daemon.lock` is held for the process lifetime, preventing

@@ -115,6 +115,21 @@ transcript history, run:
 parrot --no-history
 ```
 
+### Private usage stats
+
+`parrot stats` summarizes the Markdown history on your Mac—there is no account, telemetry
+event, or network request. It reports dictations, words, characters, active days, streaks, and
+the equivalent typing time. New entries also carry an invisible local timing marker, enabling
+actual voice time, speaking pace, transcription speed, and an estimated time saved; older
+history remains compatible and is included in every count.
+
+```sh
+parrot stats                         # all-time local summary
+parrot stats --period today          # today, week, month, or all
+parrot stats --typing-wpm 55         # tune the comparison to your typing speed
+parrot stats --period week --json    # script-friendly output
+```
+
 That's it. There is no record button, no stop button, no "send" — the key is the whole interface.
 
 > **The mic is held open the whole time parrot runs**, so macOS shows the mic-in-use
@@ -284,6 +299,7 @@ parrot snippets add meeting --file template.md
 parrot history                         # list recent local transcripts
 parrot history search project roadmap # search private Markdown history
 parrot history copy                    # recover the latest transcript to clipboard
+parrot stats                            # private usage/timing insights from history
 parrot --notes                         # explicit spoken commands → local Markdown
 parrot --input-device brio             # pick a specific mic
 parrot --no-pick-mic                   # skip the mic prompt

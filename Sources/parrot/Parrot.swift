@@ -12,7 +12,7 @@ struct Parrot: ParsableCommand {
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
             Hotkeys.self, Devices.self, Vocabulary.self, Snippets.self,
-            History.self, Install.self, Daemon.self, Update.self,
+            History.self, Stats.self, Install.self, Daemon.self, Update.self,
         ],
         defaultSubcommand: Run.self
     )
@@ -452,7 +452,11 @@ struct Run: ParsableCommand {
                     FileHandle.standardError.write(Data(completionLog.utf8))
                     if let history {
                         do {
-                            _ = try await history.append(text)
+                            _ = try await history.append(
+                                text,
+                                audioDuration: seconds,
+                                processingDuration: elapsed
+                            )
                         } catch {
                             FileHandle.standardError.write(Data(
                                 "history write failed: \(error)\n".utf8

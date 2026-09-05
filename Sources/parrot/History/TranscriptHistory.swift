@@ -48,7 +48,11 @@ actor TranscriptHistory {
 
         let url = Self.fileURL(for: date, directory: directory, calendar: calendar)
         let time = timestamp(date)
-        let entry = "\n## \(time)\n\n\(text)\n"
+        let id = entryID(date)
+        // The HTML comment is invisible in rendered Markdown and gives history
+        // commands an unambiguous boundary even when a dictated note contains
+        // a heading that happens to look like a timestamp.
+        let entry = "\n<!-- parrot-entry: \(id) -->\n## \(time)\n\n\(text)\n"
 
         if !fileManager.fileExists(atPath: url.path) {
             let dateName = url.deletingPathExtension().lastPathComponent
@@ -76,6 +80,15 @@ actor TranscriptHistory {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: date)
+    }
+
+    private func entryID(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
         return formatter.string(from: date)
     }
 }

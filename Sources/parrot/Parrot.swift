@@ -11,7 +11,7 @@ struct Parrot: ParsableCommand {
         version: AppVersion.current,
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
-            Hotkeys.self, Devices.self, Vocabulary.self, Install.self, Update.self,
+            Hotkeys.self, Devices.self, Vocabulary.self, History.self, Install.self, Update.self,
         ],
         defaultSubcommand: Run.self
     )

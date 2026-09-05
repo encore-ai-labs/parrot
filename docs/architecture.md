@@ -195,6 +195,12 @@ under `~/.local/share/parrot/transcripts/`. The actor serializes writes from ove
 transcription tasks. Its directory is forced to mode `0700` and each file to `0600`; audio is
 never stored. `--no-history` disables all history writes for that daemon run.
 
+Each new entry includes an HTML-comment marker containing a stable, timestamp-derived ID. The
+comment stays invisible in rendered Markdown while allowing `TranscriptHistoryReader` to parse
+note bodies containing arbitrary Markdown headings. A compatibility parser reads unmarked files
+from older releases. `parrot history` exposes recent listing, local full-text search, exact show,
+latest-text output for pipes, clipboard recovery, and the underlying directory path.
+
 ### `RecordingOverlay`
 
 A single borderless `NSWindow` displayed at the bottom-center of the active screen while recording. Provides visual feedback that the mic is hot — the only piece of UI in the app.
@@ -326,10 +332,11 @@ End-to-end latency target: <500 ms after hotkey release for utterances under 10 
 
 - No streaming partial transcripts in v1. Press, speak, release, get full text.
 - No VAD-based hands-free mode. Push-to-talk is more reliable and uses zero idle CPU.
-- No searchable history UI or clipboard manager. Daily local Markdown history is written by
-  default and can be disabled per launch with `--no-history`.
-- No custom vocabulary, prompts, or post-processing.
-- No menubar, no settings window, no preferences panel. The only UI is the recording overlay. Configuration is flags + TOML.
+- No cloud transcript sync or hosted account. History, vocabulary, and settings stay local.
+- No general-purpose AI rewriting in the core dictation path. Vocabulary prompting and exact
+  replacements are bounded, deterministic, and on-device.
+- No settings window or dock app. Configuration remains CLI-first; runtime status and actions
+  are available from the menu bar.
 
 These are deliberate cuts. Each can be revisited if real usage demands it.
 

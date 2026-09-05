@@ -47,7 +47,21 @@ transcribing, saving history, or injecting text. Escape is consumed as part of c
 Successful dictations are also appended to daily Markdown files under
 `~/.local/share/parrot/transcripts/`. The startup screen shows today's exact file. The
 directory and files are restricted to your macOS user (`0700`/`0600`), and nothing is sent
-anywhere. For a private session that should leave no transcript history, run:
+anywhere. History is searchable directly from the terminal, and every result has a stable ID:
+
+```sh
+parrot history                         # newest 20 entries
+parrot history search project roadmap # all words, case/diacritic insensitive
+parrot history show 20260904-203827-123
+parrot history last                    # transcript text only; useful in pipes
+parrot history copy                    # copy latest, or pass an entry ID
+parrot history path                    # print the Markdown directory
+```
+
+Search scans only the local Markdown files. New entries contain invisible Markdown comments
+that provide reliable boundaries and IDs even when a note contains its own headings; history
+written by older Parrot versions remains readable. For a private session that should leave no
+transcript history, run:
 
 ```sh
 parrot --no-history
@@ -181,6 +195,9 @@ parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones
 parrot vocabulary                      # list personal recognition hints/replacements
 parrot vocabulary add "rust pond" --as RustPond
+parrot history                         # list recent local transcripts
+parrot history search project roadmap # search private Markdown history
+parrot history copy                    # recover the latest transcript to clipboard
 parrot --input-device brio             # pick a specific mic
 parrot --no-pick-mic                   # skip the mic prompt
 parrot --lowercase                     # lowercase all transcribed text

@@ -20,6 +20,8 @@ struct Config: Codable, Equatable {
     var hotkey: String?
     /// Default transcription model id.
     var model: String?
+    /// Whisper language code, or `auto` for per-recording detection.
+    var language: String?
     /// Default text-processing mode.
     var mode: DictationMode?
     /// Explicit local mappings from application bundle ids to text mode.
@@ -110,6 +112,7 @@ enum DictationMode: String, Codable, CaseIterable {
 struct RuntimeDefaults: Equatable {
     let hotkey: String
     let model: String
+    let language: String
     let mode: DictationMode
     let journalPath: String?
     let cleanup: Bool
@@ -118,6 +121,7 @@ struct RuntimeDefaults: Equatable {
         config: Config,
         hotkeyOverride: String?,
         modelOverride: String?,
+        languageOverride: String? = nil,
         notes: Bool,
         dictation: Bool,
         journalOverride: String? = nil,
@@ -131,6 +135,10 @@ struct RuntimeDefaults: Equatable {
         guard !(journalOverride != nil && paste) else {
             throw RuntimeDefaultsError.conflictingDestinations
         }
+        let requestedLanguage = languageOverride ?? config.language ?? RecognitionLanguage.automatic
+        guard let resolvedLanguage = RecognitionLanguage.canonicalize(requestedLanguage) else {
+            throw RuntimeDefaultsError.invalidLanguage(requestedLanguage)
+        }
         let resolvedMode: DictationMode
         if notes {
             resolvedMode = .notes
@@ -142,6 +150,7 @@ struct RuntimeDefaults: Equatable {
         return RuntimeDefaults(
             hotkey: hotkeyOverride ?? config.hotkey ?? Hotkey.default.name,
             model: modelOverride ?? config.model ?? recommendedModel,
+            language: resolvedLanguage,
             mode: resolvedMode,
             journalPath: paste ? nil : journalOverride ?? config.journalPath,
             cleanup: cleanupOverride ?? config.cleanup ?? false
@@ -152,6 +161,7 @@ struct RuntimeDefaults: Equatable {
 enum RuntimeDefaultsError: LocalizedError {
     case conflictingModes
     case conflictingDestinations
+    case invalidLanguage(String)
 
     var errorDescription: String? {
         switch self {
@@ -159,6 +169,8 @@ enum RuntimeDefaultsError: LocalizedError {
             return "pass at most one of --notes or --dictation"
         case .conflictingDestinations:
             return "pass at most one of --journal or --paste"
+        case .invalidLanguage(let language):
+            return "unknown language '\(language)'; run `parrot languages`"
         }
     }
 }

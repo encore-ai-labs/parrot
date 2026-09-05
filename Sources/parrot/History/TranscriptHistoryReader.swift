@@ -7,6 +7,25 @@ struct TranscriptRecord: Equatable {
     let fileURL: URL
     let audioDuration: TimeInterval?
     let processingDuration: TimeInterval?
+    let language: String?
+
+    init(
+        id: String,
+        recordedAt: Date,
+        text: String,
+        fileURL: URL,
+        audioDuration: TimeInterval? = nil,
+        processingDuration: TimeInterval? = nil,
+        language: String? = nil
+    ) {
+        self.id = id
+        self.recordedAt = recordedAt
+        self.text = text
+        self.fileURL = fileURL
+        self.audioDuration = audioDuration
+        self.processingDuration = processingDuration
+        self.language = language
+    }
 }
 
 /// Read/search access over Parrot's user-owned Markdown history.
@@ -83,7 +102,7 @@ struct TranscriptHistoryReader {
     }
 
     private func parse(_ markdown: String, fileURL: URL) -> [TranscriptRecord] {
-        let markerPattern = #"(?m)^<!-- parrot-entry: ([A-Za-z0-9_-]+) -->\r?\n(?:<!-- parrot-metrics: audio-ms=(\d+) processing-ms=(\d+) -->\r?\n)?## ([0-2]\d:[0-5]\d:[0-5]\d)\s*$"#
+        let markerPattern = #"(?m)^<!-- parrot-entry: ([A-Za-z0-9_-]+) -->\r?\n(?:<!-- parrot-metrics: ([^>\r\n]+) -->\r?\n)?## ([0-2]\d:[0-5]\d:[0-5]\d)\s*$"#
         guard let markerRegex = try? NSRegularExpression(pattern: markerPattern) else { return [] }
 
         let source = markdown as NSString
@@ -113,15 +132,17 @@ struct TranscriptHistoryReader {
             guard !content.isEmpty else { continue }
 
             let id = source.substring(with: marker.range(at: 1))
-            let time = source.substring(with: marker.range(at: 4))
+            let time = source.substring(with: marker.range(at: 3))
+            let metrics = metricValues(from: marker, group: 2, source: source)
             guard let date = recordedDate(fileURL: fileURL, time: time) else { continue }
             records.append(TranscriptRecord(
                 id: id,
                 recordedAt: date,
                 text: content,
                 fileURL: fileURL,
-                audioDuration: duration(from: marker, group: 2, source: source),
-                processingDuration: duration(from: marker, group: 3, source: source)
+                audioDuration: duration(from: metrics["audio-ms"]),
+                processingDuration: duration(from: metrics["processing-ms"]),
+                language: metrics["language"].flatMap(RecognitionLanguage.canonicalize)
             ))
         }
         return records
@@ -167,15 +188,23 @@ struct TranscriptHistoryReader {
         }
     }
 
-    private func duration(
+    private func metricValues(
         from match: NSTextCheckingResult,
         group: Int,
         source: NSString
-    ) -> TimeInterval? {
+    ) -> [String: String] {
         let range = match.range(at: group)
-        guard range.location != NSNotFound,
-              let milliseconds = Int(source.substring(with: range))
-        else { return nil }
+        guard range.location != NSNotFound else { return [:] }
+        var values: [String: String] = [:]
+        for field in source.substring(with: range).split(whereSeparator: \Character.isWhitespace) {
+            let pair = field.split(separator: "=", maxSplits: 1).map(String.init)
+            if pair.count == 2 { values[pair[0]] = pair[1] }
+        }
+        return values
+    }
+
+    private func duration(from rawMilliseconds: String?) -> TimeInterval? {
+        guard let rawMilliseconds, let milliseconds = Int(rawMilliseconds) else { return nil }
         return TimeInterval(milliseconds) / 1_000
     }
 

@@ -7,12 +7,15 @@ actor WhisperKitTranscriber: Transcriber {
     private let vocabularyReplacer: VocabularyReplacer
     private let storage: ModelStorage
     private let downloadProgress: ModelDownloadProgress
+    /// Nil requests per-recording language detection from a multilingual model.
+    private let language: String?
     private var pipeline: WhisperKit?
     private var decodingOptions: DecodingOptions?
     private var noteDecodingOptions: DecodingOptions?
 
     init(
         model: TranscriptionModel,
+        language: String?,
         vocabulary: PersonalVocabulary = PersonalVocabulary(),
         additionalPromptTerms: [String] = [],
         notePromptTerms: [String] = [],
@@ -23,6 +26,7 @@ actor WhisperKitTranscriber: Transcriber {
         self.model = model
         self.storage = storage
         self.downloadProgress = downloadProgress
+        self.language = language
         vocabularyReplacer = VocabularyReplacer(entries: vocabulary.entries)
         promptTerms = additionalPromptTerms + vocabulary.promptTerms
         self.notePromptTerms = notePromptTerms
@@ -66,22 +70,24 @@ actor WhisperKitTranscriber: Transcriber {
         pipeline = loadedPipeline
         decodingOptions = Self.decodingOptions(
             promptTerms: promptTerms,
-            tokenizer: loadedPipeline.tokenizer
+            tokenizer: loadedPipeline.tokenizer,
+            language: language
         )
         noteDecodingOptions = notePromptTerms.isEmpty
             ? decodingOptions
             : Self.decodingOptions(
                 promptTerms: notePromptTerms + promptTerms,
-                tokenizer: loadedPipeline.tokenizer
+                tokenizer: loadedPipeline.tokenizer,
+                language: language
             )
         FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
     }
 
-    func transcribe(_ audio: [Float]) async throws -> String {
+    func transcribe(_ audio: [Float]) async throws -> LiveTranscription {
         try await transcribe(audio, mode: .dictation)
     }
 
-    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> String {
+    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> LiveTranscription {
         if pipeline == nil { try await warmUp() }
         guard let pipeline else { throw TranscriberError.notLoaded }
 
@@ -89,7 +95,10 @@ actor WhisperKitTranscriber: Transcriber {
             audioArray: audio,
             decodeOptions: mode == .notes ? noteDecodingOptions : decodingOptions
         )
-        return processedText(from: results)
+        return LiveTranscription(
+            text: processedText(from: results),
+            language: results.first?.language ?? language ?? "unknown"
+        )
     }
 
     /// Transcribe an AVFoundation-readable file without loading the whole
@@ -145,11 +154,17 @@ actor WhisperKitTranscriber: Transcriber {
     /// unbounded vocabulary would trade away both latency and output context.
     /// Ninety-six tokens is enough for the newest couple dozen short terms and
     /// keeps the fast dictation path effectively constant-sized.
-    private static func decodingOptions(
+    static func decodingOptions(
         promptTerms: [String],
-        tokenizer: WhisperTokenizer?
-    ) -> DecodingOptions? {
-        guard !promptTerms.isEmpty, let tokenizer else { return nil }
+        tokenizer: WhisperTokenizer?,
+        language: String?
+    ) -> DecodingOptions {
+        var options = DecodingOptions(
+            language: language,
+            usePrefillPrompt: true,
+            detectLanguage: language == nil
+        )
+        guard !promptTerms.isEmpty, let tokenizer else { return options }
 
         let maximumPromptTokens = 96
         var tokens: [Int] = []
@@ -161,11 +176,9 @@ actor WhisperKitTranscriber: Transcriber {
             }
             tokens.append(contentsOf: encoded)
         }
-        guard !tokens.isEmpty else { return nil }
+        guard !tokens.isEmpty else { return options }
 
-        var options = DecodingOptions()
         options.promptTokens = tokens
-        options.usePrefillPrompt = true
         return options
     }
 }

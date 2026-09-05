@@ -36,7 +36,8 @@ actor TranscriptHistory {
         _ transcript: String,
         at date: Date = Date(),
         audioDuration: TimeInterval? = nil,
-        processingDuration: TimeInterval? = nil
+        processingDuration: TimeInterval? = nil,
+        language: String? = nil
     ) throws -> URL? {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
@@ -57,15 +58,20 @@ actor TranscriptHistory {
         // The HTML comment is invisible in rendered Markdown and gives history
         // commands an unambiguous boundary even when a dictated note contains
         // a heading that happens to look like a timestamp.
-        let metrics: String
+        var metricFields: [String] = []
         if let audioDuration, let processingDuration {
             let audioMilliseconds = max(0, Int((audioDuration * 1_000).rounded()))
             let processingMilliseconds = max(0, Int((processingDuration * 1_000).rounded()))
-            metrics = "<!-- parrot-metrics: audio-ms=\(audioMilliseconds) "
-                + "processing-ms=\(processingMilliseconds) -->\n"
-        } else {
-            metrics = ""
+            metricFields.append("audio-ms=\(audioMilliseconds)")
+            metricFields.append("processing-ms=\(processingMilliseconds)")
         }
+        if let language = language.flatMap(RecognitionLanguage.canonicalize),
+           language != RecognitionLanguage.automatic {
+            metricFields.append("language=\(language)")
+        }
+        let metrics = metricFields.isEmpty
+            ? ""
+            : "<!-- parrot-metrics: \(metricFields.joined(separator: " ")) -->\n"
         let entry = "\n<!-- parrot-entry: \(id) -->\n\(metrics)## \(time)\n\n\(text)\n"
 
         if !fileManager.fileExists(atPath: url.path) {

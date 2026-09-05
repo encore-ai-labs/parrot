@@ -18,6 +18,9 @@ struct ModelBenchmark: ParsableCommand {
     @Option(name: .long, help: "Local WAV, AIFF, M4A, or other AVFoundation-readable audio file.")
     var audio: String
 
+    @Option(name: .long, help: "Language code/name, or auto. Defaults to the saved language.")
+    var language: String?
+
     @Option(name: .long, help: "Expected transcript used to calculate word-error rate (WER).")
     var reference: String?
 
@@ -52,6 +55,16 @@ struct ModelBenchmark: ParsableCommand {
         guard let model = ModelRegistry.find(id) else {
             throw ValidationError("unknown model '\(id)'; run `parrot models list`")
         }
+        let requestedLanguage = language ?? Config.load().language ?? RecognitionLanguage.automatic
+        guard let canonicalLanguage = RecognitionLanguage.canonicalize(requestedLanguage) else {
+            throw ValidationError("unknown language '\(requestedLanguage)'; run `parrot languages`")
+        }
+        guard RecognitionLanguage.isSupported(canonicalLanguage, by: model) else {
+            throw ValidationError(
+                "\(model.id) cannot transcribe \(canonicalLanguage); "
+                    + "choose whisper-base/whisper-small or use --language en"
+            )
+        }
 
         let audioURL = URL(fileURLWithPath: audio).standardizedFileURL
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
@@ -68,6 +81,7 @@ struct ModelBenchmark: ParsableCommand {
         let snippetExpander = SnippetExpander(entries: snippets.entries)
         let transcriber = TranscriberFactory.make(
             model: model,
+            language: canonicalLanguage,
             vocabulary: vocabulary,
             additionalPromptTerms: snippets.promptTerms,
             notePromptTerms: NoteFormatter.promptTerms
@@ -75,6 +89,7 @@ struct ModelBenchmark: ParsableCommand {
 
         if !json {
             print("model    \(model.id)")
+            print("language \(canonicalLanguage)")
             print("audio    \(audioURL.path)")
             print(String(format: "duration %.2fs", audioSeconds))
         }
@@ -88,12 +103,16 @@ struct ModelBenchmark: ParsableCommand {
 
         var timings: [Double] = []
         var transcript = ""
+        var detectedLanguage = canonicalLanguage
         for index in 1...runs {
             let started = ContinuousClock.now
             let mode: DictationMode = notes ? .notes : .dictation
-            let raw = try waitForAsync { try await transcriber.transcribe(samples, mode: mode) }
+            let result = try waitForAsync {
+                try await transcriber.transcribe(samples, mode: mode)
+            }
+            detectedLanguage = result.language
             transcript = TranscriptProcessing.process(
-                raw,
+                result.text,
                 mode: mode,
                 lowercase: false,
                 snippets: snippetExpander
@@ -112,6 +131,8 @@ struct ModelBenchmark: ParsableCommand {
         let wer = expected.map { BenchmarkMath.wordErrorRate(reference: $0, hypothesis: transcript) }
         let report = ModelBenchmarkReport(
             model: model.id,
+            requestedLanguage: canonicalLanguage,
+            language: detectedLanguage,
             modelSizeMB: model.sizeMB,
             noteMode: notes,
             vocabularyTerms: vocabulary.entries.count,
@@ -182,6 +203,8 @@ struct ModelBenchmark: ParsableCommand {
 
 struct ModelBenchmarkReport: Codable {
     let model: String
+    let requestedLanguage: String
+    let language: String
     let modelSizeMB: Int
     let noteMode: Bool
     let vocabularyTerms: Int

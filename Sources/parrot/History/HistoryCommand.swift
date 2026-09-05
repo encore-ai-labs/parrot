@@ -99,7 +99,8 @@ private func printRecords(_ records: [TranscriptRecord], emptyMessage: String) {
         return
     }
     for record in records {
-        print("\(record.id)  \(excerpt(record.text))")
+        let language = record.language.map { " [\($0)]" } ?? ""
+        print("\(record.id)\(language)  \(excerpt(record.text))")
     }
 }
 

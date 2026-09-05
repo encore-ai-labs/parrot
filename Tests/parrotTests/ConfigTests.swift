@@ -25,6 +25,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(config.setupCompleted, true)
         XCTAssertNil(config.hotkey)
         XCTAssertNil(config.model)
+        XCTAssertNil(config.language)
         XCTAssertNil(config.mode)
         XCTAssertNil(config.appRules)
         XCTAssertNil(config.journalPath)
@@ -40,6 +41,7 @@ final class ConfigTests: XCTestCase {
         var config = Config()
         config.hotkey = "right-option"
         config.model = "whisper-small.en"
+        config.language = "en"
         config.mode = .notes
         config.journalPath = "/tmp/notes.md"
         config.cleanup = true
@@ -69,6 +71,7 @@ final class ConfigTests: XCTestCase {
             RuntimeDefaults(
                 hotkey: "right-option",
                 model: "whisper-small.en",
+                language: "auto",
                 mode: .notes,
                 journalPath: nil,
                 cleanup: false
@@ -86,6 +89,7 @@ final class ConfigTests: XCTestCase {
             RuntimeDefaults(
                 hotkey: "end",
                 model: "whisper-base.en",
+                language: "auto",
                 mode: .dictation,
                 journalPath: nil,
                 cleanup: false
@@ -185,11 +189,13 @@ final class ConfigTests: XCTestCase {
         let set = try XCTUnwrap(
             try Settings.parseAsRoot([
                 "set", "--hotkey", "ralt", "--model", "whisper-small.en",
-                "--mode", "notes", "--journal", "/tmp/inbox.md", "--cleanup",
+                "--language", "English", "--mode", "notes",
+                "--journal", "/tmp/inbox.md", "--cleanup",
             ]) as? Settings.Set
         )
         XCTAssertEqual(set.hotkey, "ralt")
         XCTAssertEqual(set.model, "whisper-small.en")
+        XCTAssertEqual(set.language, "English")
         XCTAssertEqual(set.mode, "notes")
         XCTAssertEqual(set.journal, "/tmp/inbox.md")
         XCTAssertTrue(set.cleanup)
@@ -203,12 +209,48 @@ final class ConfigTests: XCTestCase {
         XCTAssertThrowsError(try Settings.parseAsRoot(["set"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--hotkey", "space"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--model", "imaginary"]))
+        XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--language", "Klingon"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--mode", "email"]))
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--journal", "/tmp/inbox.md", "--paste",
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--journal", "/tmp/inbox.txt"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--cleanup", "--no-cleanup"]))
+    }
+
+    func testRuntimeDefaultsCanonicalizeSavedAndOneRunLanguages() throws {
+        var config = Config()
+        config.language = "Spanish"
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: "whisper-base",
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(saved.language, "es")
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: "whisper-base",
+            languageOverride: "pt-BR",
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(overridden.language, "pt")
+
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            languageOverride: "Klingon",
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ))
     }
 
     private func temporaryDirectory() -> URL {

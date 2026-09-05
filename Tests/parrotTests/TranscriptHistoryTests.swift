@@ -94,12 +94,13 @@ final class TranscriptHistoryTests: XCTestCase {
             "timed transcript",
             at: date,
             audioDuration: 3.364,
-            processingDuration: 0.084
+            processingDuration: 0.084,
+            language: "Spanish"
         )
         let url = try XCTUnwrap(writtenURL)
         let markdown = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(markdown.contains(
-            "<!-- parrot-metrics: audio-ms=3364 processing-ms=84 -->"
+            "<!-- parrot-metrics: audio-ms=3364 processing-ms=84 language=es -->"
         ))
 
         let record = try XCTUnwrap(
@@ -107,6 +108,7 @@ final class TranscriptHistoryTests: XCTestCase {
         )
         XCTAssertEqual(try XCTUnwrap(record.audioDuration), 3.364, accuracy: 0.0001)
         XCTAssertEqual(try XCTUnwrap(record.processingDuration), 0.084, accuracy: 0.0001)
+        XCTAssertEqual(record.language, "es")
         XCTAssertEqual(record.text, "timed transcript")
     }
 

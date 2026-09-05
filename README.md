@@ -215,6 +215,35 @@ are streamed in bounded chunks, batches reuse one warmed model and run one file 
 and source media is never copied, changed, or added to dictation history. Created directories
 and transcript files use private `0700`/`0600` permissions.
 
+### Multilingual dictation
+
+English stays on the compact `whisper-base.en` default. For local dictation and file
+transcription in any Whisper-supported language, switch to the similarly sized multilingual
+model and either pin a language for the lowest latency or detect it per recording:
+
+```sh
+parrot languages
+parrot settings set --model whisper-base --language es   # Spanish, fixed and fastest
+parrot settings set --model whisper-base --language auto # detect each recording
+parrot daemon restart
+
+parrot --model whisper-base --language French            # one run
+parrot transcribe interview.m4a --model whisper-base --language auto
+```
+
+`whisper-base` is a 147 MB multilingual model; `whisper-small` is the optional 486 MB
+higher-capacity alternative. Both recognize 100 language codes locally through WhisperKit.
+Names such as `Spanish` and region identifiers such as `pt-BR` are canonicalized to Whisper
+codes. Parrot rejects incompatible combinations instead of silently sending Spanish to an
+English-only model. Automatic detection adds one language-classification decoder step; pinning
+the known language skips it. The selected or detected language is included in file reports,
+benchmark JSON, and private Markdown-history metadata.
+
+Speech cleanup and spoken Markdown structure commands are currently English-specific. When
+another language is detected, Parrot automatically skips English filler-word cleanup so it
+cannot delete valid foreign-language words; normal recognition, casing, vocabulary replacement,
+snippets, history, journal delivery, and cursor insertion continue locally.
+
 ### Private usage stats
 
 `parrot stats` summarizes the Markdown history on your Mac—there is no account, telemetry
@@ -331,6 +360,7 @@ upgrade never forces a large redownload. Inspect the exact locations and status 
 
 ```sh
 parrot models list
+parrot languages
 parrot models path
 ```
 
@@ -347,8 +377,10 @@ Parakeet model when repeated inference speed matters more than model load cost:
 | Model | Local download | Best fit |
 |---|---:|---|
 | `whisper-base.en` | 145 MB | Default; quickest load and lowest memory |
+| `whisper-base` | 147 MB | 100 languages; fixed language or automatic detection |
 | `parakeet-tdt-ctc-110m.en` | 331 MB | Small, very fast English engine |
 | `parakeet-unified.en` | 614 MB | Fast English engine with punctuation and capitalization |
+| `whisper-small` | 486 MB | Higher-capacity multilingual Whisper |
 
 ```sh
 parrot models download parakeet-tdt-ctc-110m.en
@@ -386,7 +418,7 @@ managed model cache location; transcript, config, and legacy-model paths stay un
 
 Parrot stores settings only at `~/.config/parrot/config.json`, with user-only permissions.
 The chosen microphone and lowercase choice are remembered during setup. Hotkey, model,
-note/dictation mode, cleanup, and delivery can be saved explicitly:
+language, note/dictation mode, cleanup, and delivery can be saved explicitly:
 
 ```sh
 parrot settings
@@ -467,6 +499,7 @@ parrot daemon restart                  # restart it after configuration changes
 parrot daemon logs --lines 100         # inspect private operational logs
 parrot doctor                          # check permissions + fn key setting
 parrot models list                     # list available models
+parrot languages                       # supported language names and codes
 parrot models download <id>            # pre-download a model
 parrot models path                     # show managed and legacy model locations
 parrot models migrate                  # safely move known legacy model bundles
@@ -499,6 +532,7 @@ parrot --lowercase                     # lowercase all transcribed text
 parrot --no-history                    # don't save local Markdown transcript history
 parrot --reconfigure                   # redo first-time setup
 parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
+parrot --model whisper-base --language auto # efficient multilingual auto-detection
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill
 parrot run --debug-hotkey              # print keycodes for every key you press

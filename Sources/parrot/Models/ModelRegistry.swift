@@ -17,6 +17,15 @@ enum ModelRegistry {
             recommended: true
         ),
         TranscriptionModel(
+            id: "whisper-base",
+            displayName: "Whisper Base (Multilingual)",
+            engine: .whisperKit,
+            whisperKitID: "openai_whisper-base",
+            sizeMB: 147,
+            languages: ["multi"],
+            recommended: false
+        ),
+        TranscriptionModel(
             id: "parakeet-tdt-ctc-110m.en",
             displayName: "Parakeet 110M (English, efficient)",
             engine: .parakeet,
@@ -50,6 +59,15 @@ enum ModelRegistry {
             whisperKitID: "openai_whisper-small.en",
             sizeMB: 488,
             languages: ["en"],
+            recommended: false
+        ),
+        TranscriptionModel(
+            id: "whisper-small",
+            displayName: "Whisper Small (Multilingual)",
+            engine: .whisperKit,
+            whisperKitID: "openai_whisper-small",
+            sizeMB: 486,
+            languages: ["multi"],
             recommended: false
         ),
     ]

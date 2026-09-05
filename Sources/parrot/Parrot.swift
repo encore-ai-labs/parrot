@@ -12,7 +12,7 @@ struct Parrot: ParsableCommand {
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
             Hotkeys.self, Devices.self, Apps.self, Vocabulary.self, Snippets.self,
-            History.self, Stats.self, Transcribe.self, Settings.self,
+            History.self, Stats.self, Transcribe.self, Settings.self, Languages.self,
             Install.self, Daemon.self, Update.self,
         ],
         defaultSubcommand: Run.self
@@ -105,6 +105,9 @@ struct Run: ParsableCommand {
 
     @Option(name: .long, help: "Model id for this run. Overrides the saved default.")
     var model: String?
+
+    @Option(name: .long, help: "Language code/name for this run, or auto.")
+    var language: String?
 
     @Option(
         name: .long,
@@ -227,6 +230,7 @@ struct Run: ParsableCommand {
                 config: config,
                 hotkeyOverride: hotkey,
                 modelOverride: model,
+                languageOverride: language,
                 notes: noteMode,
                 dictation: dictationMode,
                 journalOverride: journal,
@@ -248,6 +252,24 @@ struct Run: ParsableCommand {
             throw ExitCode(1)
         }
         chosenHotkey = parsedHotkey
+
+        // Validate pure configuration before changing a system preference or
+        // asking macOS for hardware permissions.
+        guard let chosenModel = ModelRegistry.find(defaults.model) else {
+            let kind = model == nil ? "saved model" : "model"
+            FileHandle.standardError.write(Data("unknown \(kind): \(defaults.model)\n".utf8))
+            FileHandle.standardError.write(Data(
+                "run `parrot settings set --model \(recommendedModel)` to repair it.\n".utf8
+            ))
+            throw ExitCode(1)
+        }
+        guard RecognitionLanguage.isSupported(defaults.language, by: chosenModel) else {
+            FileHandle.standardError.write(Data(
+                "\(chosenModel.id) cannot transcribe \(defaults.language); "
+                    .appending("choose whisper-base/whisper-small or use --language en\n").utf8
+            ))
+            throw ExitCode(64)
+        }
 
         let fnSystemAction: FnSystemActionOverride?
         if chosenHotkey.needsSystemActionDisabled {
@@ -284,15 +306,6 @@ struct Run: ParsableCommand {
                 FileHandle.standardError.write(Data("\nfix the above or pass --skip-doctor\n".utf8))
                 throw ExitCode(1)
             }
-        }
-
-        guard let chosenModel = ModelRegistry.find(defaults.model) else {
-            let kind = model == nil ? "saved model" : "model"
-            FileHandle.standardError.write(Data("unknown \(kind): \(defaults.model)\n".utf8))
-            FileHandle.standardError.write(Data(
-                "run `parrot settings set --model \(recommendedModel)` to repair it.\n".utf8
-            ))
-            throw ExitCode(1)
         }
 
         // Pick the mic before anything slow happens, so a bad --input-device
@@ -407,6 +420,7 @@ struct Run: ParsableCommand {
         }
         let transcriber = TranscriberFactory.make(
             model: chosenModel,
+            language: defaults.language,
             vocabulary: vocabulary,
             additionalPromptTerms: snippets.promptTerms,
             notePromptTerms: NoteFormatter.promptTerms
@@ -461,6 +475,10 @@ struct Run: ParsableCommand {
         let menuBar = MainActor.assumeIsolated {
             MenuBarController(
                 modelID: chosenModel.id,
+                language: RecognitionLanguage.displaySelection(
+                    defaults.language,
+                    model: chosenModel
+                ),
                 hotkeyName: chosenHotkey.name,
                 mode: defaults.mode
             ) { mode in
@@ -507,12 +525,22 @@ struct Run: ParsableCommand {
 
                 let started = Date()
                 do {
-                    let raw = try await transcriber.transcribe(samples, mode: modeForCapture)
+                    let transcription = try await transcriber.transcribe(
+                        samples,
+                        mode: modeForCapture
+                    )
+                    let applyCleanup = defaults.cleanup
+                        && RecognitionLanguage.supportsEnglishCleanup(transcription.language)
+                    if defaults.cleanup && !applyCleanup {
+                        FileHandle.standardError.write(Data(
+                            "cleanup skipped for detected language \(transcription.language)\n".utf8
+                        ))
+                    }
                     let text = TranscriptProcessing.process(
-                        raw,
+                        transcription.text,
                         mode: modeForCapture,
                         lowercase: lowercaseMode,
-                        cleanup: defaults.cleanup,
+                        cleanup: applyCleanup,
                         snippets: snippetExpander
                     )
                     let elapsed = Date().timeIntervalSince(started)
@@ -525,7 +553,8 @@ struct Run: ParsableCommand {
                             _ = try await history.append(
                                 text,
                                 audioDuration: seconds,
-                                processingDuration: elapsed
+                                processingDuration: elapsed,
+                                language: transcription.language
                             )
                         } catch {
                             FileHandle.standardError.write(Data(
@@ -830,6 +859,7 @@ struct Run: ParsableCommand {
             version: AppVersion.current,
             hotkey: chosenHotkey.name,
             model: chosenModel.id,
+            language: RecognitionLanguage.displaySelection(defaults.language, model: chosenModel),
             microphone: micName,
             mode: defaults.mode.rawValue,
             vocabularyCount: vocabulary.entries.count,
@@ -1015,7 +1045,10 @@ struct Models: ParsableCommand {
             for m in ModelRegistry.shared {
                 let star = m.recommended ? "★" : " "
                 let id = m.id.padding(toLength: 26, withPad: " ", startingAt: 0)
-                let langs = "[\(m.languages.joined(separator: ","))]"
+                let languageSummary = m.languages.contains("multi")
+                    ? "100"
+                    : m.languages.joined(separator: ",")
+                let langs = "[\(languageSummary)]"
                     .padding(toLength: 9, withPad: " ", startingAt: 0)
                 let size = String(format: "%5d MB", m.sizeMB)
                 let stored: String

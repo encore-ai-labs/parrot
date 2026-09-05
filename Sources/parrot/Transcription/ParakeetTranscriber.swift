@@ -142,7 +142,7 @@ actor ParakeetTranscriber: Transcriber {
         FileHandle.standardError.write(Data("✓ \(modelID) ready\n".utf8))
     }
 
-    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> String {
+    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> LiveTranscription {
         _ = mode // formatting is deterministic and shared after recognition
         if backend == nil { try await warmUp() }
         guard let backend else { throw TranscriberError.notLoaded }
@@ -150,12 +150,15 @@ actor ParakeetTranscriber: Transcriber {
         switch backend {
         case .compact(let manager):
             var state = TdtDecoderState.make(decoderLayers: 1)
-            return processed(try await manager.transcribe(
+            return LiveTranscription(text: processed(try await manager.transcribe(
                 compatibleAudio,
                 decoderState: &state
-            ).text)
+            ).text), language: "en")
         case .unified(let manager):
-            return processed(try await manager.transcribe(compatibleAudio))
+            return LiveTranscription(
+                text: processed(try await manager.transcribe(compatibleAudio)),
+                language: "en"
+            )
         }
     }
 

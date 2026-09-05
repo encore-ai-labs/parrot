@@ -175,10 +175,17 @@ Bluetooth, parrot prefers the built-in mic and says so.
 protocol Transcriber {
     var modelID: String { get }
     func warmUp() async throws
-    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> String
+    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> LiveTranscription
     func transcribeFile(at url: URL, mode: DictationMode) async throws -> TimedTranscription
 }
 ```
+
+`LiveTranscription` carries both text and the recognized language code. English-only Whisper
+and Parakeet models resolve `auto` to `en` without a detection pass. Multilingual Whisper uses
+an explicit language token or WhisperKit's in-pipeline detection, reusing the same resident model.
+`RecognitionLanguage` canonicalizes names, codes, and common region identifiers, then rejects
+model/language mismatches before permissions or warmup. The 147 MB multilingual Base option
+preserves the small on-device footprint; the existing English recommendation remains unchanged.
 
 Concrete implementations:
 
@@ -279,7 +286,8 @@ note bodies containing arbitrary Markdown headings. A compatibility parser reads
 from older releases. `parrot history` exposes recent listing, local full-text search, exact show,
 latest-text output for pipes, clipboard recovery, and the underlying directory path.
 
-New entries also include a hidden metrics comment with audio and transcription milliseconds.
+New entries also include a hidden metrics comment with audio and transcription milliseconds
+and, when available, the recognized language code.
 `parrot stats` combines those measurements with localized word counts to report voice time,
 speaking pace, processing speed, and an optional typing-time comparison. Counts and streaks
 include old entries without timing metadata. All calculation reads the local Markdown directly;
@@ -465,9 +473,11 @@ Current registry:
 | Engine | Model | Size | Notes |
 |---|---|---|---|
 | WhisperKit | `whisper-base.en` | ~145 MB | Default; quickest load and lowest memory |
+| WhisperKit | `whisper-base` | ~147 MB | 100 languages; explicit or automatic detection |
 | FluidAudio | `parakeet-tdt-ctc-110m.en` | ~331 MB | Optional; smallest and fastest Parakeet |
 | FluidAudio | `parakeet-unified.en` | ~614 MB | Optional; punctuation-aware English Parakeet |
 | WhisperKit | `whisper-small.en` | ~488 MB | More accurate English, higher latency |
+| WhisperKit | `whisper-small` | ~486 MB | Higher-capacity multilingual Whisper |
 | WhisperKit | `whisper-large-v3-turbo` | ~1.62 GB | Highest-capacity multilingual option |
 
 Models are not bundled. New downloads live in
@@ -486,8 +496,9 @@ Models are not bundled. New downloads live in
 7. User releases Fn.
 8. `HotkeyMonitor` fires `.released`. Overlay switches to spinner. Status: `transcribing`.
 9. `AudioCapture` stops and `LastRecordingRecovery` atomically stages one private safety WAV.
-10. The active `Transcriber` runs CoreML inference. Returns string.
-11. `SpeechCleanup` optionally removes conservative disfluencies; then the mode captured at
+10. The active `Transcriber` runs CoreML inference and returns text plus its language code.
+11. `SpeechCleanup` optionally removes conservative English disfluencies and is skipped for
+    every other detected language; then the mode captured at
     recording start selects whether `NoteFormatter` applies explicit Markdown structure commands.
 12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies, which
     are never passed through cleanup or note formatting.

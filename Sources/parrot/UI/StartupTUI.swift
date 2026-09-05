@@ -5,6 +5,7 @@ enum StartupTUI {
         let version: String
         let hotkey: String
         let model: String
+        let language: String
         let microphone: String
         let mode: String
         let vocabularyCount: Int
@@ -36,10 +37,11 @@ enum StartupTUI {
             write(
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
                 " · mic: \(details.microphone) · mode: \(details.mode)" +
+                " · language: \(details.language)" +
                 " · vocabulary: \(details.vocabularyCount)" +
                 " · snippets: \(details.snippetCount)" +
                 " · delivery: \(details.delivery)" +
-                " · cleanup: \(details.cleanup ? "on" : "off")" +
+                " · cleanup: \(details.cleanup ? "on (English speech)" : "off")" +
                 "\(history)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
@@ -54,6 +56,7 @@ enum StartupTUI {
             write(row("macOS key", systemHotkeyAction))
         }
         write(row("model", details.model))
+        write(row("language", details.language))
         write(row("mode", details.mode + (details.mode == "notes" ? "  (spoken Markdown commands)" : "")))
         write(row("microphone", details.microphone))
         let vocabulary = details.vocabularyCount == 1
@@ -64,7 +67,7 @@ enum StartupTUI {
             ? "1 snippet"
             : "\(details.snippetCount) snippets  (parrot snippets)"
         write(row("snippets", snippets))
-        write(row("cleanup", details.cleanup ? "on  ·  local deterministic" : "off"))
+        write(row("cleanup", details.cleanup ? "on  ·  local deterministic · English speech" : "off"))
         write(row("delivery", details.delivery))
         write(row("history", history))
         write(row("updates", "checking…"))

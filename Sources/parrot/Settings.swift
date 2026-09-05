@@ -26,6 +26,7 @@ struct Settings: ParsableCommand {
             )
             print("hotkey      \(defaults.hotkey)\(config.hotkey == nil ? "  (default)" : "")")
             print("model       \(defaults.model)\(config.model == nil ? "  (recommended)" : "")")
+            print("language    \(defaults.language)\(config.language == nil ? "  (default)" : "")")
             print("mode        \(defaults.mode.rawValue)\(config.mode == nil ? "  (default)" : "")")
             print("cleanup     \(defaults.cleanup ? "on" : "off")\(config.cleanup == nil ? "  (default)" : "")")
             if let journalPath = defaults.journalPath {
@@ -51,6 +52,9 @@ struct Settings: ParsableCommand {
         @Option(name: .long, help: "Model id from `parrot models list`.")
         var model: String?
 
+        @Option(name: .long, help: "Language code/name from `parrot languages`, or auto.")
+        var language: String?
+
         @Option(name: .long, help: "Text-processing mode: dictation or notes.")
         var mode: String?
 
@@ -67,7 +71,7 @@ struct Settings: ParsableCommand {
         var noCleanup: Bool = false
 
         func validate() throws {
-            guard hotkey != nil || model != nil || mode != nil || journal != nil || paste
+            guard hotkey != nil || model != nil || language != nil || mode != nil || journal != nil || paste
                     || cleanup || noCleanup else {
                 throw ValidationError(
                     "provide at least one setting to change"
@@ -85,6 +89,9 @@ struct Settings: ParsableCommand {
             if let model, ModelRegistry.find(model) == nil {
                 throw ValidationError("unknown model '\(model)'; run `parrot models list`")
             }
+            if let language, RecognitionLanguage.canonicalize(language) == nil {
+                throw ValidationError("unknown language '\(language)'; run `parrot languages`")
+            }
             if let mode, DictationMode.parse(mode) == nil {
                 throw ValidationError("unknown mode '\(mode)'; use dictation or notes")
             }
@@ -94,7 +101,7 @@ struct Settings: ParsableCommand {
         }
 
         func run() throws {
-            guard hotkey != nil || model != nil || mode != nil || journal != nil || paste
+            guard hotkey != nil || model != nil || language != nil || mode != nil || journal != nil || paste
                     || cleanup || noCleanup else {
                 throw ValidationError(
                     "provide at least one setting to change"
@@ -113,6 +120,12 @@ struct Settings: ParsableCommand {
                 }
                 config.model = registered.id
             }
+            if let language {
+                guard let canonical = RecognitionLanguage.canonicalize(language) else {
+                    throw ValidationError("unknown language '\(language)'; run `parrot languages`")
+                }
+                config.language = canonical
+            }
             if let mode {
                 guard let parsed = DictationMode.parse(mode) else {
                     throw ValidationError("unknown mode '\(mode)'; use dictation or notes")
@@ -129,6 +142,17 @@ struct Settings: ParsableCommand {
             if cleanup || noCleanup {
                 config.cleanup = cleanup
             }
+            let effectiveModelID = config.model ?? ModelRegistry.recommended()?.id ?? ""
+            guard let effectiveModel = ModelRegistry.find(effectiveModelID) else {
+                throw ValidationError("no transcription model is available")
+            }
+            let effectiveLanguage = config.language ?? RecognitionLanguage.automatic
+            guard RecognitionLanguage.isSupported(effectiveLanguage, by: effectiveModel) else {
+                throw ValidationError(
+                    "\(effectiveModel.id) cannot transcribe \(effectiveLanguage); "
+                        + "choose whisper-base/whisper-small or set --language en"
+                )
+            }
             try config.write()
             print("✓ saved Parrot defaults")
             try Show().run()
@@ -138,18 +162,19 @@ struct Settings: ParsableCommand {
 
     struct Reset: ParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Reset hotkey, model, mode, cleanup, and delivery defaults."
+            abstract: "Reset hotkey, model, language, mode, cleanup, and delivery defaults."
         )
 
         func run() throws {
             var config = Config.load()
             config.hotkey = nil
             config.model = nil
+            config.language = nil
             config.mode = nil
             config.journalPath = nil
             config.cleanup = nil
             try config.write()
-            print("✓ reset hotkey, model, mode, cleanup, and delivery defaults")
+            print("✓ reset hotkey, model, language, mode, cleanup, and delivery defaults")
             print("restart a running Parrot daemon to apply the change")
         }
     }

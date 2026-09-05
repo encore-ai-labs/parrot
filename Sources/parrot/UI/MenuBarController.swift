@@ -25,6 +25,7 @@ final class MenuBarController {
 
     init(
         modelID: String,
+        language: String,
         hotkeyName: String,
         mode: DictationMode,
         onModeChange: @escaping (DictationMode) -> Void
@@ -41,7 +42,11 @@ final class MenuBarController {
         stateLabel.isEnabled = false
         menu.addItem(stateLabel)
 
-        modelLabel = NSMenuItem(title: "model: \(modelID)", action: nil, keyEquivalent: "")
+        modelLabel = NSMenuItem(
+            title: "model: \(modelID) · \(language)",
+            action: nil,
+            keyEquivalent: ""
+        )
         modelLabel.isEnabled = false
         menu.addItem(modelLabel)
 

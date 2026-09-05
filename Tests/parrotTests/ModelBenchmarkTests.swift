@@ -34,12 +34,14 @@ final class ModelBenchmarkTests: XCTestCase {
         let command = try XCTUnwrap(
             try ModelBenchmark.parseAsRoot([
                 "whisper-base.en", "--audio", "/tmp/sample.wav",
+                "--language", "en",
                 "--reference", "hello world", "--runs", "5", "--notes",
                 "--no-snippets", "--json",
             ]) as? ModelBenchmark
         )
         XCTAssertEqual(command.id, "whisper-base.en")
         XCTAssertEqual(command.audio, "/tmp/sample.wav")
+        XCTAssertEqual(command.language, "en")
         XCTAssertEqual(command.reference, "hello world")
         XCTAssertEqual(command.runs, 5)
         XCTAssertTrue(command.notes)

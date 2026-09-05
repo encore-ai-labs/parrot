@@ -28,6 +28,24 @@ compact model and 30 times faster than Unified, and had the lowest maximum resid
 The optional Parakeet choices are useful for long sessions or repeated file transcription,
 where their one-time model load can be amortized.
 
+## Multilingual Base validation
+
+The multilingual path was separately measured on the same Mac with the local debug CLI and two
+new single-speaker macOS `say` clips. Each row is the median of five warmed inference runs with
+vocabulary and snippets disabled.
+
+| Audio | Model / language | Duration | Median | Realtime | WER | Detected |
+|---|---|---:|---:|---:|---:|---|
+| Spanish | Multilingual Base / `es` | 6.59 s | 0.269 s | 24.5x | 0.0% | `es` |
+| Spanish | Multilingual Base / `auto` | 6.59 s | 0.343 s | 19.2x | 0.0% | `es` |
+| English | English Base / `en` | 5.38 s | 0.220 s | 24.4x | 4.8% | `en` |
+| English | Multilingual Base / `en` | 5.38 s | 0.299 s | 18.0x | 4.8% | `en` |
+
+Automatic Spanish detection cost 74 ms over the fixed-language median while preserving 0% WER.
+Multilingual Base was 36% slower than English Base on the English clip with equal WER, supporting
+the product decision to leave `.en` as the default and make multilingual recognition explicit.
+The English WER is one normalized substitution (`nine` → `9`), not a missing spoken word.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:
@@ -51,3 +69,16 @@ parrot models benchmark parakeet-unified.en \
 
 Use `--json` for machine-readable results. Model download time is deliberately excluded from
 load time; download each candidate before benchmarking it.
+
+For multilingual models, benchmark both a fixed language and automatic detection. Fixed
+language is the latency baseline because it skips detection; `auto` measures the real cost for
+a workflow that mixes languages:
+
+```sh
+parrot models benchmark whisper-base --audio spanish.wav --language es \
+  --reference "El texto exacto que dijiste" --runs 3
+parrot models benchmark whisper-base --audio spanish.wav --language auto \
+  --reference "El texto exacto que dijiste" --runs 3
+```
+
+JSON output records `requestedLanguage` separately from the language recognized by the model.

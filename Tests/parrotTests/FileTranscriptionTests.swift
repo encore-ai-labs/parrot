@@ -16,6 +16,7 @@ final class FileTranscriptionTests: XCTestCase {
             try Transcribe.parseAsRoot([
                 "/tmp/one.m4a", "/tmp/two.mp4",
                 "--model", "whisper-small.en",
+                "--language", "en",
                 "--notes", "--lowercase", "--cleanup", "--no-vocabulary", "--no-snippets",
                 "--format", "json", "--output-directory", "/tmp/transcripts",
                 "--no-timestamps", "--force",
@@ -23,6 +24,7 @@ final class FileTranscriptionTests: XCTestCase {
         )
         XCTAssertEqual(command.files, ["/tmp/one.m4a", "/tmp/two.mp4"])
         XCTAssertEqual(command.model, "whisper-small.en")
+        XCTAssertEqual(command.language, "en")
         XCTAssertTrue(command.notes)
         XCTAssertTrue(command.lowercase)
         XCTAssertTrue(command.cleanup)

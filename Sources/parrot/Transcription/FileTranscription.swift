@@ -28,6 +28,9 @@ struct Transcribe: ParsableCommand {
     @Option(name: .long, help: "Model id. Defaults to the saved model.")
     var model: String?
 
+    @Option(name: .long, help: "Language code/name, or auto. Defaults to the saved language.")
+    var language: String?
+
     @Flag(name: .long, help: "Apply deterministic spoken-command Markdown formatting.")
     var notes = false
 
@@ -122,6 +125,16 @@ struct Transcribe: ParsableCommand {
         guard let selectedModel = ModelRegistry.find(modelID) else {
             throw ValidationError("unknown model '\(modelID)'; run `parrot models list`")
         }
+        let requestedLanguage = language ?? config.language ?? RecognitionLanguage.automatic
+        guard let canonicalLanguage = RecognitionLanguage.canonicalize(requestedLanguage) else {
+            throw ValidationError("unknown language '\(requestedLanguage)'; run `parrot languages`")
+        }
+        guard RecognitionLanguage.isSupported(canonicalLanguage, by: selectedModel) else {
+            throw ValidationError(
+                "\(selectedModel.id) cannot transcribe \(canonicalLanguage); "
+                    + "choose whisper-base/whisper-small or use --language en"
+            )
+        }
         let mode: DictationMode
         if notes {
             mode = .notes
@@ -148,6 +161,7 @@ struct Transcribe: ParsableCommand {
         let snippetExpander = SnippetExpander(entries: snippets.entries)
         let transcriber = TranscriberFactory.make(
             model: selectedModel,
+            language: canonicalLanguage,
             vocabulary: vocabulary,
             additionalPromptTerms: snippets.promptTerms,
             notePromptTerms: NoteFormatter.promptTerms
@@ -155,7 +169,7 @@ struct Transcribe: ParsableCommand {
 
         FileHandle.standardError.write(Data(
             "transcribing \(jobs.count) file\(jobs.count == 1 ? "" : "s") locally"
-                .appending(" · \(selectedModel.id) · \(mode.rawValue)\n").utf8
+                .appending(" · \(selectedModel.id) · \(canonicalLanguage) · \(mode.rawValue)\n").utf8
         ))
         try await transcriber.warmUp()
 
@@ -168,11 +182,18 @@ struct Transcribe: ParsableCommand {
             let started = ContinuousClock.now
             do {
                 let transcription = try await transcriber.transcribeFile(at: job.input, mode: mode)
+                let applyCleanup = cleanupOutput
+                    && RecognitionLanguage.supportsEnglishCleanup(transcription.language)
+                if cleanupOutput && !applyCleanup {
+                    FileHandle.standardError.write(Data(
+                        "  cleanup skipped for detected language \(transcription.language)\n".utf8
+                    ))
+                }
                 let text = TranscriptProcessing.process(
                     transcription.text,
                     mode: mode,
                     lowercase: lowercaseOutput,
-                    cleanup: cleanupOutput,
+                    cleanup: applyCleanup,
                     snippets: snippetExpander
                 )
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -186,7 +207,7 @@ struct Transcribe: ParsableCommand {
                 )
                 let segments = TranscriptProcessing.processSegments(
                     transcription.segments,
-                    cleanup: cleanupOutput
+                    cleanup: applyCleanup
                 )
                 let report = FileTranscriptReport(
                     source: job.input.path,

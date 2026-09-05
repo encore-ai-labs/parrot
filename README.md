@@ -282,6 +282,27 @@ compatibility links at the old paths for other local tools. Tokenizer metadata m
 the shared legacy Hugging Face cache; the large Core ML model bundles are what Parrot moves.
 Downloads show percentage progress in both interactive terminals and daemon logs.
 
+Parrot includes two optional English-only Parakeet engines. Whisper Base remains the default:
+it starts quickly, uses the least warm memory, and is the safest general choice. Pick a
+Parakeet model when repeated inference speed matters more than model load cost:
+
+| Model | Local download | Best fit |
+|---|---:|---|
+| `whisper-base.en` | 145 MB | Default; quickest load and lowest memory |
+| `parakeet-tdt-ctc-110m.en` | 331 MB | Small, very fast English engine |
+| `parakeet-unified.en` | 614 MB | Fast English engine with punctuation and capitalization |
+
+```sh
+parrot models download parakeet-tdt-ctc-110m.en
+parrot settings set --model parakeet-tdt-ctc-110m.en
+parrot daemon restart
+```
+
+Both engines run through Core ML on the Mac and use the same private vocabulary replacement,
+note formatting, history, live dictation, file transcription, and benchmark flows. Parakeet is
+English-only and does not currently use Whisper's acoustic prompt hints. See the
+[measured model comparison](docs/model-benchmarks.md) before changing the default.
+
 Measure a model with the same audio on your own Mac instead of relying on generic benchmark
 claims. Record a short representative sample (running Parrot once with `--dump-wav` writes the
 last capture to `/tmp/parrot-last.wav`), then run:
@@ -300,6 +321,8 @@ accurate). The benchmark uses your saved vocabulary and snippets by default; pas
 the complete local note-formatting path.
 Use `--json` to save comparable machine-readable reports. Download each candidate first with
 `parrot models download <id>` so network time is not included in model-load time.
+For reproducible tests or managed deployments, `PARROT_MODELS_DIRECTORY` overrides only the
+managed model cache location; transcript, config, and legacy-model paths stay unchanged.
 
 ### Settings
 
@@ -420,6 +443,7 @@ parrot run --debug-hotkey              # print keycodes for every key you press
 
 - **Swift** — single SPM executable target
 - **WhisperKit** — Whisper inference via CoreML, ANE-accelerated
+- **FluidAudio** — optional Parakeet inference via CoreML
 - **AVCaptureSession** — mic capture, pinned to one device
 - **CGEventTap** — global hotkey
 - **CGEvent** — text injection at cursor

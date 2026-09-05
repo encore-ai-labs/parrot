@@ -19,10 +19,17 @@ final class ModelDownloadProgress: @unchecked Sendable {
     }
 
     func update(_ progress: Progress) {
-        let percent = min(100, max(0, Int((progress.fractionCompleted * 100).rounded())))
+        update(fractionCompleted: progress.fractionCompleted)
+    }
+
+    /// FluidAudio reports a lightweight fraction rather than Foundation's
+    /// `Progress`; keep both engines on the same quiet, rate-limited UI.
+    func update(fractionCompleted: Double) {
+        let percent = min(100, max(0, Int((fractionCompleted * 100).rounded())))
         lock.lock()
         defer { lock.unlock() }
         let step = interactive ? 1 : 10
+        guard percent != lastPercent else { return }
         guard percent == 100 || lastPercent < 0 || percent >= lastPercent + step else { return }
         lastPercent = percent
         emitted = true

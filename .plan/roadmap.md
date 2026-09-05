@@ -168,9 +168,9 @@ was unusable from a mechanical keyboard.
 **6.4 Delete dead code** — `ModelsManifest`, `DoctorReport.allClean`,
 `configureButton(recording:)`'s unused parameter. Keep `Engine.parakeet` (tracked as issue #1).
 
-**6.5 Add `warmUp()` to the `Transcriber` protocol** — it's currently decorative; `Run` holds
-a concrete `WhisperKitTranscriber` and nothing can be generic over it. Prerequisite for the
-Parakeet work in issue #1.
+**6.5 Add `warmUp()` to the `Transcriber` protocol** — ✅ **done.** Live dictation, file
+transcription, explicit downloads, and benchmarks now instantiate engines through one factory
+and operate against the same `Sendable` protocol.
 
 **6.6 Reconcile `architecture.md`** — ✅ **done.** — it documents a TOML config, a `ModelDownloader`, an
 Application Support model path, and "no menubar / no launch-at-login" as non-goals. Three of
@@ -203,6 +203,12 @@ atomic writes never modify the source media.
 from their immutable source tag. Installs swap the executable's directory entry rather than
 overwriting a running signed Mach-O inode, and protected directories use the standard macOS
 administrator authorization dialog.
+
+**6.13 Fast local English engines** — ✅ **done.** FluidAudio-backed Parakeet 110M and Unified
+INT8 are optional Core ML engines behind the same daemon, file-transcription, download, and
+benchmark interfaces. Same-audio M3 Max measurements are checked into
+[`docs/model-benchmarks.md`](../docs/model-benchmarks.md); Whisper Base remains the default
+because it loads much faster and uses less warm memory.
 
 ---
 

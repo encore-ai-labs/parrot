@@ -13,6 +13,10 @@ let package = Package(
         // v1.1.0 fixes an upstream decoder bug where any promptTokens (used by
         // personal vocabulary and note commands) could return an empty transcript.
         .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "1.1.0"),
+        // Parakeet Unified is the fast, punctuation-aware local English path.
+        // Pin the minor line: FluidAudio moves quickly and its model APIs are
+        // not yet 1.0-stable.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", .upToNextMinor(from: "0.15.6")),
     ],
     targets: [
         .executableTarget(
@@ -20,6 +24,7 @@ let package = Package(
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
+                .product(name: "FluidAudio", package: "FluidAudio"),
             ],
             linkerSettings: [
                 .unsafeFlags([

@@ -6,7 +6,7 @@
 2. **Push-to-talk.** Hold Fn, speak, release — transcript appears at the cursor.
 3. **Minimal recording feedback.** A small floating pill at the bottom of the screen while recording, so the user knows the mic is hot. Click-through, borderless, hidden when idle.
 4. **On-device.** No network calls for transcription. Audio never leaves the machine.
-5. **Pluggable models.** Whisper out of the box; Parakeet (or future engines) via a JSON-driven registry.
+5. **Pluggable models.** Whisper by default; optional Parakeet engines through one typed registry and factory.
 6. **Native and lean.** One Swift Package executable target. No sidecar processes. No HTTP servers.
 
 ## Non-goals
@@ -174,15 +174,18 @@ Bluetooth, parrot prefers the built-in mic and says so.
 
 ```swift
 protocol Transcriber {
-    func transcribe(_ audio: [Float]) async throws -> String
     var modelID: String { get }
+    func warmUp() async throws
+    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> String
+    func transcribeFile(at url: URL, mode: DictationMode) async throws -> TimedTranscription
 }
 ```
 
 Concrete implementations:
 
 - `WhisperKitTranscriber` — wraps the `WhisperKit` package. CoreML, ANE-accelerated.
-- `ParakeetTranscriber` — wraps `FluidAudio` (or direct CoreML) for NVIDIA Parakeet TDT.
+- `ParakeetTranscriber` — wraps FluidAudio for compact Parakeet TDT/CTC and Parakeet Unified INT8.
+- `TranscriberFactory` — selects the concrete actor from the registry's engine field.
 
 Adding an engine = one new file conforming to `Transcriber`.
 
@@ -251,13 +254,14 @@ there is no telemetry store or network call.
 
 `parrot transcribe` accepts AVFoundation-readable audio and video without starting AppKit,
 the microphone, Accessibility APIs, or the daemon. It resolves saved model/mode/casing defaults,
-then loads vocabulary and snippets once. One `WhisperKitTranscriber` is warmed for the batch and
-files are processed sequentially, so model memory is not multiplied.
+then loads vocabulary and snippets once. One registry-selected `Transcriber` is warmed for the
+batch and files are processed sequentially, so model memory is not multiplied.
 
-The file path uses WhisperKit's incremental loader with 120-second staging and one buffered
-chunk; decoder/VAD segment timestamps remain relative to the original media. Parrot projects
-WhisperKit's token-heavy result into a compact report containing final text, language, duration,
-processing time, real-time factor, and segment start/end/text.
+WhisperKit uses its incremental loader with 120-second staging and one buffered chunk.
+FluidAudio's compact Parakeet path streams from disk; Unified uses overlapping 15-second model
+windows and reports emission timings. Parrot projects either engine's result into the same
+compact report containing final text, language, duration, processing time, real-time factor,
+and segment start/end/text.
 
 Markdown is the default output and includes both the deterministically formatted note and a
 timestamped timeline. Text and schema-versioned JSON are also supported. Output planning occurs
@@ -324,9 +328,9 @@ single binary with nothing to install alongside it. Adding a model = appending a
 
 The registry is the single source of truth for: download URLs, file names, sizes, recommended flags, what shows up in `parrot models list`.
 
-`parrot models benchmark` loads any AVFoundation-readable local audio file through
-WhisperKit's 16 kHz conversion path, warms one registered model, and repeats inference on the
-same samples. It reports load time separately from median inference latency and real-time
+`parrot models benchmark` loads any AVFoundation-readable local audio file through the shared
+16 kHz conversion path, warms one registered model through `TranscriberFactory`, and repeats
+inference on the same samples. It reports load time separately from median inference latency and real-time
 factor. An optional reference transcript adds locally computed, case/punctuation-insensitive
 word-error rate. JSON output includes the hardware model, macOS version, exact run timings,
 note-mode state, and vocabulary count so results remain comparable. No audio, reference, or
@@ -334,8 +338,8 @@ transcript leaves the Mac.
 
 ### Model storage and download progress
 
-`ModelStorage` passes an explicit `downloadBase` to WhisperKit, so all new model downloads
-land under `~/Library/Application Support/Parrot/models/` instead of the library default in
+`ModelStorage` passes explicit destinations to WhisperKit and FluidAudio, so all new model
+downloads land under `~/Library/Application Support/Parrot/models/` instead of the library default in
 Documents. Before downloading, it recognizes a complete model in either managed storage or
 the older `~/Documents/huggingface/` layout. Managed storage wins when both exist; otherwise
 the legacy model is loaded in place with its existing tokenizer cache, avoiding a redownload.
@@ -345,7 +349,7 @@ shared with another local tool. It moves only complete model variants known to P
 overwrites an existing destination, and leaves an absolute compatibility symlink for each
 moved model. The daemon ownership lock must be available before migration begins.
 
-WhisperKit still performs the transfer. `ModelDownloadProgress` consumes its progress
+The engine libraries perform each transfer. `ModelDownloadProgress` consumes their progress
 callback, repainting stderr at 1% increments in a terminal and emitting newline-delimited
 10% increments for noninteractive logs. This keeps first-run feedback visible without
 flooding LaunchAgent logs.
@@ -425,7 +429,9 @@ Current registry:
 
 | Engine | Model | Size | Notes |
 |---|---|---|---|
-| WhisperKit | `whisper-base.en` | ~145 MB | Default; fastest English dictation |
+| WhisperKit | `whisper-base.en` | ~145 MB | Default; quickest load and lowest memory |
+| FluidAudio | `parakeet-tdt-ctc-110m.en` | ~331 MB | Optional; smallest and fastest Parakeet |
+| FluidAudio | `parakeet-unified.en` | ~614 MB | Optional; punctuation-aware English Parakeet |
 | WhisperKit | `whisper-small.en` | ~488 MB | More accurate English, higher latency |
 | WhisperKit | `whisper-large-v3-turbo` | ~1.62 GB | Highest-capacity multilingual option |
 
@@ -530,9 +536,10 @@ parrot/
   README.md
 ```
 
-Not built: `ParakeetTranscriber.swift` and `Resources/models.json`. Model downloads remain
-delegated to WhisperKit, with Parrot owning storage resolution and progress reporting. The
-SwiftPM test target lives at `Tests/parrotTests/`.
+`ParakeetTranscriber.swift` is implemented through FluidAudio. `Resources/models.json` remains
+intentionally unbuilt: the typed source registry keeps the shipped executable self-contained.
+WhisperKit and FluidAudio perform model transfers, while Parrot owns destinations, completeness
+checks, and bounded progress reporting. The SwiftPM test target lives at `Tests/parrotTests/`.
 
 Build: `swift build -c release`. Resulting binary at `.build/release/parrot`. Install: copy to `~/.local/bin/` or `/usr/local/bin/`.
 
@@ -542,10 +549,14 @@ Swift's module unit is the **SPM target** (one target = one module = one `import
 
 ## Open questions
 
-- **Parakeet via FluidAudio vs. direct CoreML?** FluidAudio is faster to integrate but adds a dependency. Decide once we benchmark both. Tracked as issue #1 upstream.
 - **First-run UX.** Bundle `whisper-base.en` so `parrot` works out of the box, or always require an explicit download? Probably the latter — keeps the binary small and the model directory clean.
 
 Settled since the original draft:
+
+- **Parakeet integration** — FluidAudio 0.15.6. It provides maintained model downloads,
+  compact disk-backed file transcription, Unified timing output, and tested Core ML execution.
+  Parrot keeps both engines opt-in based on its own same-audio benchmark rather than changing
+  the default from an upstream headline number.
 
 - **AUHAL vs. `AVCaptureSession` for the input path** — `AVCaptureSession`. Measured to isolate
   fully from the system default device, and it delivers 16 kHz mono Float32 directly via

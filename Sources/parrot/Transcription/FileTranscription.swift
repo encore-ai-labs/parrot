@@ -131,7 +131,7 @@ struct Transcribe: ParsableCommand {
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
         let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
         let snippetExpander = SnippetExpander(entries: snippets.entries)
-        let transcriber = WhisperKitTranscriber(
+        let transcriber = TranscriberFactory.make(
             model: selectedModel,
             vocabulary: vocabulary,
             additionalPromptTerms: snippets.promptTerms,

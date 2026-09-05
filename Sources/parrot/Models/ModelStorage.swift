@@ -27,10 +27,17 @@ struct ModelMigrationResult: Equatable {
 struct ModelStorage {
     static var `default`: ModelStorage {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return ModelStorage(
-            managedBase: home.appendingPathComponent(
+        let managedBase: URL
+        if let override = ProcessInfo.processInfo.environment["PARROT_MODELS_DIRECTORY"],
+           !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            managedBase = URL(fileURLWithPath: override, isDirectory: true).standardizedFileURL
+        } else {
+            managedBase = home.appendingPathComponent(
                 "Library/Application Support/Parrot/models", isDirectory: true
-            ),
+            )
+        }
+        return ModelStorage(
+            managedBase: managedBase,
             legacyBase: home.appendingPathComponent("Documents/huggingface", isDirectory: true)
         )
     }

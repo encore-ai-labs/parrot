@@ -106,6 +106,7 @@ final class ModelStorageTests: XCTestCase {
         reporter.update(progress)
         progress.completedUnitCount = 100
         reporter.update(progress)
+        reporter.update(fractionCompleted: 1)
         reporter.finish()
 
         XCTAssertEqual(messages.values, [

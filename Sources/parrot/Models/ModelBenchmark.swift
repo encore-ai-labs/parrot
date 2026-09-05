@@ -66,7 +66,7 @@ struct ModelBenchmark: ParsableCommand {
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
         let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
         let snippetExpander = SnippetExpander(entries: snippets.entries)
-        let transcriber = WhisperKitTranscriber(
+        let transcriber = TranscriberFactory.make(
             model: model,
             vocabulary: vocabulary,
             additionalPromptTerms: snippets.promptTerms,

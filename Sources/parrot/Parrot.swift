@@ -359,7 +359,7 @@ struct Run: ParsableCommand {
             snippets = SnippetLibrary()
         }
         let snippetExpander = SnippetExpander(entries: snippets.entries)
-        let transcriber = WhisperKitTranscriber(
+        let transcriber = TranscriberFactory.make(
             model: chosenModel,
             vocabulary: vocabulary,
             additionalPromptTerms: snippets.promptTerms,
@@ -835,11 +835,18 @@ struct Models: ParsableCommand {
                     .padding(toLength: 9, withPad: " ", startingAt: 0)
                 let size = String(format: "%5d MB", m.sizeMB)
                 let stored: String
-                if let variant = m.whisperKitID,
-                   let existing = storage.existingModel(variant: variant) {
-                    stored = existing.source == .managed ? "✓ local" : "↪ legacy"
-                } else {
-                    stored = "not downloaded"
+                switch m.engine {
+                case .whisperKit:
+                    if let variant = m.whisperKitID,
+                       let existing = storage.existingModel(variant: variant) {
+                        stored = existing.source == .managed ? "✓ local" : "↪ legacy"
+                    } else {
+                        stored = "not downloaded"
+                    }
+                case .parakeet:
+                    stored = ParakeetTranscriber.isDownloaded(model: m, storage: storage)
+                        ? "✓ local"
+                        : "not downloaded"
                 }
                 print("\(star) \(id) \(size)  \(langs)  \(stored)  \(m.displayName)")
             }
@@ -854,7 +861,7 @@ struct Models: ParsableCommand {
                 print("unknown model: \(id)")
                 throw ExitCode(1)
             }
-            let t = WhisperKitTranscriber(model: m)
+            let t = TranscriberFactory.make(model: m)
 
             let sem = DispatchSemaphore(value: 0)
             var capturedError: Error?

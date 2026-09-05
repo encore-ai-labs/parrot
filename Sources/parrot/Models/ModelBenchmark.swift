@@ -33,6 +33,9 @@ struct ModelBenchmark: ParsableCommand {
     @Flag(name: .long, help: "Ignore the saved personal vocabulary during this benchmark.")
     var noVocabulary = false
 
+    @Flag(name: .long, help: "Ignore saved voice snippets during this benchmark.")
+    var noSnippets = false
+
     @Flag(name: .long, help: "Print a machine-readable JSON report.")
     var json = false
 
@@ -61,10 +64,14 @@ struct ModelBenchmark: ParsableCommand {
         let audioSeconds = Double(samples.count) / AudioCapture.targetSampleRate
         let expected = try loadReference()
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
+        let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
+        let snippetExpander = SnippetExpander(entries: snippets.entries)
+        let additionalPromptTerms = (notes ? NoteFormatter.promptTerms : [])
+            + snippets.promptTerms
         let transcriber = WhisperKitTranscriber(
             model: model,
             vocabulary: vocabulary,
-            additionalPromptTerms: notes ? NoteFormatter.promptTerms : []
+            additionalPromptTerms: additionalPromptTerms
         )
 
         if !json {
@@ -85,7 +92,8 @@ struct ModelBenchmark: ParsableCommand {
         for index in 1...runs {
             let started = ContinuousClock.now
             let raw = try waitForAsync { try await transcriber.transcribe(samples) }
-            transcript = notes ? NoteFormatter.format(raw) : raw
+            let formatted = notes ? NoteFormatter.format(raw) : raw
+            transcript = snippetExpander.applying(to: formatted)
             let seconds = elapsedSeconds(since: started)
             timings.append(seconds)
             if !json {
@@ -103,6 +111,7 @@ struct ModelBenchmark: ParsableCommand {
             modelSizeMB: model.sizeMB,
             noteMode: notes,
             vocabularyTerms: vocabulary.entries.count,
+            snippets: snippets.entries.count,
             audioPath: audioURL.path,
             audioSeconds: audioSeconds,
             loadSeconds: loadSeconds,
@@ -172,6 +181,7 @@ struct ModelBenchmarkReport: Codable {
     let modelSizeMB: Int
     let noteMode: Bool
     let vocabularyTerms: Int
+    let snippets: Int
     let audioPath: String
     let audioSeconds: Double
     let loadSeconds: Double

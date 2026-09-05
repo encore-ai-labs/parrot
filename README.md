@@ -67,6 +67,29 @@ words. To speak a command literally, prefix it with `literal`—for example, `li
 paragraph`. Normal dictation stays unchanged unless `--notes` is present. Formatted Markdown
 is what gets pasted and saved to local history.
 
+### Reusable voice snippets
+
+Save text or Markdown you type repeatedly, then insert it during either normal dictation or
+note mode with an explicit voice command:
+
+```sh
+parrot snippets add signature --text $'Thanks,\nParth'
+parrot snippets add "meeting notes" --file ~/Templates/meeting.md
+parrot snippets list
+parrot snippets show "meeting notes"
+parrot snippets remove signature
+```
+
+Say **“insert snippet meeting notes”** to paste the saved template. Say **“literal insert
+snippet meeting notes”** when you want those words instead of an expansion. Expansion is a
+single deterministic pass: snippet bodies retain their exact capitalization and Markdown,
+and a command inside a body cannot trigger another snippet.
+
+Snippets stay in `~/.config/parrot/snippets.json` with user-only permissions (`0600`). Only
+the four most recently added trigger phrases may enter Whisper's fixed prompt budget; snippet
+bodies never enter model context and nothing is sent over the network. Restart a running
+daemon after changing snippets.
+
 ### Transcript history
 
 Successful dictations are also appended to daily Markdown files under
@@ -190,8 +213,9 @@ parrot models benchmark whisper-base.en \
 
 Parrot reports model-load time, every inference time, median latency, and real-time factor
 (RTF; lower is faster). With a reference it also reports word-error rate (WER; lower is more
-accurate). The benchmark uses your saved vocabulary by default; pass `--no-vocabulary` for a
-clean model comparison or `--notes` to benchmark the complete local note-formatting path.
+accurate). The benchmark uses your saved vocabulary and snippets by default; pass
+`--no-vocabulary` and `--no-snippets` for a clean model comparison, or `--notes` to benchmark
+the complete local note-formatting path.
 Use `--json` to save comparable machine-readable reports. Download each candidate first with
 `parrot models download <id>` so network time is not included in model-load time.
 
@@ -241,6 +265,8 @@ parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones
 parrot vocabulary                      # list personal recognition hints/replacements
 parrot vocabulary add "rust pond" --as RustPond
+parrot snippets                        # list reusable local voice snippets
+parrot snippets add meeting --file template.md
 parrot history                         # list recent local transcripts
 parrot history search project roadmap # search private Markdown history
 parrot history copy                    # recover the latest transcript to clipboard

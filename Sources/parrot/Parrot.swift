@@ -11,7 +11,8 @@ struct Parrot: ParsableCommand {
         version: AppVersion.current,
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
-            Hotkeys.self, Devices.self, Vocabulary.self, History.self, Install.self, Update.self,
+            Hotkeys.self, Devices.self, Vocabulary.self, Snippets.self,
+            History.self, Install.self, Update.self,
         ],
         defaultSubcommand: Run.self
     )
@@ -314,10 +315,22 @@ struct Run: ParsableCommand {
             ))
             vocabulary = PersonalVocabulary()
         }
+        let snippets: SnippetLibrary
+        do {
+            snippets = try SnippetLibrary.load()
+        } catch {
+            FileHandle.standardError.write(Data(
+                "warning: couldn't load snippets: \(error.localizedDescription)\n".utf8
+            ))
+            snippets = SnippetLibrary()
+        }
+        let snippetExpander = SnippetExpander(entries: snippets.entries)
+        let additionalPromptTerms = (noteMode ? NoteFormatter.promptTerms : [])
+            + snippets.promptTerms
         let transcriber = WhisperKitTranscriber(
             model: chosenModel,
             vocabulary: vocabulary,
-            additionalPromptTerms: noteMode ? NoteFormatter.promptTerms : []
+            additionalPromptTerms: additionalPromptTerms
         )
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
@@ -415,7 +428,8 @@ struct Run: ParsableCommand {
                 do {
                     let raw = try await transcriber.transcribe(samples)
                     let formatted = noteMode ? NoteFormatter.format(raw) : raw
-                    let text = lowercaseMode ? formatted.lowercased() : formatted
+                    let cased = lowercaseMode ? formatted.lowercased() : formatted
+                    let text = snippetExpander.applying(to: cased)
                     let elapsed = Date().timeIntervalSince(started)
                     FileHandle.standardError.write(Data(
                         String(format: "→ %.2fs · %@\n", elapsed, text).utf8
@@ -528,6 +542,7 @@ struct Run: ParsableCommand {
             microphone: micName,
             mode: noteMode ? "notes" : "dictation",
             vocabularyCount: vocabulary.entries.count,
+            snippetCount: snippets.entries.count,
             historyPath: historyPath,
             systemHotkeyAction: systemHotkeyAction
         ))

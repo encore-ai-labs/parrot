@@ -202,6 +202,18 @@ application, or make a network request. The command phrases are included in Whis
 96-token prompt budget only when note mode is active, improving their recognition without an
 unbounded latency cost.
 
+### `SnippetLibrary` / `SnippetExpander`
+
+Reusable multiline text lives in owner-readable `~/.config/parrot/snippets.json`. The explicit
+phrase `insert snippet <trigger>` expands after note and lowercase formatting, which preserves
+the body byte-for-byte while still formatting surrounding dictation. `literal insert snippet
+<trigger>` escapes expansion. The compiled matcher scans the original transcript once and
+applies replacements back-to-front, so inserted bodies cannot cascade into other snippets.
+
+Only the four newest command phrases—not their bodies—are eligible for Whisper's fixed prompt
+budget. Every saved trigger remains available to the deterministic expander. This keeps startup
+and per-dictation costs bounded even when the local library grows large.
+
 ### `TranscriptHistory`
 
 Successful, non-empty transcripts are appended to one Markdown file per local calendar day
@@ -345,9 +357,10 @@ Models currently live in `~/Documents/huggingface/` (WhisperKit's default). Not 
 9. `AudioCapture` stops, hands buffer to active `Transcriber`.
 10. `Transcriber` runs CoreML inference. Returns string.
 11. If `--notes` is active, `NoteFormatter` applies explicit Markdown structure commands.
-12. `TextInjector` posts the string at the cursor and `TranscriptHistory` saves it locally.
-13. Overlay hides. Status: `listening`. Loop.
-14. User hits `^C`. Process exits cleanly.
+12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies.
+13. `TextInjector` posts the string at the cursor and `TranscriptHistory` saves it locally.
+14. Overlay hides. Status: `listening`. Loop.
+15. User hits `^C`. Process exits cleanly.
 
 End-to-end latency target: <500 ms after hotkey release for utterances under 10 seconds, on Apple Silicon.
 

@@ -8,6 +8,7 @@ enum StartupTUI {
         let microphone: String
         let mode: String
         let vocabularyCount: Int
+        let snippetCount: Int
         let historyPath: String?
         let systemHotkeyAction: String?
     }
@@ -34,6 +35,7 @@ enum StartupTUI {
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
                 " · mic: \(details.microphone) · mode: \(details.mode)" +
                 " · vocabulary: \(details.vocabularyCount)" +
+                " · snippets: \(details.snippetCount)" +
                 "\(history)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
@@ -54,6 +56,10 @@ enum StartupTUI {
             ? "1 term"
             : "\(details.vocabularyCount) terms  (parrot vocabulary)"
         write(row("vocabulary", vocabulary))
+        let snippets = details.snippetCount == 1
+            ? "1 snippet"
+            : "\(details.snippetCount) snippets  (parrot snippets)"
+        write(row("snippets", snippets))
         write(row("history", history))
         write(row("updates", "checking…"))
         write("\n  " + green("● ready") + dim("  ·  ^C to quit") + "\n\n")

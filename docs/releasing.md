@@ -136,6 +136,7 @@ and org membership.
   macOS revokes the Accessibility grant on **every update** — after upgrading, users must
   re-toggle parrot in System Settings → Privacy & Security → Accessibility. A Developer ID
   identity is available; wiring it in removes this entirely.
-- **`--launch-at-login`.** Don't recommend it until signing lands. Under `launchd` parrot gets
-  its own TCC identity instead of inheriting the terminal's, and with `KeepAlive` set, a
-  missing permission becomes a silent 10-second relaunch loop (roadmap 5.4).
+- **`--launch-at-login`.** Lifecycle controls, single-instance locking, private logs, explicit
+  bootstrap errors, and a 30-second failure throttle are implemented. Don't recommend it until
+  signing lands: under `launchd` Parrot still gets its own TCC identity, and an updated ad-hoc
+  binary can lose its Accessibility grant.

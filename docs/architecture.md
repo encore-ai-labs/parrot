@@ -227,6 +227,19 @@ note bodies containing arbitrary Markdown headings. A compatibility parser reads
 from older releases. `parrot history` exposes recent listing, local full-text search, exact show,
 latest-text output for pipes, clipboard recovery, and the underlying directory path.
 
+### Daemon lifecycle and logs
+
+An advisory lock at `~/.config/parrot/daemon.lock` is held for the process lifetime, preventing
+a foreground invocation and LaunchAgent from both owning the global hotkey and microphone.
+The LaunchAgent keeps operational stdout/stderr under `~/Library/Logs/Parrot/` with directory
+mode `0700` and file mode `0600`; normal completion logs include latency and character count,
+not transcript text. Oversized inherited logs are capped at 5 MiB on launch. `--log-transcripts`
+is an explicit privacy-sensitive debugging opt-in.
+
+`parrot daemon status|start|stop|restart|logs` wraps the user launchd domain. The existing
+`com.digimata.parrot` label is retained for upgrade compatibility, bootstrap errors are fatal
+to installation, and failed launches are throttled to 30 seconds.
+
 ### `RecordingOverlay`
 
 A single borderless `NSWindow` displayed at the bottom-center of the active screen while recording. Provides visual feedback that the mic is hot — the only piece of UI in the app.
@@ -389,7 +402,11 @@ parrot/
     Parrot.swift                # entry point, subcommands, the product loop
     Doctor.swift                # permission + Fn-mapping checks
     Setup.swift                 # interactive first-run permission grant
-    Install.swift               # LaunchAgent write/remove
+    Install.swift               # LaunchAgent CLI lifecycle controls
+
+    Daemon/
+      DaemonLock.swift          # cross-process hotkey/mic ownership lock
+      LaunchAgentManager.swift  # private logs and launchctl management
 
     Transcription/
       Transcriber.swift         # protocol (decorative for now — see roadmap 6.5)

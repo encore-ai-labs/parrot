@@ -1,11 +1,8 @@
 import ArgumentParser
 import Foundation
 
-/// Manage parrot's LaunchAgent so the daemon starts at login.
-///
-/// We deliberately do NOT use SMAppService.mainApp here — that requires a full
-/// .app bundle. Since parrot ships as a single binary in /usr/local/bin, a
-/// plain LaunchAgent plist is the simpler, more honest mechanism.
+/// Backwards-compatible install surface. The `parrot daemon` command exposes
+/// the rest of the lifecycle without asking users to memorize launchctl.
 struct Install: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Install or remove the launch-at-login LaunchAgent."
@@ -19,121 +16,103 @@ struct Install: ParsableCommand {
 
     func run() throws {
         if launchAtLogin == uninstall {
-            FileHandle.standardError.write(Data(
-                "specify exactly one of --launch-at-login or --uninstall\n".utf8
-            ))
-            throw ExitCode(64)
+            throw ValidationError("specify exactly one of --launch-at-login or --uninstall")
         }
 
+        let manager = LaunchAgentManager()
         if uninstall {
-            try removeAgent()
+            if try manager.uninstall() {
+                print("✓ launch-at-login removed")
+                print("  logs preserved at \(manager.logDirectory.path)")
+            } else {
+                print("nothing to remove (no agent at \(manager.plistURL.path))")
+            }
         } else {
-            try writeAgent()
+            try manager.install()
+            print("✓ launch-at-login installed and started")
+            print("  plist: \(manager.plistURL.path)")
+            print("  logs:  \(manager.logDirectory.path)")
+        }
+    }
+}
+
+struct Daemon: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "daemon",
+        abstract: "Manage the background launch-at-login daemon.",
+        subcommands: [Status.self, Start.self, Stop.self, Restart.self, Logs.self]
+    )
+
+    struct Status: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Show daemon status.")
+
+        func run() {
+            let manager = LaunchAgentManager()
+            let status = manager.status()
+            print("installed: \(status.installed ? "yes" : "no")")
+            print("loaded:    \(status.loaded ? "yes" : "no")")
+            print("state:     \(status.state ?? "stopped")")
+            if let pid = status.pid { print("pid:       \(pid)") }
+            if let code = status.lastExitCode { print("last exit: \(code)") }
+            print("logs:      \(manager.logDirectory.path)")
         }
     }
 
-    // MARK: -
+    struct Start: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Start the installed daemon.")
 
-    private static let label = "com.digimata.parrot"
-
-    private var plistURL: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home
-            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
-            .appendingPathComponent("\(Self.label).plist")
-    }
-
-    private func writeAgent() throws {
-        let binary = try resolveBinaryPath()
-
-        let plist: [String: Any] = [
-            "Label": Self.label,
-            "ProgramArguments": [binary, "run", "--skip-doctor"],
-            "RunAtLoad": true,
-            "KeepAlive": ["SuccessfulExit": false] as [String: Any],
-            "ProcessType": "Interactive",
-            "StandardOutPath": "/tmp/parrot.out.log",
-            "StandardErrorPath": "/tmp/parrot.err.log",
-        ]
-
-        let url = plistURL
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let data = try PropertyListSerialization.data(
-            fromPropertyList: plist,
-            format: .xml,
-            options: 0
-        )
-        try data.write(to: url, options: .atomic)
-
-        // Best-effort bootstrap; ignore failure if already loaded.
-        _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
-        let result = runLaunchctl(["bootstrap", "gui/\(uid())", url.path])
-        if result.status != 0 {
-            FileHandle.standardError.write(Data(
-                "warning: launchctl bootstrap exited \(result.status):\n\(result.stderr)\n".utf8
-            ))
-        }
-
-        print("✓ launch-at-login installed")
-        print("  plist:  \(url.path)")
-        print("  binary: \(binary)")
-        print("  logs:   /tmp/parrot.out.log, /tmp/parrot.err.log")
-    }
-
-    private func removeAgent() throws {
-        let url = plistURL
-        if FileManager.default.fileExists(atPath: url.path) {
-            _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
-            try FileManager.default.removeItem(at: url)
-            print("✓ launch-at-login removed")
-        } else {
-            print("nothing to remove (no agent at \(url.path))")
+        func run() throws {
+            try LaunchAgentManager().start()
+            print("✓ daemon started")
         }
     }
 
-    private func resolveBinaryPath() throws -> String {
-        // /usr/local/bin/parrot is the canonical install path. Honor a real
-        // location if running from elsewhere (e.g. dev).
-        let candidate = "/usr/local/bin/parrot"
-        if FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
+    struct Stop: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Stop the daemon.")
+
+        func run() throws {
+            if try LaunchAgentManager().stop() {
+                print("✓ daemon stopped")
+            } else {
+                print("daemon is already stopped")
+            }
         }
-        // Fall back to the running executable's resolved path.
-        let argv0 = CommandLine.arguments.first ?? "parrot"
-        if argv0.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: argv0) {
-            FileHandle.standardError.write(Data(
-                "note: /usr/local/bin/parrot not found; using \(argv0)\n".utf8
-            ))
-            return argv0
-        }
-        FileHandle.standardError.write(Data(
-            "couldn't locate the parrot binary. install it to /usr/local/bin/parrot first.\n".utf8
-        ))
-        throw ExitCode(1)
     }
 
-    private func uid() -> uid_t { getuid() }
+    struct Restart: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Restart the installed daemon.")
 
-    private func runLaunchctl(_ args: [String]) -> (status: Int32, stderr: String) {
-        let task = Process()
-        task.launchPath = "/bin/launchctl"
-        task.arguments = args
-        let errPipe = Pipe()
-        task.standardError = errPipe
-        task.standardOutput = Pipe()
-        do {
-            try task.run()
-        } catch {
-            return (-1, "\(error)")
+        func run() throws {
+            try LaunchAgentManager().restart()
+            print("✓ daemon restarted")
         }
-        task.waitUntilExit()
-        let err = String(
-            data: errPipe.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8
-        ) ?? ""
-        return (task.terminationStatus, err)
+    }
+
+    struct Logs: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Show recent private daemon logs.")
+
+        @Option(name: .shortAndLong, help: "Number of lines from each log (1...1000).")
+        var lines: Int = 80
+
+        func validate() throws {
+            guard (1...1000).contains(lines) else {
+                throw ValidationError("--lines must be between 1 and 1000")
+            }
+        }
+
+        func run() {
+            let manager = LaunchAgentManager()
+            let logs = manager.logTail(lineCount: lines)
+            guard !logs.isEmpty else {
+                print("no daemon logs yet")
+                print("expected in \(manager.logDirectory.path)")
+                return
+            }
+            for (index, log) in logs.enumerated() {
+                if index > 0 { print() }
+                print("==> \(log.0.path) <==")
+                print(log.1)
+            }
+        }
     }
 }

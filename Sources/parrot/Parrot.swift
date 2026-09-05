@@ -12,7 +12,7 @@ struct Parrot: ParsableCommand {
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
             Hotkeys.self, Devices.self, Vocabulary.self, Snippets.self,
-            History.self, Install.self, Update.self,
+            History.self, Install.self, Daemon.self, Update.self,
         ],
         defaultSubcommand: Run.self
     )
@@ -139,6 +139,12 @@ struct Run: ParsableCommand {
     var noHistory: Bool = false
 
     @Flag(
+        name: .long,
+        help: "Print transcript text to stderr. This may expose private dictation in logs."
+    )
+    var logTranscripts: Bool = false
+
+    @Flag(
         name: [.customLong("notes"), .customLong("note-mode")],
         help: "Format explicit spoken commands into Markdown notes, entirely on-device."
     )
@@ -151,12 +157,21 @@ struct Run: ParsableCommand {
     var waitForPID: Int32?
 
     func run() throws {
+        LaunchAgentManager.trimInheritedLogsIfNeeded()
         if let waitForPID {
             // Used by the updater: don't initialize a second daemon until the
             // old executable has restored its Fn preference and fully exited.
             for _ in 0..<100 where kill(waitForPID, 0) == 0 {
                 usleep(100_000)
             }
+        }
+
+        let daemonLock: DaemonLock
+        do {
+            daemonLock = try DaemonLock.acquire()
+        } catch {
+            FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+            throw ExitCode(1)
         }
         StartupTUI.showLogo()
 
@@ -431,9 +446,10 @@ struct Run: ParsableCommand {
                     let cased = lowercaseMode ? formatted.lowercased() : formatted
                     let text = snippetExpander.applying(to: cased)
                     let elapsed = Date().timeIntervalSince(started)
-                    FileHandle.standardError.write(Data(
-                        String(format: "→ %.2fs · %@\n", elapsed, text).utf8
-                    ))
+                    let completionLog = logTranscripts
+                        ? String(format: "→ %.2fs · %@\n", elapsed, text)
+                        : String(format: "→ %.2fs · ", elapsed) + "\(text.count) chars\n"
+                    FileHandle.standardError.write(Data(completionLog.utf8))
                     if let history {
                         do {
                             _ = try await history.append(text)
@@ -620,7 +636,9 @@ struct Run: ParsableCommand {
                 FileHandle.standardError.write(Data("update check skipped for development build\n".utf8))
             }
         }
-        app.run()
+        withExtendedLifetime(daemonLock) {
+            app.run()
+        }
     }
 }
 

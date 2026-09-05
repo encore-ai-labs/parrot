@@ -278,12 +278,11 @@ compatibility key through the `__TEXT,__info_plist` section. This also removes a
 deprecation warning emitted while configuring a microphone-only capture session. Stable TCC
 grants still require the Developer ID signing work in 3.8.
 
-**3.10 — LaunchAgent can crash-loop invisibly.**
+**3.10 — LaunchAgent can crash-loop invisibly.** ✅ **HARDENED**
 
-`Install.swift:51-53` writes `ProgramArguments: [binary, "run", "--skip-doctor"]` with
-`KeepAlive: {SuccessfulExit: false}`. If accessibility is missing (see 3.8), `monitor.start`
-throws → `ExitCode(1)` → launchd relaunches → loop, throttled to 10 s, visible only in
-`/tmp/parrot.err.log`.
+Failed launches are now throttled to 30 seconds, install reports bootstrap errors, and
+`parrot daemon status|start|stop|restart|logs` makes the lifecycle observable. Stable signing
+is still required to prevent TCC permission loss after binary replacement (see 3.8).
 
 **3.11 — Multi-monitor: pill lands on the wrong screen.**
 
@@ -293,13 +292,12 @@ containing `NSEvent.mouseLocation`.
 
 ### P2 — privacy and first-run UX
 
-**3.12 — Every transcript is logged in plaintext, forever.**
+**3.12 — Every transcript is logged in plaintext, forever.** ✅ **FIXED**
 
-`Parrot.swift:139-141` writes the full transcript to stderr. Under the LaunchAgent that is
-`/tmp/parrot.err.log` — world-readable, never rotated. For a tool whose pitch is "on-device,
-audio never leaves the machine", a permanent plaintext log of everything the user has ever
-dictated is a real contradiction. Transcript text should be behind a `--verbose` flag, and
-the LaunchAgent should log somewhere under `~/Library/Logs` with rotation.
+Completion logs now contain latency and character count only. Full text requires the explicit
+privacy-sensitive `--log-transcripts` flag. LaunchAgent output moved to user-only files under
+`~/Library/Logs/Parrot/`, capped at 5 MiB on launch; legacy `/tmp/parrot.*.log` files are no
+longer written.
 
 **3.13 — First run looks hung.**
 

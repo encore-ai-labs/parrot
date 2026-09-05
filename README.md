@@ -125,7 +125,16 @@ That's it. There is no record button, no stop button, no "send" — the key is t
 > **Don't use `parrot install --launch-at-login` yet.** Under `launchd` parrot gets its own
 > TCC identity rather than inheriting your terminal's, and the binary is still ad-hoc signed
 > without a stable Developer ID identity. That can produce a silent relaunch loop after an
-> update revokes its permissions. A terminal tab is reliable today.
+> update revokes its permissions. A terminal tab is reliable today. The agent now throttles
+> failed launches and exposes its state and logs, but stable signing is still the prerequisite
+> for recommending it broadly.
+
+If you are testing launch-at-login, Parrot prevents a second foreground or background copy
+from claiming the mic and global hotkey at the same time. Operational logs are stored under
+`~/Library/Logs/Parrot/` with user-only permissions, capped on launch, and transcript text is
+omitted by default.
+Use `parrot daemon status`, `parrot daemon restart`, and `parrot daemon logs` to diagnose it;
+pass `--log-transcripts` only when you intentionally want dictated text in stderr or those logs.
 
 ### Choosing a microphone
 
@@ -257,6 +266,11 @@ parrot update                          # install the latest stable release
 parrot setup                           # one-time setup: permissions + model download
 parrot install --launch-at-login       # register a LaunchAgent (background daemon)
 parrot install --uninstall             # remove the LaunchAgent
+parrot daemon status                   # installed/loaded/running state and pid
+parrot daemon start                    # start an installed LaunchAgent
+parrot daemon stop                     # stop it without uninstalling it
+parrot daemon restart                  # restart it after configuration changes
+parrot daemon logs --lines 100         # inspect private operational logs
 parrot doctor                          # check permissions + fn key setting
 parrot models list                     # list available models
 parrot models download <id>            # pre-download a model

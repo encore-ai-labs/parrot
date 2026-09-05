@@ -7,6 +7,7 @@ enum StartupTUI {
         let model: String
         let microphone: String
         let historyPath: String?
+        let systemHotkeyAction: String?
     }
 
     private static let logo = #"""
@@ -26,9 +27,10 @@ enum StartupTUI {
     static func show(_ details: Details) {
         guard TerminalSelect.isAvailable else {
             let history = details.historyPath.map { " · history: \($0)" } ?? " · history: off"
+            let systemAction = details.systemHotkeyAction.map { " · \($0)" } ?? ""
             write(
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
-                " · mic: \(details.microphone)\(history) · ^C to quit\n"
+                " · mic: \(details.microphone)\(history)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
             return
@@ -38,6 +40,9 @@ enum StartupTUI {
         write("\n")
         write(row("version", details.version))
         write(row("hotkey", "\(details.hotkey)  ·  hold to talk / double-tap to lock"))
+        if let systemHotkeyAction = details.systemHotkeyAction {
+            write(row("macOS key", systemHotkeyAction))
+        }
         write(row("model", details.model))
         write(row("microphone", details.microphone))
         write(row("history", history))

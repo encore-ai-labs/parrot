@@ -31,6 +31,10 @@ enum Hotkey {
         }
     }
 
+    /// Only Fn/Globe has a separate macOS single-key action (emoji, input
+    /// source, or Apple Dictation) that can race Parrot's gesture handling.
+    var needsSystemActionDisabled: Bool { name == "fn" }
+
     /// True when the tap needs `keyDown`/`keyUp` in its event mask. Modifiers
     /// only need `flagsChanged`, and subscribing to less means we aren't copying
     /// every keystroke on the system.

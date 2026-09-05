@@ -13,8 +13,9 @@ set -euo pipefail
 
 REPO="encore-ai-labs/parrot"
 BIN_NAME="parrot"
-INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR="${PARROT_INSTALL_DIR:-/usr/local/bin}"
 ASSET="parrot-macos-arm64.tar.gz"
+CHECKSUM="${ASSET}.sha256"
 
 red()    { printf "\033[31m%s\033[0m\n" "$*" >&2; }
 green()  { printf "\033[32m%s\033[0m\n" "$*"; }
@@ -33,7 +34,7 @@ if [ "$ARCH" != "arm64" ]; then
     exit 1
 fi
 
-for cmd in curl tar; do
+for cmd in curl tar shasum; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         red "missing dependency: $cmd"
         exit 1
@@ -54,6 +55,7 @@ fi
 dim "  ${TAG}"
 
 URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
+CHECKSUM_URL="https://github.com/${REPO}/releases/download/${TAG}/${CHECKSUM}"
 
 # 3. download + extract
 TMP=$(mktemp -d)
@@ -61,6 +63,10 @@ trap 'rm -rf "$TMP"' EXIT
 
 dim "→ downloading ${ASSET}..."
 curl -fsSL "$URL" -o "$TMP/${ASSET}"
+curl -fsSL "$CHECKSUM_URL" -o "$TMP/${CHECKSUM}"
+
+dim "→ verifying SHA-256 checksum..."
+(cd "$TMP" && shasum -a 256 -c "$CHECKSUM")
 
 dim "→ extracting..."
 tar -xzf "$TMP/${ASSET}" -C "$TMP"
@@ -90,9 +96,11 @@ $SUDO mv "$TMP/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
 $SUDO chmod +x "${INSTALL_DIR}/${BIN_NAME}"
 
 green "✓ parrot ${TAG} installed at ${INSTALL_DIR}/${BIN_NAME}"
-echo
-echo "next:"
-echo "  parrot setup       # grant mic + accessibility"
-echo "  parrot hotkeys     # pick a push-to-talk key (fn only works on Apple keyboards)"
-echo "  parrot devices     # pick a mic — avoid Bluetooth if you listen to music"
-echo "  parrot             # run the daemon"
+if [ "${PARROT_UPDATE_MODE:-0}" != "1" ]; then
+    echo
+    echo "next:"
+    echo "  parrot setup       # grant mic + accessibility"
+    echo "  parrot hotkeys     # pick a push-to-talk key (fn only works on Apple keyboards)"
+    echo "  parrot devices     # pick a mic — avoid Bluetooth if you listen to music"
+    echo "  parrot             # run the daemon"
+fi

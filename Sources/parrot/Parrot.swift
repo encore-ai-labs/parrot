@@ -11,7 +11,7 @@ struct Parrot: ParsableCommand {
         version: AppVersion.current,
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
-            Hotkeys.self, Devices.self, Install.self,
+            Hotkeys.self, Devices.self, Install.self, Update.self,
         ],
         defaultSubcommand: Run.self
     )
@@ -140,7 +140,17 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Re-run first-time setup and overwrite saved preferences.")
     var reconfigure: Bool = false
 
+    @Option(name: .customLong("wait-for-pid"), help: .hidden)
+    var waitForPID: Int32?
+
     func run() throws {
+        if let waitForPID {
+            // Used by the updater: don't initialize a second daemon until the
+            // old executable has restored its Fn preference and fully exited.
+            for _ in 0..<100 where kill(waitForPID, 0) == 0 {
+                usleep(100_000)
+            }
+        }
         StartupTUI.showLogo()
 
         let chosenHotkey: Hotkey
@@ -155,8 +165,35 @@ struct Run: ParsableCommand {
             chosenHotkey = .default
         }
 
+        let fnSystemAction: FnSystemActionOverride?
+        if chosenHotkey.needsSystemActionDisabled {
+            do {
+                fnSystemAction = try FnSystemActionOverride()
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "couldn't disable macOS's Fn/Globe action: \(error.localizedDescription)\n".utf8
+                ))
+                FileHandle.standardError.write(Data(
+                    "set System Settings → Keyboard → Press 🌐 key to → Do Nothing\n".utf8
+                ))
+                throw ExitCode(1)
+            }
+        } else {
+            fnSystemAction = nil
+        }
+        let restoreFnSystemAction = {
+            do {
+                try fnSystemAction?.restore()
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "warning: couldn't restore your macOS Fn/Globe action: \(error.localizedDescription)\n".utf8
+                ))
+            }
+        }
+        defer { restoreFnSystemAction() }
+
         if !skipDoctor {
-            let checks = DoctorReport.run()
+            let checks = DoctorReport.run(includeFnKeyMapping: chosenHotkey.needsSystemActionDisabled)
             if !DoctorReport.allOK(checks) {
                 FileHandle.standardError.write(Data("startup checks failed:\n".utf8))
                 DoctorReport.print(checks)
@@ -281,6 +318,18 @@ struct Run: ParsableCommand {
 
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
+        // `NSApp.terminate` ends the process from inside AppKit and does not
+        // unwind this command's stack, so `defer` alone cannot restore the
+        // preference on a normal quit. Keep the defer for startup failures and
+        // also restore from AppKit's guaranteed clean-termination hook.
+        let terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: app,
+            queue: .main
+        ) { _ in
+            restoreFnSystemAction()
+        }
+        defer { NotificationCenter.default.removeObserver(terminationObserver) }
 
         let monitor = HotkeyMonitor(hotkey: chosenHotkey, debug: debugHotkey)
         let capture = AudioCapture(device: chosenDevice, usePreRoll: !coldMic)
@@ -407,38 +456,104 @@ struct Run: ParsableCommand {
             throw ExitCode(1)
         }
 
-        let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-        sigint.setEventHandler {
+        let shutDown = {
             FileHandle.standardError.write(Data("\nshutting down\n".utf8))
             monitor.stop()
             NSApp.terminate(nil)
         }
+        let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        sigint.setEventHandler(handler: shutDown)
         sigint.resume()
         signal(SIGINT, SIG_IGN)
+        let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        sigterm.setEventHandler(handler: shutDown)
+        sigterm.resume()
+        signal(SIGTERM, SIG_IGN)
 
         let micName = chosenDevice?.name ?? "system default"
         let historyPath = noHistory
             ? nil
             : StartupTUI.displayPath(TranscriptHistory.fileURL())
+        let systemHotkeyAction: String?
+        switch fnSystemAction?.state {
+        case .disabledForParrot:
+            systemHotkeyAction = "Fn/Globe action disabled while Parrot runs"
+        case .alreadyDisabled:
+            systemHotkeyAction = "Fn/Globe action already set to Do Nothing"
+        case nil:
+            systemHotkeyAction = nil
+        }
         StartupTUI.show(.init(
             version: AppVersion.current,
             hotkey: chosenHotkey.name,
             model: chosenModel.id,
             microphone: micName,
-            historyPath: historyPath
+            historyPath: historyPath,
+            systemHotkeyAction: systemHotkeyAction
         ))
+        var updateInProgress = false
+        let beginUpdate: (AvailableUpdate) -> Void = { update in
+            guard !updateInProgress else { return }
+            updateInProgress = true
+            MainActor.assumeIsolated {
+                menuBar.setUpdating(update.version)
+            }
+            FileHandle.standardError.write(Data("updating Parrot to \(update.version)…\n".utf8))
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try UpdateInstaller.installLatest()
+                    try UpdateInstaller.relaunchCurrentDaemonAfterExit()
+                    FileHandle.standardError.write(Data(
+                        "✓ update installed — restarting Parrot\n".utf8
+                    ))
+                    DispatchQueue.main.async {
+                        NSApp.terminate(nil)
+                    }
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "update failed: \(error.localizedDescription)\n".utf8
+                    ))
+                    DispatchQueue.main.async {
+                        updateInProgress = false
+                        menuBar.setUpdateFailed(update.version)
+                    }
+                }
+            }
+        }
         UpdateChecker.check { result in
             switch result {
             case .updateAvailable(let update):
                 FileHandle.standardError.write(Data("""
                 update available: \(AppVersion.current) → \(update.version)
                 release: \(update.releaseURL.absoluteString)
-                update with:
-                  \(UpdateChecker.updateCommand)
+                run `parrot update`, choose Update below, or use the menu-bar item.
 
                 """.utf8))
-                DispatchQueue.main.async {
-                    menuBar.setUpdateAvailable(update.version)
+                if TerminalSelect.isAvailable {
+                    let accepted = TerminalSelect.confirm(
+                        title: "Parrot \(update.version) is available",
+                        yes: .init(label: "Update and restart", detail: "recommended"),
+                        no: .init(label: "Not now", detail: "ask again next launch"),
+                        defaultYes: false
+                    )
+                    if accepted == true {
+                        DispatchQueue.main.async {
+                            beginUpdate(update)
+                        }
+                    } else {
+                        DispatchQueue.main.async {
+                            menuBar.setUpdateAvailable(update.version) {
+                                beginUpdate(update)
+                            }
+                        }
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        menuBar.setUpdateAvailable(update.version) {
+                            beginUpdate(update)
+                        }
+                    }
                 }
             case .upToDate(let version):
                 FileHandle.standardError.write(Data("✓ parrot \(version) is up to date\n".utf8))

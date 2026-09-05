@@ -11,6 +11,7 @@ final class MenuBarController {
     private let updateLabel: NSMenuItem
     private let modelID: String
     private let idleTitle: String
+    private var updateAction: (() -> Void)?
 
     init(modelID: String, hotkeyName: String) {
         self.modelID = modelID
@@ -55,9 +56,23 @@ final class MenuBarController {
         stateLabel.title = "transcribing…"
     }
 
-    func setUpdateAvailable(_ version: String) {
-        updateLabel.title = "update available: \(version) · rerun installer"
+    func setUpdateAvailable(_ version: String, action: @escaping () -> Void) {
+        updateAction = action
+        updateLabel.title = "Update Parrot to \(version)…"
+        updateLabel.target = self
+        updateLabel.action = #selector(updateClicked)
+        updateLabel.isEnabled = true
         updateLabel.isHidden = false
+    }
+
+    func setUpdating(_ version: String) {
+        updateLabel.title = "Updating to \(version)…"
+        updateLabel.isEnabled = false
+    }
+
+    func setUpdateFailed(_ version: String) {
+        updateLabel.title = "Update failed · try Parrot \(version) again…"
+        updateLabel.isEnabled = true
     }
 
     private func configureButton(recording: Bool) {
@@ -93,5 +108,9 @@ final class MenuBarController {
 
     @objc private func quitClicked() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func updateClicked() {
+        updateAction?()
     }
 }

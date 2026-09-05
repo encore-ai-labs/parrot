@@ -18,9 +18,10 @@ Or build it yourself — see [Build from source](#build-from-source).
 The installer drops the binary in `/usr/local/bin/parrot`. Builds are unsigned for now, so the installer strips the quarantine xattr — once you've inspected the script you'll see exactly what it does.
 
 On each launch, release builds check GitHub for a newer stable release without delaying
-startup. If one is available, parrot prints the installer command and adds an update notice
-to its menu-bar menu. Otherwise it explicitly reports that the installed release is current;
-network failures are reported without affecting startup and retried on the next launch.
+startup. Interactive launches offer to update and restart in place; the menu-bar menu also
+gets an **Update Parrot…** action. You can update directly at any time with `parrot update`.
+Downloaded release archives are checked against their published SHA-256 checksum before
+installation. Network failures do not affect startup and are retried on the next launch.
 
 ## How to use
 
@@ -29,6 +30,11 @@ network failures are reported without affecting startup and retried on the next 
 2. **Click into the text field you want to dictate into** — Messages, the address bar, a Slack thread, anywhere a cursor blinks.
 3. **Hold your push-to-talk key, speak, release.** A small pill appears at the bottom of the screen while the mic is hot.
 4. **The transcript types itself in at the cursor** when you release. Usually within 200-300ms.
+
+When Fn/Globe is selected, Parrot temporarily changes macOS's bare Fn action to
+**Do Nothing** while the daemon is running. That prevents the emoji picker, input-source
+switcher, or Apple Dictation from racing Parrot. Your previous setting is restored on a
+normal quit. Other hotkeys do not change this system preference.
 
 For hands-free dictation, quickly double-tap the push-to-talk key. Recording stays on after
 the second release; press Return, any other ordinary key, or the push-to-talk key again to
@@ -141,6 +147,7 @@ For anything else, find its keycode with `parrot run --debug-hotkey`, then pass
 ```sh
 parrot                                 # run in the foreground (^C to quit)
 parrot --version                       # show the installed release version
+parrot update                          # install the latest stable release
 parrot setup                           # one-time setup: permissions + model download
 parrot install --launch-at-login       # register a LaunchAgent (background daemon)
 parrot install --uninstall             # remove the LaunchAgent

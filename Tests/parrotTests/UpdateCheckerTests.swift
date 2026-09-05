@@ -25,4 +25,14 @@ final class UpdateCheckerTests: XCTestCase {
         XCTAssertFalse(UpdateChecker.isNewer("latest", than: "0.3.0"))
         XCTAssertFalse(UpdateChecker.isNewer("v0.4.0", than: "development"))
     }
+
+    func testRestartPreservesDaemonArgumentsAndWaitsForOldProcess() {
+        XCTAssertEqual(
+            UpdateInstaller.restartArguments(
+                currentArguments: ["/usr/local/bin/parrot", "run", "--hotkey", "right-option"],
+                waitingFor: 1234
+            ),
+            ["run", "--hotkey", "right-option", "--wait-for-pid", "1234"]
+        )
+    }
 }

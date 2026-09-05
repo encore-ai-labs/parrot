@@ -19,9 +19,6 @@ enum UpdateCheckResult: Equatable {
 }
 
 enum UpdateChecker {
-    static let updateCommand =
-        "curl -fsSL https://raw.githubusercontent.com/encore-ai-labs/parrot/master/scripts/install.sh | sh"
-
     private static let latestReleaseURL = URL(
         string: "https://api.github.com/repos/encore-ai-labs/parrot/releases/latest"
     )!

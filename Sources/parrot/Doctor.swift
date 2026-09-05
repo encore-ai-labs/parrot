@@ -16,12 +16,15 @@ struct Check {
 }
 
 enum DoctorReport {
-    static func run() -> [Check] {
-        [
+    static func run(includeFnKeyMapping: Bool = true) -> [Check] {
+        var checks = [
             checkMicrophone(),
             checkAccessibility(),
-            checkFnKeyMapping(),
         ]
+        if includeFnKeyMapping {
+            checks.append(checkFnKeyMapping())
+        }
+        return checks
     }
 
     static func checkMicrophone() -> Check {

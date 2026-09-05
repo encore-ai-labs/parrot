@@ -24,6 +24,22 @@ struct UsageSummary: Codable, Equatable {
     let estimatedTypingSeconds: TimeInterval
     let estimatedTimeSavedSeconds: TimeInterval?
     let assumedTypingWPM: Double
+    let models: [ModelUsageSummary]
+    let modes: [ModeUsageSummary]
+}
+
+struct ModelUsageSummary: Codable, Equatable {
+    let modelID: String
+    let dictations: Int
+    let measuredDictations: Int
+    let voiceSeconds: TimeInterval
+    let processingSeconds: TimeInterval
+    let processingRealtimeFactor: Double?
+}
+
+struct ModeUsageSummary: Codable, Equatable {
+    let mode: DictationMode
+    let dictations: Int
 }
 
 enum UsageStats {
@@ -60,6 +76,38 @@ enum UsageStats {
 
         let safeTypingWPM = max(1, typingWPM)
         let measuredTypingSeconds = Double(measuredWords) / safeTypingWPM * 60
+        let models = Dictionary(grouping: filtered.compactMap { record in
+            record.modelID.map { ($0, record) }
+        }, by: { $0.0 })
+        .map { modelID, pairs -> ModelUsageSummary in
+            let records = pairs.map(\.1)
+            let measured = records.compactMap { record -> (TimeInterval, TimeInterval)? in
+                guard let audio = record.audioDuration,
+                      let processing = record.processingDuration,
+                      audio.isFinite, processing.isFinite,
+                      audio > 0, processing >= 0
+                else { return nil }
+                return (audio, processing)
+            }
+            let voice = measured.reduce(0) { $0 + $1.0 }
+            let processing = measured.reduce(0) { $0 + $1.1 }
+            return ModelUsageSummary(
+                modelID: modelID,
+                dictations: records.count,
+                measuredDictations: measured.count,
+                voiceSeconds: voice,
+                processingSeconds: processing,
+                processingRealtimeFactor: voice > 0 ? processing / voice : nil
+            )
+        }
+        .sorted {
+            if $0.dictations != $1.dictations { return $0.dictations > $1.dictations }
+            return $0.modelID < $1.modelID
+        }
+        let modes = DictationMode.allCases.compactMap { mode -> ModeUsageSummary? in
+            let count = filtered.lazy.filter { $0.mode == mode }.count
+            return count > 0 ? ModeUsageSummary(mode: mode, dictations: count) : nil
+        }
         return UsageSummary(
             period: period,
             dictations: filtered.count,
@@ -84,7 +132,9 @@ enum UsageStats {
             estimatedTimeSavedSeconds: measuredDictations > 0
                 ? max(0, measuredTypingSeconds - voiceSeconds - processingSeconds)
                 : nil,
-            assumedTypingWPM: safeTypingWPM
+            assumedTypingWPM: safeTypingWPM,
+            models: models,
+            modes: modes
         )
     }
 

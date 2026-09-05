@@ -300,8 +300,8 @@ parrot --no-history
 
 `history export` turns all history, a day, week, month, custom inclusive date range, or local
 search result into one chronological note. Markdown is the readable default; JSON Lines includes
-stable IDs, ISO-8601 timestamps, final/original text, language, audio duration, processing
-duration, and real-time factor for local tools. Add `--original` to make recoverable
+stable IDs, ISO-8601 timestamps, final/original text, language, model, mode, audio duration,
+processing duration, and real-time factor for local tools. Add `--original` to make recoverable
 pre-processing recognition the primary text. Search matches both versions with the same
 case/diacritic-insensitive all-words behavior as `history search`.
 
@@ -492,7 +492,11 @@ snippets, history, journal delivery, and cursor insertion continue locally.
 event, or network request. It reports dictations, words, characters, active days, streaks, and
 the equivalent typing time. New entries also carry an invisible local timing marker, enabling
 actual voice time, speaking pace, transcription speed, and an estimated time saved; older
-history remains compatible and is included in every count.
+history remains compatible and is included in every count. New dictations also record the local
+model and effective workflow mode in that hidden marker, so the same command compares real-world
+real-time factor per model and shows how often dictation versus notes mode is used. This is private
+on-device measurement—not telemetry—and makes it practical to choose the fastest model on your
+own Mac instead of relying on somebody else's benchmark.
 
 ```sh
 parrot stats                         # all-time local summary

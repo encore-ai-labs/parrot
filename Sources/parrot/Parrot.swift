@@ -1032,6 +1032,8 @@ struct Run: ParsableCommand {
                                 audioDuration: seconds,
                                 processingDuration: elapsed,
                                 language: transcription.language,
+                                modelID: transcriber.modelID,
+                                mode: processed.mode,
                                 originalText: transcription.originalText
                             )
                         } catch {

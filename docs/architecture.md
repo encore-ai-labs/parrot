@@ -474,8 +474,8 @@ latest-text output for pipes, clipboard recovery, and the underlying directory p
 `parrot history export` selects entries under the same shared lock by local calendar period,
 inclusive date range, and/or all-word folded search, then reverses the normal newest-first reader
 order into a coherent chronology. Markdown groups entries by day without rewriting their bodies;
-JSON Lines carries stable IDs, both recoverable text forms, language, durations, and calculated
-real-time factor. Standard output contains document bytes only. File output reuses the atomic
+JSON Lines carries stable IDs, both recoverable text forms, language, model, effective mode,
+durations, and calculated real-time factor. Standard output contains document bytes only. File output reuses the atomic
 private transcript writer, refuses replacement without `--force`, and does not mutate history or
 audio. Selection/rendering is an explicit CLI operation and is absent from microphone, delivery,
 and inference paths.
@@ -489,11 +489,15 @@ the visible result, exposes decoded text through `show`, `last`, and `copy --ori
 both versions. Older and unchanged entries fall back to final text. The metadata shares its entry's
 private permissions, lock, retention, and `--no-history` behavior; it is never a separate store.
 
-New entries also include a hidden metrics comment with audio and transcription milliseconds
-and, when available, the recognized language code.
+New entries also include a hidden metrics comment with audio and transcription milliseconds,
+the registry model ID, the effective post-trigger mode, and, when available, the recognized
+language code. Metric values are bounded, token-safe identifiers so they cannot escape the hidden
+comment or corrupt the Markdown entry.
 `parrot stats` combines those measurements with localized word counts to report voice time,
-speaking pace, processing speed, and an optional typing-time comparison. Counts and streaks
-include old entries without timing metadata. All calculation reads the local Markdown directly;
+speaking pace, processing speed, per-model real-time factor, mode usage, and an optional
+typing-time comparison. A model comparison includes only captures with both valid audio and
+processing durations, preventing missing timings from looking artificially fast. Counts and
+streaks include old entries without metadata. All calculation reads the local Markdown directly;
 there is no telemetry store or network call.
 
 ### File transcription

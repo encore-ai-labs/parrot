@@ -5,6 +5,24 @@ struct TranscriptHistoryWrite: Equatable, Sendable {
     let fileURL: URL
 }
 
+enum HistoryMetricValue {
+    static func identifier(_ raw: String?) -> String? {
+        guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              value.count <= 128,
+              value.unicodeScalars.allSatisfy({ scalar in
+                  switch scalar.value {
+                  case 48...57, 65...90, 97...122, 45, 46, 95:
+                      return true
+                  default:
+                      return false
+                  }
+              })
+        else { return nil }
+        return value
+    }
+}
+
 /// Versioned, Markdown-hidden storage for the recognizer's original text.
 /// Base64 prevents dictated `-->` or newlines from escaping the comment.
 enum OriginalTranscriptMetadata {
@@ -99,6 +117,8 @@ actor TranscriptHistory {
         audioDuration: TimeInterval? = nil,
         processingDuration: TimeInterval? = nil,
         language: String? = nil,
+        modelID: String? = nil,
+        mode: DictationMode? = nil,
         originalText: String? = nil
     ) throws -> URL? {
         try appendEntry(
@@ -107,6 +127,8 @@ actor TranscriptHistory {
             audioDuration: audioDuration,
             processingDuration: processingDuration,
             language: language,
+            modelID: modelID,
+            mode: mode,
             originalText: originalText
         )?.fileURL
     }
@@ -119,6 +141,8 @@ actor TranscriptHistory {
         audioDuration: TimeInterval? = nil,
         processingDuration: TimeInterval? = nil,
         language: String? = nil,
+        modelID: String? = nil,
+        mode: DictationMode? = nil,
         originalText: String? = nil
     ) throws -> TranscriptHistoryWrite? {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -155,6 +179,12 @@ actor TranscriptHistory {
             if let language = language.flatMap(RecognitionLanguage.canonicalize),
                language != RecognitionLanguage.automatic {
                 metricFields.append("language=\(language)")
+            }
+            if let modelID = HistoryMetricValue.identifier(modelID) {
+                metricFields.append("model=\(modelID)")
+            }
+            if let mode {
+                metricFields.append("mode=\(mode.rawValue)")
             }
             let metrics = metricFields.isEmpty
                 ? ""

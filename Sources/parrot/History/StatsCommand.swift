@@ -72,6 +72,33 @@ struct Stats: ParsableCommand {
             print()
             print("Voice-time metrics begin with newly recorded dictations; older Markdown stays valid.")
         }
+
+        if !summary.models.isEmpty {
+            print()
+            print("Model performance")
+            for model in summary.models {
+                let count = "\(model.dictations) dictation\(plural(model.dictations))"
+                if let factor = model.processingRealtimeFactor {
+                    let coverage = model.measuredDictations == model.dictations
+                        ? ""
+                        : " · \(model.measuredDictations) timed"
+                    print(
+                        "  \(model.modelID)  \(count) · \(duration(model.voiceSeconds)) voice"
+                            + " · \(decimal(factor))× realtime\(coverage)"
+                    )
+                } else {
+                    print("  \(model.modelID)  \(count) · timing unavailable")
+                }
+            }
+        }
+
+        if !summary.modes.isEmpty {
+            print()
+            print("Workflow modes")
+            for mode in summary.modes {
+                print("  \(mode.mode.rawValue)  \(mode.dictations) dictation\(plural(mode.dictations))")
+            }
+        }
         print()
         print("Calculated locally from \(TranscriptHistory.defaultDirectory.path)")
     }

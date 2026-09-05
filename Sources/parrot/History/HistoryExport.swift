@@ -192,7 +192,9 @@ enum HistoryExporter {
                 audioSeconds: finiteNonnegative(record.audioDuration),
                 processingSeconds: finiteNonnegative(record.processingDuration),
                 realtimeFactor: realtimeFactor(record),
-                language: record.language
+                language: record.language,
+                model: record.modelID,
+                mode: record.mode?.rawValue
             )
             data.append(try encoder.encode(row))
             data.append(0x0A)
@@ -237,6 +239,8 @@ enum HistoryExporter {
         let processingSeconds: TimeInterval?
         let realtimeFactor: Double?
         let language: String?
+        let model: String?
+        let mode: String?
     }
 }
 

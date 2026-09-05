@@ -162,6 +162,20 @@ rendering the 295 matches as metadata-bearing JSON Lines averaged **49 ms** on t
 reads only daily Markdown files that can overlap a requested date period under one shared lock;
 rendering keeps no audio and makes no network or model request.
 
+## Real-world model evidence
+
+Synthetic samples are useful, but the most relevant speed evidence comes from the user's own
+microphone, note lengths, and Mac. Every newly delivered dictation therefore records its registry
+model ID, effective dictation/notes mode, audio duration, and processing duration inside the
+private Markdown entry. `parrot stats` groups those local measurements and reports aggregate
+real-time factor per model. Incomplete timings remain visible in dictation counts but are excluded
+from the speed denominator, so older or partial entries cannot make a model look artificially fast.
+
+This aggregation is an explicit CLI operation and adds no work to capture or inference beyond the
+small metadata fields already written with history. It reads no retained audio and makes no network
+request. The test harness groups and summarizes 5,000 mixed-model records to keep that analysis
+cost bounded as history grows; it averaged **100 ms** in the debug performance harness on this Mac.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

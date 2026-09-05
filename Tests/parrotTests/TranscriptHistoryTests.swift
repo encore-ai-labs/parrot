@@ -366,12 +366,15 @@ final class TranscriptHistoryTests: XCTestCase {
             at: date,
             audioDuration: 3.364,
             processingDuration: 0.084,
-            language: "Spanish"
+            language: "Spanish",
+            modelID: "whisper-base.en",
+            mode: .notes
         )
         let url = try XCTUnwrap(writtenURL)
         let markdown = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(markdown.contains(
-            "<!-- parrot-metrics: audio-ms=3364 processing-ms=84 language=es -->"
+            "<!-- parrot-metrics: audio-ms=3364 processing-ms=84 language=es "
+                + "model=whisper-base.en mode=notes -->"
         ))
 
         let record = try XCTUnwrap(
@@ -380,7 +383,33 @@ final class TranscriptHistoryTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(record.audioDuration), 3.364, accuracy: 0.0001)
         XCTAssertEqual(try XCTUnwrap(record.processingDuration), 0.084, accuracy: 0.0001)
         XCTAssertEqual(record.language, "es")
+        XCTAssertEqual(record.modelID, "whisper-base.en")
+        XCTAssertEqual(record.mode, .notes)
         XCTAssertEqual(record.text, "timed transcript")
+    }
+
+    func testRejectsUnsafeModelMetadataWithoutDroppingTranscript() async throws {
+        let directory = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let calendar = utcCalendar()
+        let store = TranscriptHistory(directory: directory, calendar: calendar)
+        let instant = try date(
+            year: 2024, month: 9, day: 5, hour: 12, calendar: calendar
+        )
+
+        _ = try await store.appendEntry(
+            "safe note",
+            at: instant,
+            modelID: "bad -->\n## injected",
+            mode: .dictation
+        )
+
+        let record = try XCTUnwrap(
+            TranscriptHistoryReader(directory: directory, calendar: calendar).all().first
+        )
+        XCTAssertEqual(record.text, "safe note")
+        XCTAssertNil(record.modelID)
+        XCTAssertEqual(record.mode, .dictation)
     }
 
     func testStoresOriginalRecognitionHiddenAndSearchableOnlyWhenDifferent() async throws {

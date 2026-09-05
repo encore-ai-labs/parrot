@@ -187,7 +187,9 @@ final class HistoryExportTests: XCTestCase {
             original: "Um, clean note",
             audio: 3.364,
             processing: 0.084,
-            language: "en"
+            language: "en",
+            model: "whisper-base.en",
+            mode: .notes
         )]
 
         let data = try HistoryExporter.render(
@@ -205,6 +207,8 @@ final class HistoryExportTests: XCTestCase {
         XCTAssertEqual(json["textSource"] as? String, "delivered")
         XCTAssertEqual(json["originalText"] as? String, "Um, clean note")
         XCTAssertEqual(json["language"] as? String, "en")
+        XCTAssertEqual(json["model"] as? String, "whisper-base.en")
+        XCTAssertEqual(json["mode"] as? String, "notes")
         XCTAssertEqual(try XCTUnwrap(json["realtimeFactor"] as? Double), 0.084 / 3.364, accuracy: 0.000_001)
 
         let recovered = try HistoryExporter.render(
@@ -279,7 +283,9 @@ final class HistoryExportTests: XCTestCase {
         original: String? = nil,
         audio: TimeInterval? = nil,
         processing: TimeInterval? = nil,
-        language: String? = nil
+        language: String? = nil,
+        model: String? = nil,
+        mode: DictationMode? = nil
     ) -> TranscriptRecord {
         TranscriptRecord(
             id: id,
@@ -289,7 +295,9 @@ final class HistoryExportTests: XCTestCase {
             fileURL: URL(fileURLWithPath: "/history/2024-09-04.md"),
             audioDuration: audio,
             processingDuration: processing,
-            language: language
+            language: language,
+            modelID: model,
+            mode: mode
         )
     }
 

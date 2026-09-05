@@ -29,19 +29,13 @@ struct HotkeyGesture {
         case latched
     }
 
-    static let defaultDoubleTapInterval: TimeInterval = 0.40
-    static let defaultMaximumTapDuration: TimeInterval = 0.22
+    static let defaultDoubleTapInterval: TimeInterval = 0.55
 
     private let doubleTapInterval: TimeInterval
-    private let maximumTapDuration: TimeInterval
     private var state: State = .idle
 
-    init(
-        doubleTapInterval: TimeInterval = Self.defaultDoubleTapInterval,
-        maximumTapDuration: TimeInterval = Self.defaultMaximumTapDuration
-    ) {
+    init(doubleTapInterval: TimeInterval = Self.defaultDoubleTapInterval) {
         self.doubleTapInterval = doubleTapInterval
-        self.maximumTapDuration = maximumTapDuration
     }
 
     mutating func handle(_ input: Input, at now: TimeInterval) -> [Effect] {
@@ -62,7 +56,7 @@ struct HotkeyGesture {
 
         case (.firstPress(let startedAt), .hotkeyReleased):
             let deadline = startedAt + doubleTapInterval
-            if now - startedAt <= maximumTapDuration, now < deadline {
+            if now < deadline {
                 state = .awaitingSecondPress(deadline: deadline)
                 effects.append(.scheduleTimeout(after: deadline - now))
             } else {
@@ -72,7 +66,7 @@ struct HotkeyGesture {
 
         case (.awaitingSecondPress, .hotkeyPressed):
             state = .secondPress
-            effects.append(contentsOf: [.cancelTimeout, .setLatched(true)])
+            effects.append(.cancelTimeout)
 
         case (.awaitingSecondPress(let deadline), .timeout):
             // Dispatch timers can occasionally wake early. Keep the original
@@ -82,6 +76,7 @@ struct HotkeyGesture {
 
         case (.secondPress, .hotkeyReleased):
             state = .latched
+            effects.append(.setLatched(true))
 
         case (.secondPress, .otherKeyPressed), (.latched, .otherKeyPressed),
              (.latched, .hotkeyPressed):

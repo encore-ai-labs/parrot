@@ -155,7 +155,7 @@ final class HotkeyMonitor {
 
         // The activation key itself remains under the primary monitor's
         // control, allowing one more press to end latched recording too.
-        if case .key(_, let hotkeyCode) = hotkey, keycode == hotkeyCode {
+        if keycode == hotkey.keyEventCode {
             return false
         }
 
@@ -172,6 +172,11 @@ final class HotkeyMonitor {
 
         guard type == .keyDown else { return false }
         guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return false }
+        if debug {
+            FileHandle.standardError.write(Data(
+                "  [debug] latched exit keycode=\(keycode)\n".utf8
+            ))
+        }
         swallowedExitKeyCode = keycode
         DispatchQueue.main.async { [weak self] in
             self?.onEvent?(.exitKeyPressed)

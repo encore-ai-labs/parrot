@@ -11,6 +11,13 @@ struct AvailableUpdate: Equatable {
     let releaseURL: URL
 }
 
+enum UpdateCheckResult: Equatable {
+    case updateAvailable(AvailableUpdate)
+    case upToDate(version: String)
+    case unavailable
+    case developmentBuild
+}
+
 enum UpdateChecker {
     static let updateCommand =
         "curl -fsSL https://raw.githubusercontent.com/encore-ai-labs/parrot/master/scripts/install.sh | sh"
@@ -31,10 +38,13 @@ enum UpdateChecker {
 
     /// Check once for each daemon launch. This is intentionally asynchronous:
     /// no network condition should delay or prevent dictation from starting.
-    /// Failures are silent because an unavailable update service is not an app
-    /// error and will naturally be retried on the next launch.
-    static func check(completion: @escaping (AvailableUpdate) -> Void) {
-        guard AppVersion.current != "development" else { return }
+    /// An unavailable update service is not an app error and will naturally be
+    /// retried on the next launch, but every result is reported to the user.
+    static func check(completion: @escaping (UpdateCheckResult) -> Void) {
+        guard AppVersion.current != "development" else {
+            completion(.developmentBuild)
+            return
+        }
 
         var request = URLRequest(url: latestReleaseURL, timeoutInterval: 4)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -45,11 +55,20 @@ enum UpdateChecker {
             guard let response = response as? HTTPURLResponse,
                   (200..<300).contains(response.statusCode),
                   let data,
-                  let release = try? JSONDecoder().decode(Release.self, from: data),
-                  isNewer(release.tagName, than: AppVersion.current)
-            else { return }
+                  let release = try? JSONDecoder().decode(Release.self, from: data)
+            else {
+                completion(.unavailable)
+                return
+            }
 
-            completion(AvailableUpdate(version: release.tagName, releaseURL: release.htmlURL))
+            if isNewer(release.tagName, than: AppVersion.current) {
+                completion(.updateAvailable(AvailableUpdate(
+                    version: release.tagName,
+                    releaseURL: release.htmlURL
+                )))
+            } else {
+                completion(.upToDate(version: AppVersion.current))
+            }
         }.resume()
     }
 

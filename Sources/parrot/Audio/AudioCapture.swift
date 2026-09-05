@@ -52,7 +52,6 @@ final class AudioCapture: NSObject {
     private var ringCount = 0
 
     private let deviceUID: String?
-    private let deviceName: String?
     private let usePreRoll: Bool
     private var configured = false
 
@@ -64,7 +63,6 @@ final class AudioCapture: NSObject {
     ///   utterance is clipped).
     init(device: AudioInputDevice?, usePreRoll: Bool = true) {
         self.deviceUID = device?.uid
-        self.deviceName = device?.name
         self.usePreRoll = usePreRoll
         super.init()
     }
@@ -157,27 +155,19 @@ final class AudioCapture: NSObject {
     }
 
     /// Map our CoreAudio device onto an `AVCaptureDevice`. UIDs line up between
-    /// the two APIs; the name is a fallback for anything that doesn't match.
+    /// the two APIs, and direct lookup avoids AVFoundation's noisy microphone
+    /// discovery path (which currently emits a false Continuity Camera warning).
     private func resolveDevice() throws -> AVCaptureDevice {
-        // .microphone alone covers built-in, USB, and Bluetooth inputs. Adding
-        // .external changes nothing here and makes AVFoundation log a
-        // Continuity Camera deprecation warning on every launch.
-        let discovered = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.microphone],
-            mediaType: .audio,
-            position: .unspecified
-        ).devices
-
-        if let uid = deviceUID, let match = discovered.first(where: { $0.uniqueID == uid }) {
-            return match
+        if let uid = deviceUID {
+            guard let device = AVCaptureDevice(uniqueID: uid), device.hasMediaType(.audio) else {
+                throw CaptureError.deviceNotFound(uid)
+            }
+            return device
         }
-        if let name = deviceName, let match = discovered.first(where: { $0.localizedName == name }) {
-            return match
+        guard let fallback = AVCaptureDevice.default(for: .audio) else {
+            throw CaptureError.deviceNotFound("default")
         }
-        if deviceUID == nil, let fallback = AVCaptureDevice.default(for: .audio) {
-            return fallback
-        }
-        throw CaptureError.deviceNotFound(deviceName ?? deviceUID ?? "default")
+        return fallback
     }
 }
 

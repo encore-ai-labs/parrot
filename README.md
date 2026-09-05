@@ -19,7 +19,8 @@ The installer drops the binary in `/usr/local/bin/parrot`. Builds are unsigned f
 
 On each launch, release builds check GitHub for a newer stable release without delaying
 startup. If one is available, parrot prints the installer command and adds an update notice
-to its menu-bar menu. Network failures are ignored and retried on the next launch.
+to its menu-bar menu. Otherwise it explicitly reports that the installed release is current;
+network failures are reported without affecting startup and retried on the next launch.
 
 ## How to use
 
@@ -33,6 +34,17 @@ For hands-free dictation, quickly double-tap the push-to-talk key. Recording sta
 the second release; press Return, any other ordinary key, or the push-to-talk key again to
 stop. The exit key is consumed, so it will not type or submit before the transcript arrives.
 
+### Transcript history
+
+Successful dictations are also appended to daily Markdown files under
+`~/.local/share/parrot/transcripts/`. The startup screen shows today's exact file. The
+directory and files are restricted to your macOS user (`0700`/`0600`), and nothing is sent
+anywhere. For a private session that should leave no transcript history, run:
+
+```sh
+parrot --no-history
+```
+
 That's it. There is no record button, no stop button, no "send" — the key is the whole interface.
 
 > **The mic is held open the whole time parrot runs**, so macOS shows the mic-in-use
@@ -42,8 +54,8 @@ That's it. There is no record button, no stop button, no "send" — the key is t
 
 > **Don't use `parrot install --launch-at-login` yet.** Under `launchd` parrot gets its own
 > TCC identity rather than inheriting your terminal's, and the binary is still ad-hoc signed
-> with no embedded `Info.plist` — the combination produces a silent relaunch loop. A terminal
-> tab is reliable today.
+> without a stable Developer ID identity. That can produce a silent relaunch loop after an
+> update revokes its permissions. A terminal tab is reliable today.
 
 ### Choosing a microphone
 
@@ -140,6 +152,7 @@ parrot devices                         # list microphones
 parrot --input-device brio             # pick a specific mic
 parrot --no-pick-mic                   # skip the mic prompt
 parrot --lowercase                     # lowercase all transcribed text
+parrot --no-history                    # don't save local Markdown transcript history
 parrot --reconfigure                   # redo first-time setup
 parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
 parrot --hotkey right-option           # change the push-to-talk key

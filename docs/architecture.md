@@ -96,8 +96,8 @@ The tap subscribes to `keyDown`/`keyUp` only when the chosen hotkey needs them (
 `--debug-hotkey`). With a modifier hotkey it listens to `flagsChanged` alone, so parrot isn't
 copying every keystroke on the system.
 
-A quick double-tap locks recording on. The first quick release is held for a 400 ms
-double-tap window; longer push-to-talk holds still stop immediately. While locked, a second,
+A quick double-tap locks recording on. A first release inside the 550 ms double-tap window
+waits out that window; longer push-to-talk holds still stop immediately. While locked, a second,
 temporary event tap watches for the first non-hotkey `keyDown`, consumes that key and its
 matching `keyUp`, and ends the recording. Keeping this in a separate tap means ordinary
 push-to-talk mode still does not observe unrelated keystrokes. Pressing the hotkey once more
@@ -168,6 +168,13 @@ Adding an engine = one new file conforming to `Transcriber`.
 ### `TextInjector`
 
 `CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString` — pastes the transcript at the current cursor position. Works in nearly every text field on macOS (some Electron apps and secure fields are flaky; platform constraint).
+
+### `TranscriptHistory`
+
+Successful, non-empty transcripts are appended to one Markdown file per local calendar day
+under `~/.local/share/parrot/transcripts/`. The actor serializes writes from overlapping
+transcription tasks. Its directory is forced to mode `0700` and each file to `0600`; audio is
+never stored. `--no-history` disables all history writes for that daemon run.
 
 ### `RecordingOverlay`
 
@@ -300,7 +307,8 @@ End-to-end latency target: <500 ms after hotkey release for utterances under 10 
 
 - No streaming partial transcripts in v1. Press, speak, release, get full text.
 - No VAD-based hands-free mode. Push-to-talk is more reliable and uses zero idle CPU.
-- No history, transcript log, or clipboard manager. Output goes to the cursor and that's it.
+- No searchable history UI or clipboard manager. Daily local Markdown history is written by
+  default and can be disabled per launch with `--no-history`.
 - No custom vocabulary, prompts, or post-processing.
 - No menubar, no settings window, no preferences panel. The only UI is the recording overlay. Configuration is flags + TOML.
 

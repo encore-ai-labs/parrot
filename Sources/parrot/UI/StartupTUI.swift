@@ -1,0 +1,68 @@
+import Foundation
+
+enum StartupTUI {
+    struct Details {
+        let version: String
+        let hotkey: String
+        let model: String
+        let microphone: String
+        let historyPath: String?
+    }
+
+    private static let logo = #"""
+        ____  ___    ____  ____  ____  ______
+       / __ \/   |  / __ \/ __ \/ __ \/_  __/
+      / /_/ / /| | / /_/ / /_/ / / / / /
+     / ____/ ___ |/ _, _/ _, _/ /_/ / /
+    /_/   /_/  |_/_/ |_/_/ |_|\____/ /_/
+    """#
+
+    static func showLogo() {
+        guard TerminalSelect.isAvailable else { return }
+        write("\n" + cyan(logo) + "\n")
+        write("  " + dim("local, private, on-device dictation") + "\n")
+    }
+
+    static func show(_ details: Details) {
+        guard TerminalSelect.isAvailable else {
+            let history = details.historyPath.map { " · history: \($0)" } ?? " · history: off"
+            write(
+                "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
+                " · mic: \(details.microphone)\(history) · ^C to quit\n"
+            )
+            write("checking for updates…\n")
+            return
+        }
+
+        let history = details.historyPath ?? "off (--no-history)"
+        write("\n")
+        write(row("version", details.version))
+        write(row("hotkey", "\(details.hotkey)  ·  hold to talk / double-tap to lock"))
+        write(row("model", details.model))
+        write(row("microphone", details.microphone))
+        write(row("history", history))
+        write(row("updates", "checking…"))
+        write("\n  " + green("● ready") + dim("  ·  ^C to quit") + "\n\n")
+    }
+
+    static func displayPath(_ url: URL) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if url.path == home { return "~" }
+        if url.path.hasPrefix(home + "/") {
+            return "~" + url.path.dropFirst(home.count)
+        }
+        return url.path
+    }
+
+    private static func row(_ label: String, _ value: String) -> String {
+        "  " + cyan(label.padding(toLength: 10, withPad: " ", startingAt: 0)) + "  " + value + "\n"
+    }
+
+    private static func write(_ text: String) {
+        FileHandle.standardError.write(Data(text.utf8))
+    }
+
+    private static func cyan(_ text: String) -> String { "\u{1B}[1;36m" + text + "\u{1B}[0m" }
+    private static func green(_ text: String) -> String { "\u{1B}[1;32m" + text + "\u{1B}[0m" }
+    private static func dim(_ text: String) -> String { "\u{1B}[2m" + text + "\u{1B}[0m" }
+}

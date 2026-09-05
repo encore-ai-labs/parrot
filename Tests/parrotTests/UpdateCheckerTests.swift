@@ -3,6 +3,12 @@ import XCTest
 @testable import parrot
 
 final class UpdateCheckerTests: XCTestCase {
+    func testDevelopmentBuildReportsWhyItDidNotCheck() {
+        var result: UpdateCheckResult?
+        UpdateChecker.check { result = $0 }
+        XCTAssertEqual(result, .developmentBuild)
+    }
+
     func testDetectsNewerVersions() {
         XCTAssertTrue(UpdateChecker.isNewer("v0.4.0", than: "0.3.0"))
         XCTAssertTrue(UpdateChecker.isNewer("1.0.0", than: "v0.99.99"))

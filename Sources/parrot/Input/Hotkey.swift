@@ -39,6 +39,22 @@ enum Hotkey {
         return false
     }
 
+    /// Virtual keycode that may accompany this hotkey as a keyDown/keyUp.
+    /// Modifier hotkeys are normally flagsChanged-only, but Fn and Caps Lock
+    /// can also produce companion key events on some keyboards/macOS builds.
+    var keyEventCode: Int64? {
+        switch self {
+        case .key(_, let keyCode): return keyCode
+        case .modifier(let name, let keyCode, _):
+            if let keyCode { return keyCode }
+            switch name {
+            case "fn": return 63
+            case "caps-lock": return 57
+            default: return nil
+            }
+        }
+    }
+
     static let all: [Hotkey] = [
         .modifier(name: "fn", keyCode: nil, flag: .maskSecondaryFn),
         .modifier(name: "right-option", keyCode: 61, flag: .maskAlternate),

@@ -271,13 +271,12 @@ build — so every `parrot` upgrade silently revokes accessibility, and the daem
 in the 3.6 failure mode. A stable Developer ID signature is the real fix; short of that,
 `doctor` should at minimum detect and explain it.
 
-**3.9 — No embedded `Info.plist`.**
+**3.9 — No embedded `Info.plist`.** ✅ **FIXED**
 
-`otool -s __TEXT __info_plist` finds no section, so there's no `NSMicrophoneUsageDescription`.
-Launched from Terminal this is fine — parrot inherits the terminal's TCC identity and usage
-strings. Under launchd it's its own identity, and requesting mic access without a usage
-string is a documented crash hazard. Fixable with
-`-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist`.
+The binary now embeds `NSMicrophoneUsageDescription` plus AVFoundation's Continuity Camera
+compatibility key through the `__TEXT,__info_plist` section. This also removes a false camera
+deprecation warning emitted while configuring a microphone-only capture session. Stable TCC
+grants still require the Developer ID signing work in 3.8.
 
 **3.10 — LaunchAgent can crash-loop invisibly.**
 
@@ -382,5 +381,5 @@ where a regression just shipped (3.2).
    on the always-hot-mic trade-off first.
 6. **3.4 + 3.7 state machine** — do together; both are the same missing concept.
 7. **3.12 log hygiene** + **3.13 download progress** — trust and first-run feel.
-8. **3.8 + 3.9 signing and Info.plist** — unblocks the LaunchAgent path being genuinely reliable.
+8. **3.8 Developer ID signing** — unblocks the LaunchAgent path being genuinely reliable.
 9. **P3 doc reconciliation** — either build `--hotkey`/config, or stop advertising them.

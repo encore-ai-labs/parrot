@@ -134,10 +134,15 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Don't lowercase transcribed text.")
     var noLowercase: Bool = false
 
+    @Flag(name: .long, help: "Don't save successful transcripts to local Markdown history.")
+    var noHistory: Bool = false
+
     @Flag(name: .long, help: "Re-run first-time setup and overwrite saved preferences.")
     var reconfigure: Bool = false
 
     func run() throws {
+        StartupTUI.showLogo()
+
         let chosenHotkey: Hotkey
         if let raw = hotkey {
             guard let parsed = Hotkey.parse(raw) else {
@@ -293,19 +298,7 @@ struct Run: ParsableCommand {
         let menuBar = MainActor.assumeIsolated {
             MenuBarController(modelID: chosenModel.id, hotkeyName: chosenHotkey.name)
         }
-        UpdateChecker.check { update in
-            FileHandle.standardError.write(Data("""
-
-            update available: \(AppVersion.current) → \(update.version)
-            release: \(update.releaseURL.absoluteString)
-            update with:
-              \(UpdateChecker.updateCommand)
-
-            """.utf8))
-            DispatchQueue.main.async {
-                menuBar.setUpdateAvailable(update.version)
-            }
-        }
+        let history = noHistory ? nil : TranscriptHistory()
 
         let startRecording = {
             do {
@@ -356,6 +349,15 @@ struct Run: ParsableCommand {
                     FileHandle.standardError.write(Data(
                         String(format: "→ %.2fs · %@\n", elapsed, text).utf8
                     ))
+                    if let history {
+                        do {
+                            _ = try await history.append(text)
+                        } catch {
+                            FileHandle.standardError.write(Data(
+                                "history write failed: \(error)\n".utf8
+                            ))
+                        }
+                    }
                     await MainActor.run {
                         TextInjector.inject(text)
                         overlay?.hide()
@@ -415,10 +417,39 @@ struct Run: ParsableCommand {
         signal(SIGINT, SIG_IGN)
 
         let micName = chosenDevice?.name ?? "system default"
-        FileHandle.standardError.write(Data(
-            "listening on \(chosenHotkey.name) hold/double-tap · model: \(chosenModel.id) · mic: \(micName) · ^C to quit\n"
-                .utf8
+        let historyPath = noHistory
+            ? nil
+            : StartupTUI.displayPath(TranscriptHistory.fileURL())
+        StartupTUI.show(.init(
+            version: AppVersion.current,
+            hotkey: chosenHotkey.name,
+            model: chosenModel.id,
+            microphone: micName,
+            historyPath: historyPath
         ))
+        UpdateChecker.check { result in
+            switch result {
+            case .updateAvailable(let update):
+                FileHandle.standardError.write(Data("""
+                update available: \(AppVersion.current) → \(update.version)
+                release: \(update.releaseURL.absoluteString)
+                update with:
+                  \(UpdateChecker.updateCommand)
+
+                """.utf8))
+                DispatchQueue.main.async {
+                    menuBar.setUpdateAvailable(update.version)
+                }
+            case .upToDate(let version):
+                FileHandle.standardError.write(Data("✓ parrot \(version) is up to date\n".utf8))
+            case .unavailable:
+                FileHandle.standardError.write(Data(
+                    "update check unavailable — will retry next launch\n".utf8
+                ))
+            case .developmentBuild:
+                FileHandle.standardError.write(Data("update check skipped for development build\n".utf8))
+            }
+        }
         app.run()
     }
 }

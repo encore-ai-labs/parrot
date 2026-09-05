@@ -4,14 +4,14 @@ import XCTest
 
 final class HotkeyGestureTests: XCTestCase {
     func testHeldPressStopsImmediatelyOnRelease() {
-        var gesture = HotkeyGesture(doubleTapInterval: 0.4, maximumTapDuration: 0.2)
+        var gesture = HotkeyGesture(doubleTapInterval: 0.4)
 
         XCTAssertEqual(gesture.handle(.hotkeyPressed, at: 1.0), [.startRecording])
         XCTAssertEqual(gesture.handle(.hotkeyReleased, at: 1.5), [.stopRecording])
     }
 
     func testQuickSingleTapStopsAfterDoubleTapWindow() {
-        var gesture = HotkeyGesture(doubleTapInterval: 0.4, maximumTapDuration: 0.2)
+        var gesture = HotkeyGesture(doubleTapInterval: 0.4)
 
         XCTAssertEqual(gesture.handle(.hotkeyPressed, at: 1.0), [.startRecording])
         let releaseEffects = gesture.handle(.hotkeyReleased, at: 1.1)
@@ -27,15 +27,29 @@ final class HotkeyGestureTests: XCTestCase {
     }
 
     func testDoubleTapLatchesUntilAnotherKeyIsPressed() {
-        var gesture = HotkeyGesture(doubleTapInterval: 0.4, maximumTapDuration: 0.2)
+        var gesture = HotkeyGesture(doubleTapInterval: 0.4)
 
         XCTAssertEqual(gesture.handle(.hotkeyPressed, at: 1.0), [.startRecording])
         _ = gesture.handle(.hotkeyReleased, at: 1.1)
         XCTAssertEqual(
             gesture.handle(.hotkeyPressed, at: 1.25),
-            [.cancelTimeout, .setLatched(true)]
+            [.cancelTimeout]
         )
-        XCTAssertEqual(gesture.handle(.hotkeyReleased, at: 1.3), [])
+        XCTAssertEqual(gesture.handle(.hotkeyReleased, at: 1.3), [.setLatched(true)])
+        XCTAssertEqual(
+            gesture.handle(.otherKeyPressed, at: 3.0),
+            [.setLatched(false), .stopRecording]
+        )
+    }
+
+    func testDoubleTapDoesNotRequireAnArtificiallyShortFirstPress() {
+        var gesture = HotkeyGesture(doubleTapInterval: 0.55)
+
+        XCTAssertEqual(gesture.handle(.hotkeyPressed, at: 1.0), [.startRecording])
+        let releaseEffects = gesture.handle(.hotkeyReleased, at: 1.30)
+        XCTAssertEqual(releaseEffects.count, 1)
+        XCTAssertEqual(gesture.handle(.hotkeyPressed, at: 1.42), [.cancelTimeout])
+        XCTAssertEqual(gesture.handle(.hotkeyReleased, at: 1.48), [.setLatched(true)])
         XCTAssertEqual(
             gesture.handle(.otherKeyPressed, at: 3.0),
             [.setLatched(false), .stopRecording]
@@ -43,7 +57,7 @@ final class HotkeyGestureTests: XCTestCase {
     }
 
     func testHotkeyCanAlsoStopLatchedRecording() {
-        var gesture = HotkeyGesture(doubleTapInterval: 0.4, maximumTapDuration: 0.2)
+        var gesture = HotkeyGesture(doubleTapInterval: 0.4)
 
         _ = gesture.handle(.hotkeyPressed, at: 1.0)
         _ = gesture.handle(.hotkeyReleased, at: 1.1)
@@ -58,7 +72,7 @@ final class HotkeyGestureTests: XCTestCase {
     }
 
     func testLateSecondPressStartsANewRecording() {
-        var gesture = HotkeyGesture(doubleTapInterval: 0.4, maximumTapDuration: 0.2)
+        var gesture = HotkeyGesture(doubleTapInterval: 0.4)
 
         _ = gesture.handle(.hotkeyPressed, at: 1.0)
         _ = gesture.handle(.hotkeyReleased, at: 1.1)

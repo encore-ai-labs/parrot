@@ -1,5 +1,9 @@
 // swift-tools-version:5.9
+import Foundation
 import PackageDescription
+
+let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+let embeddedInfoPlist = "\(packageRoot)/Support/Parrot-Info.plist"
 
 let package = Package(
     name: "parrot",
@@ -14,6 +18,14 @@ let package = Package(
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "WhisperKit", package: "WhisperKit"),
+            ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", embeddedInfoPlist,
+                ]),
             ]
         ),
         .testTarget(

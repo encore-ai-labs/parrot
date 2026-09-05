@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 
 @testable import parrot
@@ -33,6 +34,49 @@ final class UpdateCheckerTests: XCTestCase {
                 waitingFor: 1234
             ),
             ["run", "--hotkey", "right-option", "--wait-for-pid", "1234"]
+        )
+    }
+
+    func testUpdaterRunnerPassesArgumentsAndEnvironment() throws {
+        XCTAssertNoThrow(
+            try UpdateInstaller.run(
+                executable: URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", "test \"$PARROT_RUNNER_TEST\" = inherited && test \"$1\" = 'argument with spaces'", "sh", "argument with spaces"],
+                label: "testing updater runner",
+                environment: ["PARROT_RUNNER_TEST": "inherited"]
+            )
+        )
+    }
+
+    func testUpdaterRunnerReportsExitStatus() {
+        XCTAssertThrowsError(
+            try UpdateInstaller.run(
+                executable: URL(fileURLWithPath: "/usr/bin/false"),
+                arguments: [],
+                label: "testing failed updater command"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "testing failed updater command exited with status 1"
+            )
+        }
+    }
+
+    func testUpdaterRunnerInheritsProcessGroup() throws {
+        let parentProcessGroup = getpgrp()
+        XCTAssertGreaterThan(parentProcessGroup, 0)
+
+        XCTAssertNoThrow(
+            try UpdateInstaller.run(
+                executable: URL(fileURLWithPath: "/bin/sh"),
+                arguments: [
+                    "-c",
+                    "set -- $(/bin/ps -o pgid= -p $$) && test \"$1\" = \"$PARROT_EXPECTED_PGID\"",
+                ],
+                label: "testing updater process-group inheritance",
+                environment: ["PARROT_EXPECTED_PGID": String(parentProcessGroup)]
+            )
         )
     }
 }

@@ -1,15 +1,22 @@
 import ArgumentParser
+import Darwin
 import Foundation
 
 enum UpdateInstaller {
     enum InstallerError: LocalizedError {
         case commandFailed(String, Int32)
+        case commandCouldNotStart(String, String)
+        case commandWaitFailed(String, String)
         case installedBinaryMissing
 
         var errorDescription: String? {
             switch self {
             case .commandFailed(let command, let status):
                 return "\(command) exited with status \(status)"
+            case .commandCouldNotStart(let command, let reason):
+                return "couldn't start \(command): \(reason)"
+            case .commandWaitFailed(let command, let reason):
+                return "couldn't wait for \(command): \(reason)"
             case .installedBinaryMissing:
                 return "the updated binary was not found at /usr/local/bin/parrot"
             }
@@ -66,32 +73,84 @@ enum UpdateInstaller {
         return arguments
     }
 
-    private static func run(
+    /// Run synchronously while inheriting the caller's process group and file
+    /// descriptors. Foundation.Process can put a packaged CLI's child outside
+    /// the terminal's foreground process group on macOS; sudo then cannot read
+    /// /dev/tty and reports an Input/output error.
+    @discardableResult
+    static func run(
         executable: URL,
         arguments: [String],
         label: String,
         environment: [String: String] = [:]
-    ) throws {
-        let task = Process()
-        task.executableURL = executable
-        task.arguments = arguments
-        if !environment.isEmpty {
-            task.environment = ProcessInfo.processInfo.environment.merging(
-                environment,
-                uniquingKeysWith: { _, new in new }
-            )
+    ) throws -> Int32 {
+        let executablePath = executable.path
+        let argv = [executablePath] + arguments
+        let mergedEnvironment = ProcessInfo.processInfo.environment.merging(
+            environment,
+            uniquingKeysWith: { _, new in new }
+        )
+        let env = mergedEnvironment.map { "\($0.key)=\($0.value)" }
+
+        var pid: pid_t = 0
+        let spawnStatus = withMutableCStringArray(argv) { argvPointer in
+            withMutableCStringArray(env) { environmentPointer in
+                posix_spawn(
+                    &pid,
+                    executablePath,
+                    nil,
+                    nil,
+                    argvPointer,
+                    environmentPointer
+                )
+            }
         }
-        // Process does not reliably preserve an interactive terminal when
-        // Parrot is itself a packaged CLI. Forward all three streams
-        // explicitly so sudo can display and read its password prompt.
-        task.standardInput = FileHandle.standardInput
-        task.standardOutput = FileHandle.standardOutput
-        task.standardError = FileHandle.standardError
-        try task.run()
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else {
-            throw InstallerError.commandFailed(label, task.terminationStatus)
+        guard spawnStatus == 0 else {
+            throw InstallerError.commandCouldNotStart(label, errorMessage(spawnStatus))
         }
+
+        var waitStatus: Int32 = 0
+        while waitpid(pid, &waitStatus, 0) == -1 {
+            if errno == EINTR { continue }
+            throw InstallerError.commandWaitFailed(label, errorMessage(errno))
+        }
+
+        let status = exitStatus(from: waitStatus)
+        guard status == 0 else {
+            throw InstallerError.commandFailed(label, status)
+        }
+        return status
+    }
+
+    private static func withMutableCStringArray<Result>(
+        _ strings: [String],
+        body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Result
+    ) -> Result {
+        var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { string in
+            string.withCString { strdup($0) }
+        }
+        pointers.append(nil)
+        defer {
+            for pointer in pointers {
+                free(pointer)
+            }
+        }
+        return pointers.withUnsafeMutableBufferPointer { buffer in
+            body(buffer.baseAddress!)
+        }
+    }
+
+    private static func exitStatus(from waitStatus: Int32) -> Int32 {
+        let signal = waitStatus & 0x7f
+        if signal == 0 {
+            return (waitStatus >> 8) & 0xff
+        }
+        return 128 + signal
+    }
+
+    private static func errorMessage(_ code: Int32) -> String {
+        guard let message = strerror(code) else { return "error \(code)" }
+        return String(cString: message)
     }
 }
 

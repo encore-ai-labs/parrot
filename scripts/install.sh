@@ -84,10 +84,9 @@ xattr -d com.apple.quarantine "$TMP/${BIN_NAME}" 2>/dev/null || true
 # 5. install
 TARGET="${INSTALL_DIR}/${BIN_NAME}"
 
-# A first install into /usr/local/bin commonly needs sudo, but `sudo mv` keeps
-# the downloaded file owned by the user. Future updates can therefore replace
-# the writable target directly even though its parent directory is root-owned.
-# This is also what makes menu-bar and daemon-start updates non-interactive.
+# A first install into /usr/local/bin commonly needs administrator approval.
+# `mv` keeps the downloaded file owned by the user, so future updates can
+# replace the writable target directly even when its parent is root-owned.
 if [ -f "$TARGET" ] && [ -w "$TARGET" ]; then
     dim "→ updating ${TARGET}..."
     cp "$TMP/${BIN_NAME}" "$TARGET"
@@ -97,13 +96,18 @@ elif [ -w "$INSTALL_DIR" ]; then
     mv "$TMP/${BIN_NAME}" "$TARGET"
     chmod +x "$TARGET"
 else
-    if [ ! -d "$INSTALL_DIR" ]; then
-        dim "→ creating ${INSTALL_DIR} (sudo)..."
-        sudo mkdir -p "$INSTALL_DIR"
-    fi
-    dim "→ installing to ${TARGET} (sudo)..."
-    sudo mv "$TMP/${BIN_NAME}" "$TARGET"
-    sudo chmod +x "$TARGET"
+    dim "→ administrator access required"
+    dim "  approve the standard macOS prompt to finish the update"
+    /usr/bin/osascript \
+        -e 'use scripting additions' \
+        -e 'on run argv' \
+        -e 'set installDirectory to item 1 of argv' \
+        -e 'set sourcePath to item 2 of argv' \
+        -e 'set targetPath to item 3 of argv' \
+        -e 'set installCommand to "/bin/mkdir -p " & quoted form of installDirectory & " && /bin/mv " & quoted form of sourcePath & " " & quoted form of targetPath & " && /bin/chmod 755 " & quoted form of targetPath' \
+        -e 'do shell script installCommand with administrator privileges' \
+        -e 'end run' \
+        "$INSTALL_DIR" "$TMP/${BIN_NAME}" "$TARGET" >/dev/null
 fi
 
 xattr -d com.apple.quarantine "$TARGET" 2>/dev/null || true

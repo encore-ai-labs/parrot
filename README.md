@@ -23,9 +23,9 @@ gets an **Update Parrot…** action. You can update directly at any time with `p
 Downloaded release archives are checked against their published SHA-256 checksum before
 installation. Network failures do not affect startup and are retried on the next launch.
 
-If an update needs administrator access, Parrot hands the real terminal through to `sudo`,
-so its password prompt remains interactive. A failed or cancelled update leaves the existing
-binary in place; run `parrot update` again to retry.
+If an update needs administrator access, Parrot uses the standard macOS authorization prompt;
+otherwise it updates without prompting. A failed or cancelled update leaves the existing binary
+in place; run `parrot update` again to retry.
 
 ## How to use
 

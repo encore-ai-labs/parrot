@@ -17,7 +17,7 @@ enum TranscriptOutputFormat: String, CaseIterable, ExpressibleByArgument {
     }
 }
 
-struct Transcribe: AsyncParsableCommand {
+struct Transcribe: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Transcribe local audio or video files entirely on this Mac."
     )
@@ -89,7 +89,14 @@ struct Transcribe: AsyncParsableCommand {
         }
     }
 
-    mutating func run() async throws {
+    mutating func run() throws {
+        let command = self
+        try FileTranscriptionAsyncBridge.wait {
+            try await command.runAsync()
+        }
+    }
+
+    private func runAsync() async throws {
         let jobs = try FileTranscriptionPlan.makeJobs(
             filePaths: files,
             format: format,
@@ -230,6 +237,36 @@ struct Transcribe: AsyncParsableCommand {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: date)
+    }
+}
+
+private enum FileTranscriptionAsyncBridge {
+    static func wait<T>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) throws -> T {
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = ResultBox<T>()
+        Task.detached {
+            do {
+                box.result = .success(try await operation())
+            } catch {
+                box.result = .failure(error)
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        guard let result = box.result else {
+            throw BridgeError.missingResult
+        }
+        return try result.get()
+    }
+
+    private final class ResultBox<Value>: @unchecked Sendable {
+        var result: Result<Value, Error>?
+    }
+
+    private enum BridgeError: Error {
+        case missingResult
     }
 }
 

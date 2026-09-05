@@ -4,7 +4,7 @@ import Foundation
 import WhisperKit
 
 @main
-struct Parrot: AsyncParsableCommand {
+struct Parrot: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "parrot",
         abstract: "Minimal macOS dictation daemon. Hold to talk or double-tap for hands-free.",

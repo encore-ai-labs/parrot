@@ -1,9 +1,16 @@
+import ArgumentParser
 import Foundation
 import XCTest
 
 @testable import parrot
 
 final class FileTranscriptionTests: XCTestCase {
+    func testAsyncFileWorkDoesNotMoveDaemonOffMainThread() {
+        XCTAssertFalse(Parrot.self is AsyncParsableCommand.Type)
+        XCTAssertFalse(Run.self is AsyncParsableCommand.Type)
+        XCTAssertFalse(Transcribe.self is AsyncParsableCommand.Type)
+    }
+
     func testCommandParsesBatchAndOutputOptions() throws {
         let command = try XCTUnwrap(
             try Transcribe.parseAsRoot([

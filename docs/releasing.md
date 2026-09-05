@@ -13,15 +13,15 @@ sudo cp .build/release/parrot /usr/local/bin/parrot
 pkill -x parrot          # then restart it in a terminal tab
 ```
 
-`/usr/local/bin` is root-owned, hence the `sudo`. Check what you're running with
-`parrot --help` — and note there's no `--version` yet (roadmap 6.2), so compare
-`shasum -a256 /usr/local/bin/parrot .build/release/parrot` if you're unsure.
+`/usr/local/bin` is root-owned, hence the `sudo`. Release binaries report their stamped tag
+with `parrot --version`; local development builds report `development`.
 
 ## Cutting a release
 
 `.github/workflows/release.yml` fires on any `v*` tag. It builds an arm64 release binary on a
 `macos-15` runner, strips it, tars it, and attaches `parrot-macos-arm64.tar.gz` plus a
-`.sha256` to a GitHub Release.
+`.sha256` to a GitHub Release. Before compiling, the workflow stamps the tag into
+`AppVersion.current`; do not manually edit that development placeholder.
 
 ```sh
 git tag -a v0.1.0 -m "v0.1.0 — short description"
@@ -139,4 +139,3 @@ and org membership.
 - **`--launch-at-login`.** Don't recommend it until signing lands. Under `launchd` parrot gets
   its own TCC identity instead of inheriting the terminal's, and with `KeepAlive` set, a
   missing permission becomes a silent 10-second relaunch loop (roadmap 5.4).
-- **Version stamping.** No `--version` flag, so released binaries can't identify themselves.

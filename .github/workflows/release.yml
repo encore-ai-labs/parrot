@@ -30,6 +30,11 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
+      - name: stamp version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i '' "s/static let current = \"development\"/static let current = \"${VERSION}\"/" Sources/parrot/UpdateChecker.swift
+
       - name: build
         run: swift build -c release --arch arm64
 

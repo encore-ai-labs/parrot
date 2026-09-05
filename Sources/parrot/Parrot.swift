@@ -7,7 +7,8 @@ import WhisperKit
 struct Parrot: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "parrot",
-        abstract: "Minimal macOS dictation daemon. Hold Fn, speak, release.",
+        abstract: "Minimal macOS dictation daemon. Hold to talk or double-tap for hands-free.",
+        version: AppVersion.current,
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
             Hotkeys.self, Devices.self, Install.self,
@@ -292,70 +293,110 @@ struct Run: ParsableCommand {
         let menuBar = MainActor.assumeIsolated {
             MenuBarController(modelID: chosenModel.id, hotkeyName: chosenHotkey.name)
         }
+        UpdateChecker.check { update in
+            FileHandle.standardError.write(Data("""
+
+            update available: \(AppVersion.current) → \(update.version)
+            release: \(update.releaseURL.absoluteString)
+            update with:
+              \(UpdateChecker.updateCommand)
+
+            """.utf8))
+            DispatchQueue.main.async {
+                menuBar.setUpdateAvailable(update.version)
+            }
+        }
+
+        let startRecording = {
+            do {
+                try capture.start()
+                FileHandle.standardError.write(Data("● recording\n".utf8))
+                MainActor.assumeIsolated {
+                    overlay?.show(.recording)
+                    menuBar.setRecording(true)
+                }
+            } catch {
+                FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
+            }
+        }
+
+        let stopRecording = {
+            let samples = capture.stop()
+            MainActor.assumeIsolated {
+                overlay?.show(.transcribing)
+                menuBar.setTranscribing()
+            }
+            let seconds = Double(samples.count) / AudioCapture.targetSampleRate
+            let rms = computeRMS(samples)
+            FileHandle.standardError.write(Data(
+                String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
+            ))
+            if dumpWav, !samples.isEmpty {
+                let path = "/tmp/parrot-last.wav"
+                do {
+                    try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
+                    FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
+                } catch {
+                    FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
+                }
+            }
+            guard !samples.isEmpty else {
+                MainActor.assumeIsolated {
+                    overlay?.hide()
+                    menuBar.setRecording(false)
+                }
+                return
+            }
+            Task {
+                let started = Date()
+                do {
+                    let raw = try await transcriber.transcribe(samples)
+                    let text = lowercaseMode ? raw.lowercased() : raw
+                    let elapsed = Date().timeIntervalSince(started)
+                    FileHandle.standardError.write(Data(
+                        String(format: "→ %.2fs · %@\n", elapsed, text).utf8
+                    ))
+                    await MainActor.run {
+                        TextInjector.inject(text)
+                        overlay?.hide()
+                        menuBar.setRecording(false)
+                    }
+                } catch {
+                    FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
+                    await MainActor.run {
+                        overlay?.hide()
+                        menuBar.setRecording(false)
+                    }
+                }
+            }
+        }
+
+        let gesture = HotkeyGestureController { effect in
+            switch effect {
+            case .startRecording:
+                startRecording()
+            case .stopRecording:
+                stopRecording()
+            case .setLatched(true):
+                if monitor.startExitKeyMonitoring() {
+                    FileHandle.standardError.write(Data("↔ recording locked · press any key to stop\n".utf8))
+                }
+            case .setLatched(false):
+                monitor.stopExitKeyMonitoring()
+            case .scheduleTimeout, .cancelTimeout:
+                break
+            }
+        }
 
         do {
             try monitor.start { event in
                 switch event {
                 case .pressed:
-                    do {
-                        try capture.start()
-                        FileHandle.standardError.write(Data("● recording\n".utf8))
-                        MainActor.assumeIsolated {
-                            overlay?.show(.recording)
-                            menuBar.setRecording(true)
-                        }
-                    } catch {
-                        FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
-                    }
+                    gesture.handle(.hotkeyPressed)
                 case .released:
-                    let samples = capture.stop()
-                    MainActor.assumeIsolated {
-                        overlay?.show(.transcribing)
-                        menuBar.setTranscribing()
-                    }
-                    let seconds = Double(samples.count) / AudioCapture.targetSampleRate
-                    let rms = computeRMS(samples)
-                    FileHandle.standardError.write(Data(
-                        String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
-                    ))
-                    if dumpWav, !samples.isEmpty {
-                        let path = "/tmp/parrot-last.wav"
-                        do {
-                            try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
-                            FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
-                        } catch {
-                            FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
-                        }
-                    }
-                    guard !samples.isEmpty else {
-                        MainActor.assumeIsolated {
-                            overlay?.hide()
-                            menuBar.setRecording(false)
-                        }
-                        return
-                    }
-                    Task {
-                        let started = Date()
-                        do {
-                            let raw = try await transcriber.transcribe(samples)
-                            let text = lowercaseMode ? raw.lowercased() : raw
-                            let elapsed = Date().timeIntervalSince(started)
-                            FileHandle.standardError.write(Data(
-                                String(format: "→ %.2fs · %@\n", elapsed, text).utf8
-                            ))
-                            await MainActor.run {
-                                TextInjector.inject(text)
-                                overlay?.hide()
-                                menuBar.setRecording(false)
-                            }
-                        } catch {
-                            FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
-                            await MainActor.run {
-                                overlay?.hide()
-                                menuBar.setRecording(false)
-                            }
-                        }
-                    }
+                    gesture.handle(.hotkeyReleased)
+                case .exitKeyPressed:
+                    gesture.handle(.otherKeyPressed)
                 }
             }
         } catch {
@@ -375,7 +416,7 @@ struct Run: ParsableCommand {
 
         let micName = chosenDevice?.name ?? "system default"
         FileHandle.standardError.write(Data(
-            "listening on \(chosenHotkey.name) hold · model: \(chosenModel.id) · mic: \(micName) · ^C to quit\n"
+            "listening on \(chosenHotkey.name) hold/double-tap · model: \(chosenModel.id) · mic: \(micName) · ^C to quit\n"
                 .utf8
         ))
         app.run()

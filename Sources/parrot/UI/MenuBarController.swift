@@ -8,12 +8,13 @@ final class MenuBarController {
     private let statusItem: NSStatusItem
     private let modelLabel: NSMenuItem
     private let stateLabel: NSMenuItem
+    private let updateLabel: NSMenuItem
     private let modelID: String
     private let idleTitle: String
 
     init(modelID: String, hotkeyName: String) {
         self.modelID = modelID
-        self.idleTitle = "idle · hold \(hotkeyName) to dictate"
+        self.idleTitle = "idle · hold or double-tap \(hotkeyName)"
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         let menu = NSMenu()
@@ -26,6 +27,11 @@ final class MenuBarController {
         modelLabel = NSMenuItem(title: "model: \(modelID)", action: nil, keyEquivalent: "")
         modelLabel.isEnabled = false
         menu.addItem(modelLabel)
+
+        updateLabel = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        updateLabel.isEnabled = false
+        updateLabel.isHidden = true
+        menu.addItem(updateLabel)
 
         menu.addItem(.separator())
 
@@ -47,6 +53,11 @@ final class MenuBarController {
 
     func setTranscribing() {
         stateLabel.title = "transcribing…"
+    }
+
+    func setUpdateAvailable(_ version: String) {
+        updateLabel.title = "update available: \(version) · rerun installer"
+        updateLabel.isHidden = false
     }
 
     private func configureButton(recording: Bool) {

@@ -17,6 +17,10 @@ Or build it yourself — see [Build from source](#build-from-source).
 
 The installer drops the binary in `/usr/local/bin/parrot`. Builds are unsigned for now, so the installer strips the quarantine xattr — once you've inspected the script you'll see exactly what it does.
 
+On each launch, release builds check GitHub for a newer stable release without delaying
+startup. If one is available, parrot prints the installer command and adds an update notice
+to its menu-bar menu. Network failures are ignored and retried on the next launch.
+
 ## How to use
 
 1. **Run it** in any terminal tab — `parrot`, or `parrot --hotkey end` to pick your own key.
@@ -24,6 +28,10 @@ The installer drops the binary in `/usr/local/bin/parrot`. Builds are unsigned f
 2. **Click into the text field you want to dictate into** — Messages, the address bar, a Slack thread, anywhere a cursor blinks.
 3. **Hold your push-to-talk key, speak, release.** A small pill appears at the bottom of the screen while the mic is hot.
 4. **The transcript types itself in at the cursor** when you release. Usually within 200-300ms.
+
+For hands-free dictation, quickly double-tap the push-to-talk key. Recording stays on after
+the second release; press Return, any other ordinary key, or the push-to-talk key again to
+stop. The exit key is consumed, so it will not type or submit before the transcript arrives.
 
 That's it. There is no record button, no stop button, no "send" — the key is the whole interface.
 
@@ -120,6 +128,7 @@ For anything else, find its keycode with `parrot run --debug-hotkey`, then pass
 
 ```sh
 parrot                                 # run in the foreground (^C to quit)
+parrot --version                       # show the installed release version
 parrot setup                           # one-time setup: permissions + model download
 parrot install --launch-at-login       # register a LaunchAgent (background daemon)
 parrot install --uninstall             # remove the LaunchAgent

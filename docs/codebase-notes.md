@@ -318,7 +318,7 @@ at all — not even on success. WhisperKit exposes a progress callback; the plan
 | `architecture.md`: models in `~/Library/Application Support/parrot/models/` | `~/Documents/huggingface` (3.3). |
 | `architecture.md`: non-goals include "menubar" and "auto-launch at login" | Both shipped (`MenuBarController`, `Install.swift`). |
 | `architecture.md`: `ModelDownloader` with progress bar | Doesn't exist; WhisperKit handles it silently. |
-| — | No `--version` flag. |
+| ~~No `--version` flag~~ | ✅ **FIXED** — release builds are stamped from their tag. |
 
 Dead code: `ModelsManifest` (`TranscriptionModel.swift:19`, orphaned by `abc17a0`),
 `Engine.parakeet` (no implementation), `DoctorReport.allClean` (unused, and its doc comment

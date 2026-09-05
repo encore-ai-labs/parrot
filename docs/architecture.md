@@ -96,6 +96,13 @@ The tap subscribes to `keyDown`/`keyUp` only when the chosen hotkey needs them (
 `--debug-hotkey`). With a modifier hotkey it listens to `flagsChanged` alone, so parrot isn't
 copying every keystroke on the system.
 
+A quick double-tap locks recording on. The first quick release is held for a 400 ms
+double-tap window; longer push-to-talk holds still stop immediately. While locked, a second,
+temporary event tap watches for the first non-hotkey `keyDown`, consumes that key and its
+matching `keyUp`, and ends the recording. Keeping this in a separate tap means ordinary
+push-to-talk mode still does not observe unrelated keystrokes. Pressing the hotkey once more
+also ends a locked recording.
+
 When macOS disables the tap (`tapDisabledByTimeout` / `tapDisabledByUserInput`) it is
 re-armed immediately. Left unhandled, parrot keeps running — menu bar icon and all — while
 the hotkey silently stops working.

@@ -7,7 +7,7 @@ import Foundation
 /// edges. Requires Accessibility permission. If the tap fails to register,
 /// callers will see an error from `start()`.
 final class HotkeyMonitor {
-    enum Event { case pressed, released }
+    enum Event { case pressed, released, exitKeyPressed }
     enum HotkeyError: Error { case tapCreateFailed }
 
     private let hotkey: Hotkey
@@ -15,6 +15,9 @@ final class HotkeyMonitor {
     private var onEvent: ((Event) -> Void)?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var exitKeyTap: CFMachPort?
+    private var exitKeyRunLoopSource: CFRunLoopSource?
+    private var swallowedExitKeyCode: Int64?
     private var isPressed = false
 
     init(hotkey: Hotkey = .default, debug: Bool = false) {
@@ -83,6 +86,7 @@ final class HotkeyMonitor {
     }
 
     func stop() {
+        stopExitKeyMonitoring()
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
@@ -92,6 +96,87 @@ final class HotkeyMonitor {
         tap = nil
         runLoopSource = nil
         onEvent = nil
+    }
+
+    /// While recording is latched, watch for the first ordinary keypress and
+    /// consume it so Return does not submit before the transcript is inserted.
+    /// This separate tap keeps normal push-to-talk mode from observing every
+    /// key typed on the system.
+    @discardableResult
+    func startExitKeyMonitoring() -> Bool {
+        guard exitKeyTap == nil else { return true }
+
+        let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+        let userInfo = Unmanaged.passUnretained(self).toOpaque()
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(mask),
+            callback: exitKeyCallback,
+            userInfo: userInfo
+        ) else {
+            FileHandle.standardError.write(Data(
+                "failed to register the latched-mode exit key tap\n".utf8
+            ))
+            return false
+        }
+
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        exitKeyTap = tap
+        exitKeyRunLoopSource = source
+        swallowedExitKeyCode = nil
+        return true
+    }
+
+    func stopExitKeyMonitoring() {
+        // When an exit key is currently down, keep the tap just long enough to
+        // consume its matching key-up as well.
+        guard swallowedExitKeyCode == nil else { return }
+        if let exitKeyTap {
+            CGEvent.tapEnable(tap: exitKeyTap, enable: false)
+        }
+        if let source = exitKeyRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        exitKeyTap = nil
+        exitKeyRunLoopSource = nil
+    }
+
+    fileprivate func reenableExitKeyTap() {
+        guard let exitKeyTap else { return }
+        CGEvent.tapEnable(tap: exitKeyTap, enable: true)
+    }
+
+    fileprivate func handleExitKey(type: CGEventType, event: CGEvent) -> Bool {
+        let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+
+        // The activation key itself remains under the primary monitor's
+        // control, allowing one more press to end latched recording too.
+        if case .key(_, let hotkeyCode) = hotkey, keycode == hotkeyCode {
+            return false
+        }
+
+        if let swallowedExitKeyCode {
+            guard keycode == swallowedExitKeyCode else { return false }
+            if type == .keyUp {
+                self.swallowedExitKeyCode = nil
+                DispatchQueue.main.async { [weak self] in
+                    self?.stopExitKeyMonitoring()
+                }
+            }
+            return true
+        }
+
+        guard type == .keyDown else { return false }
+        guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return false }
+        swallowedExitKeyCode = keycode
+        DispatchQueue.main.async { [weak self] in
+            self?.onEvent?(.exitKeyPressed)
+        }
+        return true
     }
 
     /// Whether this event should be withheld from the focused app. Decided
@@ -145,6 +230,25 @@ final class HotkeyMonitor {
             }
         }
     }
+}
+
+private func exitKeyCallback(
+    proxy: CGEventTapProxy,
+    type: CGEventType,
+    event: CGEvent,
+    userInfo: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    guard let userInfo else { return Unmanaged.passUnretained(event) }
+    let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
+
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        monitor.reenableExitKeyTap()
+        return Unmanaged.passUnretained(event)
+    }
+
+    return monitor.handleExitKey(type: type, event: event)
+        ? nil
+        : Unmanaged.passUnretained(event)
 }
 
 private func hotkeyCallback(

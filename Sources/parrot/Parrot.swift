@@ -96,6 +96,9 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Write each capture to /tmp/parrot-last.wav for inspection.")
     var dumpWav: Bool = false
 
+    @Flag(name: .long, help: "Transcribe very short or near-silent captures (debug).")
+    var noAudioGate: Bool = false
+
     @Flag(name: .long, help: "Disable the on-screen recording overlay.")
     var noOverlay: Bool = false
 
@@ -395,8 +398,10 @@ struct Run: ParsableCommand {
             MenuBarController(modelID: chosenModel.id, hotkeyName: chosenHotkey.name)
         }
         let history = noHistory ? nil : TranscriptHistory()
+        let lifecycle = DictationLifecycle()
 
         let startRecording = {
+            guard let sessionID = lifecycle.start() else { return }
             do {
                 try capture.start()
                 _ = monitor.startExitKeyMonitoring(exitOnAnyKey: false)
@@ -406,11 +411,13 @@ struct Run: ParsableCommand {
                     menuBar.setRecording(true)
                 }
             } catch {
+                lifecycle.failStart(sessionID)
                 FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
             }
         }
 
         let stopRecording = {
+            guard let sessionID = lifecycle.beginTranscription() else { return }
             monitor.stopExitKeyMonitoring()
             let samples = capture.stop()
             MainActor.assumeIsolated {
@@ -420,7 +427,7 @@ struct Run: ParsableCommand {
             let seconds = Double(samples.count) / AudioCapture.targetSampleRate
             let rms = computeRMS(samples)
             FileHandle.standardError.write(Data(
-                String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
+                String(format: "○ captured %.2fs · rms %.4f\n", seconds, rms).utf8
             ))
             if dumpWav, !samples.isEmpty {
                 let path = "/tmp/parrot-last.wav"
@@ -432,6 +439,20 @@ struct Run: ParsableCommand {
                 }
             }
             guard !samples.isEmpty else {
+                _ = lifecycle.finish(sessionID)
+                MainActor.assumeIsolated {
+                    overlay?.hide()
+                    menuBar.setRecording(false)
+                }
+                return
+            }
+            if let rejection = CaptureQuality.rejection(
+                duration: seconds,
+                rms: rms,
+                enabled: !noAudioGate
+            ) {
+                _ = lifecycle.finish(sessionID)
+                FileHandle.standardError.write(Data("× \(rejection.message) — discarded\n".utf8))
                 MainActor.assumeIsolated {
                     overlay?.hide()
                     menuBar.setRecording(false)
@@ -464,6 +485,7 @@ struct Run: ParsableCommand {
                         }
                     }
                     await MainActor.run {
+                        guard lifecycle.finish(sessionID) else { return }
                         TextInjector.inject(text)
                         overlay?.hide()
                         menuBar.setRecording(false)
@@ -471,6 +493,7 @@ struct Run: ParsableCommand {
                 } catch {
                     FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
                     await MainActor.run {
+                        guard lifecycle.finish(sessionID) else { return }
                         overlay?.hide()
                         menuBar.setRecording(false)
                     }
@@ -479,6 +502,7 @@ struct Run: ParsableCommand {
         }
 
         let cancelRecording = {
+            guard lifecycle.cancelRecording() else { return }
             monitor.stopExitKeyMonitoring()
             _ = capture.stop()
             FileHandle.standardError.write(Data("× recording cancelled\n".utf8))
@@ -513,6 +537,12 @@ struct Run: ParsableCommand {
             try monitor.start { event in
                 switch event {
                 case .pressed:
+                    guard !lifecycle.isTranscribing else {
+                        FileHandle.standardError.write(Data(
+                            "still transcribing — hotkey ignored\n".utf8
+                        ))
+                        return
+                    }
                     gesture.handle(.hotkeyPressed)
                 case .released:
                     gesture.handle(.hotkeyReleased)
@@ -533,14 +563,14 @@ struct Run: ParsableCommand {
             monitor.stop()
             NSApp.terminate(nil)
         }
+        signal(SIGINT, SIG_IGN)
         let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         sigint.setEventHandler(handler: shutDown)
         sigint.resume()
-        signal(SIGINT, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
         let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         sigterm.setEventHandler(handler: shutDown)
         sigterm.resume()
-        signal(SIGTERM, SIG_IGN)
 
         let micName = chosenDevice?.name ?? "system default"
         let historyPath = noHistory

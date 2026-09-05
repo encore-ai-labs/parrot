@@ -31,6 +31,12 @@ installation. Network failures do not affect startup and are retried on the next
 3. **Hold your push-to-talk key, speak, release.** A small pill appears at the bottom of the screen while the mic is hot.
 4. **The transcript types itself in at the cursor** when you release. Usually within 200-300ms.
 
+Parrot handles one dictation at a time. If transcription is still finishing, another hotkey
+press is ignored so an older result can never hide a newer recording or paste into a newly
+focused field. Very short and near-silent captures are discarded before inference to avoid
+accidental Whisper hallucinations; `--no-audio-gate` disables that safety check for debugging
+an unusually quiet input.
+
 When Fn/Globe is selected, Parrot temporarily changes macOS's bare Fn action to
 **Do Nothing** while the daemon is running. That prevents the emoji picker, input-source
 switcher, or Apple Dictation from racing Parrot. Your previous setting is restored on a

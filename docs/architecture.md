@@ -381,6 +381,12 @@ Models currently live in `~/Documents/huggingface/` (WhisperKit's default). Not 
 14. Overlay hides. Status: `listening`. Loop.
 15. User hits `^C`. Process exits cleanly.
 
+`DictationLifecycle` serializes this loop as idle → recording → transcribing → idle and assigns
+each capture a generation token. Hotkey presses during transcription are ignored, and only the
+current generation may inject text or reset UI. Before inference, `CaptureQuality` rejects
+captures under 250 ms or below a conservative RMS floor; `--no-audio-gate` is the explicit
+debugging escape hatch.
+
 End-to-end latency target: <500 ms after hotkey release for utterances under 10 seconds, on Apple Silicon.
 
 ## What we are deliberately NOT building

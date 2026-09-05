@@ -232,20 +232,16 @@ code sets a path, so `swift-transformers`' `HubApi` default wins
 One-line fix — `WhisperKitConfig` already exposes `downloadBase: URL?`
 (`Configurations.swift:11`). Needs a migration for existing installs.
 
-**3.4 — Overlapping recordings cross-talk.**
+**3.4 — Overlapping recordings cross-talk.** ✅ **FIXED**
 
-Nothing serializes the transcription `Task` against a new hotkey press. Press Fn again while
-a transcription is in flight and the *old* Task's completion runs `overlay?.hide()` and
-`menuBar.setRecording(false)` — killing the overlay for the recording currently in progress —
-and `TextInjector.inject` fires into whatever is focused *now*. Needs an explicit state
-machine (idle / recording / transcribing) with the press ignored or queued while busy.
+`DictationLifecycle` now enforces one idle → recording → transcribing → idle generation at a
+time. Presses during transcription are ignored, and stale completion tokens cannot inject text
+or change the overlay/menu state.
 
-**3.5 — No minimum duration or energy gate.**
+**3.5 — No minimum duration or energy gate.** ✅ **FIXED**
 
-An accidental Fn brush produces a ~50 ms buffer, Whisper hallucinates on it, and the result
-is injected into the focused app. `samples.isEmpty` is the only guard (`Parrot.swift:127`).
-Should require ≥ ~300 ms and a minimum RMS — `computeRMS` is already being calculated and
-logged one line above, just not used for anything.
+Captures under 250 ms or below a conservative `0.0005` RMS floor are discarded before model
+inference. `--no-audio-gate` is available for diagnosing unusually quiet inputs.
 
 ### P1 — reliability
 
@@ -257,11 +253,10 @@ When it happens, parrot appears to be running (menu bar icon present) but Fn doe
 with no error anywhere. Worst possible failure mode for a background daemon, and the fix is
 one line: `CGEvent.tapEnable(tap:enable: true)`.
 
-**3.7 — `hide()`'s delayed `orderOut` fires unconditionally.**
+**3.7 — `hide()`'s delayed `orderOut` fires unconditionally.** ✅ **FIXED**
 
-`RecordingOverlay.swift:42` schedules `orderOut` 0.18 s out with no cancellation and no
-generation check. Tap Fn, then press again within 180 ms → the pending block hides the panel
-while the new recording is live. Needs a token/generation guard or a cancellable work item.
+The delayed hide now uses a cancellable work item, and every new `show` cancels the pending
+`orderOut` before bringing the overlay forward.
 
 **3.8 — TCC grants break on every update.**
 
@@ -284,11 +279,10 @@ Failed launches are now throttled to 30 seconds, install reports bootstrap error
 `parrot daemon status|start|stop|restart|logs` makes the lifecycle observable. Stable signing
 is still required to prevent TCC permission loss after binary replacement (see 3.8).
 
-**3.11 — Multi-monitor: pill lands on the wrong screen.**
+**3.11 — Multi-monitor: pill lands on the wrong screen.** ✅ **FIXED**
 
-`positionAtBottomCenter` uses `NSScreen.main` (`RecordingOverlay.swift:80`), which is defined
-as the screen with the key window. An `.accessory` app never has one. Should use the screen
-containing `NSEvent.mouseLocation`.
+The overlay now selects the screen containing `NSEvent.mouseLocation`, falling back to
+`NSScreen.main` only when no screen contains the pointer.
 
 ### P2 — privacy and first-run UX
 
@@ -344,8 +338,8 @@ and will bite under load.
 `event.copy()`s and main-queue-hops **every keystroke on the system** — including in password
 fields. Filtering to `.flagsChanged` before the copy removes the work and the smell.
 
-**3.18** — `signal(SIGINT, SIG_IGN)` is called *after* `sigint.resume()` (`Parrot.swift:169-170`);
-conventionally it goes first.
+**3.18** ✅ **FIXED** — `SIGINT` and `SIGTERM` are ignored before their dispatch sources are
+created and resumed.
 
 ### P5 — smaller things
 

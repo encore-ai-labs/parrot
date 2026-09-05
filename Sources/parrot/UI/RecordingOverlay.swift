@@ -13,8 +13,11 @@ final class RecordingOverlay {
 
     private var window: NSPanel?
     private let model = OverlayModel()
+    private var hideWorkItem: DispatchWorkItem?
 
     func show(_ state: State) {
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
         ensureWindow()
         if state == .recording {
             model.resetLevels()
@@ -38,10 +41,13 @@ final class RecordingOverlay {
         model.state = .hidden
         // Let the SwiftUI scale+fade animation play out before yanking the
         // window — otherwise it just pops away.
-        let window = self.window
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            window?.orderOut(nil)
+        hideWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.window?.orderOut(nil)
+            self?.hideWorkItem = nil
         }
+        hideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: workItem)
     }
 
     /// Push a new audio level (0…~1). Safe to call from any thread.
@@ -77,7 +83,10 @@ final class RecordingOverlay {
     }
 
     private func positionAtBottomCenter(_ window: NSPanel) {
-        guard let screen = NSScreen.main else { return }
+        let pointer = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) })
+            ?? NSScreen.main
+        else { return }
         let frame = window.frame
         let visible = screen.visibleFrame
         let x = visible.midX - frame.width / 2

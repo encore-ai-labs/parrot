@@ -96,16 +96,21 @@ whitespace is never doubled. This delivery-only space is not stored in history, 
 input, or file transcripts. Disable it for exact-input workflows with
 `parrot settings set --no-space-after-paste`, or use `--no-space-after-paste` for one run.
 
-If inference fails—or the daemon is interrupted after a recording—open the menu-bar bird and
-choose **Retry Recovered Recording**. After any successful dictation, **Retry Last Recording**
-can immediately reprocess the in-memory audio with the currently selected mode, without loading
-a second model. **Forget Last Recording** clears both the memory copy and any recovery file.
+If inference fails—or the daemon is interrupted during or after a recording—open the menu-bar bird
+and choose **Retry Recovered Recording**. After a successful short dictation, **Retry Last
+Recording** can immediately reprocess the in-memory audio with the currently selected mode,
+without loading a second model. **Forget Last Recording** clears both the memory copy and any
+recovery file.
 
-Recovery is deliberately a single local slot, not an audio archive. Parrot writes a private
-16-bit WAV to `~/.local/share/parrot/recovery/last-recording.wav` before inference, atomically
-replaces it with the next accepted capture, and deletes it after successful text delivery. The
-samples remain only in daemon memory until the next accepted capture or an explicit forget. A
-failed or crash-interrupted inference keeps the WAV so the next daemon launch can restore it.
+Recovery is deliberately a single local slot, not an audio archive. While the mic is active,
+Parrot streams a private 16-bit WAV to
+`~/.local/share/parrot/recovery/last-recording.wav`. A new capture replaces the previous slot;
+Escape deletes the partial file. If Parrot or macOS exits mid-note, the next launch repairs the WAV
+header from the intact audio payload and offers the recording for retry. The first two minutes also
+stay in memory for the fastest common path; after that Parrot drops the sample array and transcribes
+incrementally from disk, keeping capture RAM bounded at about 7.7 MB regardless of note length.
+Successful delivery deletes the recovery pathname. When finite audio history is explicitly
+enabled, a private hard link keeps that delivered recording under transcript history instead.
 
 ### Local note mode
 

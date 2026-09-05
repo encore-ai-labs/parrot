@@ -197,8 +197,13 @@ actor ParakeetTranscriber: Transcriber {
         }
     }
 
-    func transcribeFile(at url: URL, mode: DictationMode) async throws -> TimedTranscription {
+    func transcribeFile(
+        at url: URL,
+        mode: DictationMode,
+        recognitionContext: String?
+    ) async throws -> TimedTranscription {
         _ = mode
+        _ = recognitionContext // Parakeet has no acoustic prompt API.
         if backend == nil { try await warmUp() }
         guard let backend else { throw TranscriberError.notLoaded }
 
@@ -235,8 +240,9 @@ actor ParakeetTranscriber: Transcriber {
             text = result.text
             timings = result.tokenTimings
         }
+        let originalText = sanitized(text)
         return TimedTranscription(
-            text: processed(text),
+            text: vocabularyReplacer.applying(to: originalText),
             language: "en",
             segments: Self.segments(
                 from: buildWordTimings(from: timings).map {
@@ -244,7 +250,8 @@ actor ParakeetTranscriber: Transcriber {
                 },
                 vocabularyReplacer: vocabularyReplacer,
                 maximumDuration: sourceDuration
-            )
+            ),
+            originalText: originalText
         )
     }
 

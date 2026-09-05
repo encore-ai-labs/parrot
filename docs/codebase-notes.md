@@ -426,6 +426,15 @@ explicitly forced. The operation shares the reader lock, leaves source Markdown/
 skips daily files outside a requested date period, and runs only when invoked, so note retrieval
 has no capture or model cost.
 
+**3.32 — Locked long notes grow RAM with their duration and are unrecoverable mid-capture.** ✅ **FIXED**
+
+Active audio now streams once into the private recovery WAV. The common path retains at most two
+minutes of Float32 samples (~7.7 MB), then releases the array and uses bounded incremental file
+transcription. Startup repairs an interrupted spool's size fields from its regular-file payload;
+Escape removes it, successful delivery resolves it, and only the initiating hotkey ends a locked
+recording. The measured active-capture conversion/write cost is ~59 ms per recorded minute and
+1.92 MB of disk per minute; the idle daemon performs no spool work.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |
@@ -433,7 +442,7 @@ has no capture or model cost.
 | ~~README: `parrot --hotkey right-option`~~ | ✅ **FIXED** — implemented, plus `parrot hotkeys`. |
 | ~~`architecture.md`: config at `~/.config/parrot/config.toml`~~ | ✅ **FIXED** — JSON config is documented and implemented. |
 | ~~`architecture.md`: models in `~/Library/Application Support/parrot/models/`~~ | ✅ **FIXED** — explicit managed storage plus safe legacy reuse/migration. |
-| `architecture.md`: non-goals include "menubar" and "auto-launch at login" | Both shipped (`MenuBarController`, `Install.swift`). |
+| ~~`architecture.md`: claimed no menu bar~~ | ✅ **FIXED** — documents the shipped lightweight menu-bar control surface. |
 | ~~`architecture.md`: `ModelDownloader` with progress bar~~ | ✅ **FIXED** — WhisperKit downloads; Parrot owns bounded progress reporting. |
 | ~~No `--version` flag~~ | ✅ **FIXED** — release builds are stamped from their tag. |
 
@@ -442,9 +451,10 @@ Dead code: `ModelsManifest` (`TranscriptionModel.swift:19`, orphaned by `abc17a0
 claims `parrot doctor` uses it — it uses `allOK`), `configureButton(recording:)`'s parameter
 (unused since `14ef846`).
 
-The `Transcriber` protocol is currently decorative: `Run` holds a concrete
-`WhisperKitTranscriber`, and `warmUp()` isn't on the protocol, so nothing can be generic over
-it. It'll need `warmUp()` before a second engine can slot in.
+✅ **FIXED** — `Run` uses the `Transcriber` protocol through `TranscriberFactory`; warmup,
+personalization, in-memory transcription, and file transcription are shared by WhisperKit and both
+Parakeet variants. WhisperKit and compact Parakeet keep long-file audio bounded; Unified Parakeet's
+upstream file converter still materializes the resampled input before its bounded model windows.
 
 ### P4 — concurrency hygiene
 
@@ -474,8 +484,9 @@ created and resumed.
 - ✅ **FIXED** — Cursor injection adds one configurable delivery-only boundary space, so
   back-to-back dictations cannot concatenate (`helloworld`). History, journals, command stdin,
   and file output retain exact processed text; no surrounding application content is inspected.
-- No `DecodingOptions` passed to WhisperKit — no language hint, and no control over
-  temperature fallback, which is the main lever against hallucination loops.
+- ✅ **FIXED** — WhisperKit receives precomputed dictation/note `DecodingOptions`, an optional
+  pinned language (or per-capture detection), and bounded personalization/context prompt tokens.
+  Its decoder retains the upstream temperature-fallback and hallucination thresholds.
 - `Setup.waitForAccessibility` throws `ExitCode(0)` on the incomplete path (`Setup.swift:42`),
   so scripts can't detect that setup didn't finish.
 - `Install.resolveBinaryPath` prefers `/usr/local/bin/parrot` even when run from a dev build,

@@ -103,6 +103,18 @@ to the same inode, so it performs no second PCM conversion, byte copy, or length
 allocation. Age/orphan scans run at startup and at most hourly after successful delivery, outside
 capture and inference.
 
+## Live long-note capture cost
+
+The active microphone path converts each incoming Float32 buffer once into the private PCM16
+recovery spool. Ten one-minute runs in 1,024-sample chunks averaged **59 ms per recorded minute**
+on this Mac, spread across the minute rather than paid after hotkey release. PCM16 grows by
+**1.92 MB per minute**. The normal in-memory capture path is capped at 1,920,000 samples—about
+**7.7 MB / two minutes**—then released while the file continues. Warm idle buffers never touch the
+spool. WhisperKit decodes with one incremental 120-second chunk buffered; compact Parakeet uses its
+disk-backed converter. Unified Parakeet still materializes resampled file input before running its
+bounded 15-second model windows, so the default Whisper engine remains the strictest memory choice
+for very long live notes.
+
 ## Dedicated note-hotkey routing cost
 
 Primary and note shortcuts share one `CGEventTap` and one gesture controller; they do not load or

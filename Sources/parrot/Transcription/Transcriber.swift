@@ -9,7 +9,11 @@ protocol Transcriber: Sendable {
         mode: DictationMode,
         recognitionContext: String?
     ) async throws -> LiveTranscription
-    func transcribeFile(at url: URL, mode: DictationMode) async throws -> TimedTranscription
+    func transcribeFile(
+        at url: URL,
+        mode: DictationMode,
+        recognitionContext: String?
+    ) async throws -> TimedTranscription
 }
 
 /// Immutable, bounded recognition state that can be replaced between
@@ -27,6 +31,10 @@ extension Transcriber {
 
     func transcribe(_ audio: [Float], mode: DictationMode) async throws -> LiveTranscription {
         try await transcribe(audio, mode: mode, recognitionContext: nil)
+    }
+
+    func transcribeFile(at url: URL, mode: DictationMode) async throws -> TimedTranscription {
+        try await transcribeFile(at: url, mode: mode, recognitionContext: nil)
     }
 }
 

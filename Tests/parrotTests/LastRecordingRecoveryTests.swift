@@ -40,6 +40,63 @@ final class LastRecordingRecoveryTests: XCTestCase {
         XCTAssertFalse(try LastRecordingRecovery(directory: directory).restorePending())
     }
 
+    func testPreparingFastRetryRecreatesItsPrivateSafetyCopy() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LastRecordingRecovery(directory: directory)
+        try store.stage(samples: [0.1, 0.2], sampleRate: 16_000)
+        try store.markDelivered()
+
+        let recording = try XCTUnwrap(store.prepareForRetry())
+
+        XCTAssertTrue(store.hasPendingFile)
+        XCTAssertEqual(recording.sampleCount, 2)
+        XCTAssertEqual(permissions(store.fileURL), 0o600)
+    }
+
+    func testStartupRepairsCaptureInterruptedBeforeHeaderFinalization() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LastRecordingRecovery(directory: directory)
+        var spool: LiveRecordingSpool? = try LiveRecordingSpool(
+            fileURL: store.fileURL,
+            sampleRate: 16_000
+        )
+        try spool?.append([Float](repeating: 0.2, count: 8_000))
+        spool = nil
+
+        XCTAssertTrue(try store.restorePending())
+        XCTAssertEqual(store.samples()?.samples.count, 8_000)
+        XCTAssertEqual(store.recording()?.sampleCount, 8_000)
+    }
+
+    func testLongRecoveryStaysFileBackedAndLeavesNoUnboundedSampleArray() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LastRecordingRecovery(directory: directory)
+        let spool = try LiveRecordingSpool(fileURL: store.fileURL, sampleRate: 16_000)
+        let chunk = [Float](repeating: 0.1, count: 1_024)
+        var remaining = AudioCapture.maximumInMemorySamples + 1
+        while remaining > 0 {
+            let count = min(remaining, chunk.count)
+            try spool.append(chunk.prefix(count))
+            remaining -= count
+        }
+        _ = try spool.finish()
+
+        XCTAssertTrue(try store.restorePending())
+        XCTAssertNil(store.samples())
+        guard case .file(_, let sampleRate, let sampleCount) = try XCTUnwrap(store.recording()) else {
+            return XCTFail("expected a file-backed long recording")
+        }
+        XCTAssertEqual(sampleRate, 16_000)
+        XCTAssertEqual(sampleCount, AudioCapture.maximumInMemorySamples + 1)
+
+        try store.markDelivered()
+        XCTAssertFalse(store.hasRecording)
+        XCTAssertFalse(store.hasPendingFile)
+    }
+
     func testNewCaptureAtomicallyReplacesPriorSlot() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -99,6 +156,20 @@ final class LastRecordingRecoveryTests: XCTestCase {
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
+    }
+
+    func testStartupRejectsSymlinkedDirectoryWithoutPruningItsTarget() throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outside = root.appendingPathComponent("outside", isDirectory: true)
+        let linked = root.appendingPathComponent("linked", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let outsideTemporary = outside.appendingPathComponent(".last-recording-keep.tmp")
+        try Data("keep".utf8).write(to: outsideTemporary)
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: outside)
+
+        XCTAssertThrowsError(try LastRecordingRecovery(directory: linked).restorePending())
+        XCTAssertEqual(try Data(contentsOf: outsideTemporary), Data("keep".utf8))
     }
 
     func testOneMinuteSafetyCopyStaysOffTheCriticalPathBudget() throws {

@@ -136,10 +136,21 @@ actor WhisperKitTranscriber: Transcriber {
     /// sequentially through this actor's already-warmed model.
     func transcribeFile(
         at url: URL,
-        mode: DictationMode
+        mode: DictationMode,
+        recognitionContext: String?
     ) async throws -> TimedTranscription {
         if pipeline == nil { try await warmUp() }
         guard let pipeline else { throw TranscriberError.notLoaded }
+
+        let basePromptTerms = mode == .notes ? notePromptTerms + promptTerms : promptTerms
+        let contextualOptions = recognitionContext.map {
+            Self.decodingOptions(
+                promptTerms: basePromptTerms,
+                recognitionContext: $0,
+                tokenizer: pipeline.tokenizer,
+                language: language
+            )
+        }
 
         let results = try await pipeline.transcribe(
             audioPath: url.path,
@@ -149,16 +160,19 @@ actor WhisperKitTranscriber: Transcriber {
                     maxBufferedChunks: 1
                 )
             ),
-            decodeOptions: mode == .notes ? noteDecodingOptions : decodingOptions
+            decodeOptions: contextualOptions
+                ?? (mode == .notes ? noteDecodingOptions : decodingOptions)
         )
         var segments = processedSegments(from: results)
         if automaticParagraphs && mode == .notes {
             segments = (try? AudioPauseDetector.refining(segments, audioAt: url)) ?? segments
         }
+        let originalText = sanitizedText(from: results)
         return TimedTranscription(
-            text: vocabularyReplacer.applying(to: sanitizedText(from: results)),
+            text: vocabularyReplacer.applying(to: originalText),
             language: results.first?.language ?? "unknown",
-            segments: segments
+            segments: segments,
+            originalText: originalText
         )
     }
 
@@ -269,9 +283,41 @@ actor WhisperKitTranscriber: Transcriber {
 }
 
 struct TimedTranscription: Codable, Equatable, Sendable {
+    let originalText: String
     let text: String
     let language: String
     let segments: [TimedTranscriptSegment]
+
+    init(
+        text: String,
+        language: String,
+        segments: [TimedTranscriptSegment],
+        originalText: String? = nil
+    ) {
+        self.originalText = originalText ?? text
+        self.text = text
+        self.language = language
+        self.segments = segments
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text, language, segments
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        text = try container.decode(String.self, forKey: .text)
+        originalText = text
+        language = try container.decode(String.self, forKey: .language)
+        segments = try container.decode([TimedTranscriptSegment].self, forKey: .segments)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(text, forKey: .text)
+        try container.encode(language, forKey: .language)
+        try container.encode(segments, forKey: .segments)
+    }
 }
 
 struct TimedTranscriptSegment: Codable, Equatable, Sendable {

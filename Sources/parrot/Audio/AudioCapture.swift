@@ -114,7 +114,26 @@ struct AudioRecoveryState: Equatable {
 /// which was clipping the front of every utterance; a hot session plus a
 /// pre-roll ring buffer means a capture begins *before* the key went down. The
 /// cost is that macOS shows the mic-in-use indicator the whole time parrot runs.
+struct CapturedAudio: Sendable {
+    let samples: [Float]?
+    let fileURL: URL?
+    let sampleRate: Int
+    let sampleCount: Int
+    let rms: Float
+
+    var duration: TimeInterval {
+        guard sampleRate > 0 else { return 0 }
+        return TimeInterval(sampleCount) / TimeInterval(sampleRate)
+    }
+
+    var isEmpty: Bool { sampleCount == 0 }
+}
+
 final class AudioCapture: NSObject {
+    enum MemoryAction: Equatable {
+        case append
+        case switchToFile
+    }
     enum CaptureError: LocalizedError {
         case deviceNotFound(String)
         case inputCreationFailed(Error)
@@ -139,6 +158,20 @@ final class AudioCapture: NSObject {
     }
 
     static let targetSampleRate: Double = 16_000
+    /// The common path stays in memory; longer locked notes continue through
+    /// the live WAV without capture RAM growing with their duration.
+    static let maximumInMemorySeconds: TimeInterval = 120
+    static let maximumInMemorySamples = Int(targetSampleRate * maximumInMemorySeconds)
+
+    static func memoryAction(
+        currentSamples: Int,
+        incomingSamples: Int,
+        hasLiveSpool: Bool
+    ) -> MemoryAction {
+        hasLiveSpool && currentSamples + incomingSamples > maximumInMemorySamples
+            ? .switchToFile
+            : .append
+    }
 
     /// How much audio to keep from before the hotkey went down.
     static let preRollSeconds: Double = 0.3
@@ -151,6 +184,8 @@ final class AudioCapture: NSObject {
 
     private let lock = NSLock()
     private var captured: [Float] = []
+    private var recordingSpool: LiveRecordingSpool?
+    private var recordingIsFileBacked = false
     private var recoveryState: AudioRecoveryState
 
     /// Fixed-size circular pre-roll. Always written, even mid-capture, so the
@@ -164,6 +199,7 @@ final class AudioCapture: NSObject {
     /// allowed Bluetooth default) when no ranked device is currently present.
     private let startupFallbackDeviceUID: String?
     private let usePreRoll: Bool
+    private let liveRecordingURL: URL?
     /// Accessed only on `sessionQueue`.
     private var configured = false
     private var activeDeviceUID: String?
@@ -191,18 +227,24 @@ final class AudioCapture: NSObject {
     /// discontinuous. Arbitrary thread; callers should hop to their UI queue.
     var onCaptureInterrupted: ((String) -> Void)?
 
+    /// The private live recovery stream failed. Continuing could silently
+    /// truncate a long note, so callers should cancel the active gesture.
+    var onCaptureStorageFailed: ((String) -> Void)?
+
     /// - Parameter usePreRoll: when false, the session only runs while the
     ///   hotkey is held (no mic indicator at idle, but the front of each
     ///   utterance is clipped).
     init(
         device: AudioInputDevice?,
         preferredDeviceUIDs: [String]? = nil,
-        usePreRoll: Bool = true
+        usePreRoll: Bool = true,
+        liveRecordingURL: URL? = nil
     ) {
         let requested = preferredDeviceUIDs ?? device.map { [$0.uid] } ?? []
         self.preferredDeviceUIDs = AudioDevices.normalizedPriorityUIDs(requested)
         self.startupFallbackDeviceUID = device?.uid
         self.usePreRoll = usePreRoll
+        self.liveRecordingURL = liveRecordingURL
         self.recoveryState = AudioRecoveryState(keepsSessionWarm: usePreRoll)
         super.init()
         installObservers()
@@ -238,8 +280,12 @@ final class AudioCapture: NSObject {
 
     /// Begin recording. Idempotent.
     func start() throws {
+        let newSpool = try liveRecordingURL.map {
+            try LiveRecordingSpool(fileURL: $0, sampleRate: Int(Self.targetSampleRate))
+        }
         lock.lock()
         captured.removeAll(keepingCapacity: true)
+        recordingIsFileBacked = false
         if usePreRoll, ringCount > 0 {
             // Drain the ring oldest-first so the capture starts ~300 ms before
             // the keypress.
@@ -249,7 +295,19 @@ final class AudioCapture: NSObject {
                 captured.append(ring[(start + i) % ring.count])
             }
         }
+        do {
+            try newSpool?.append(captured)
+        } catch {
+            newSpool?.cancel()
+            captured.removeAll(keepingCapacity: true)
+            lock.unlock()
+            throw error
+        }
+        recordingSpool = newSpool
         guard recoveryState.beginCapture() else {
+            recordingSpool?.cancel()
+            recordingSpool = nil
+            captured.removeAll(keepingCapacity: true)
             lock.unlock()
             throw CaptureError.temporarilyUnavailable
         }
@@ -276,6 +334,9 @@ final class AudioCapture: NSObject {
             lock.lock()
             _ = recoveryState.endCapture()
             captured.removeAll(keepingCapacity: true)
+            recordingSpool?.cancel()
+            recordingSpool = nil
+            recordingIsFileBacked = false
             lock.unlock()
             throw error
         }
@@ -283,11 +344,15 @@ final class AudioCapture: NSObject {
 
     /// Stop recording and return everything captured, pre-roll included.
     @discardableResult
-    func stop() -> [Float] {
+    func stop() throws -> CapturedAudio {
         lock.lock()
         let wasCapturing = recoveryState.endCapture()
         let out = captured
         captured.removeAll(keepingCapacity: true)
+        let spool = recordingSpool
+        recordingSpool = nil
+        let fileBacked = recordingIsFileBacked
+        recordingIsFileBacked = false
         let pendingPromotion = pendingPreferredDevice
         pendingPreferredDevice = nil
         lock.unlock()
@@ -308,7 +373,60 @@ final class AudioCapture: NSObject {
                 )
             }
         }
-        return wasCapturing ? out : []
+        guard wasCapturing else {
+            spool?.cancel()
+            return CapturedAudio(
+                samples: [], fileURL: nil, sampleRate: Int(Self.targetSampleRate),
+                sampleCount: 0, rms: 0
+            )
+        }
+        if let summary = try spool?.finish() {
+            return CapturedAudio(
+                samples: fileBacked ? nil : out,
+                fileURL: summary.fileURL,
+                sampleRate: summary.sampleRate,
+                sampleCount: summary.sampleCount,
+                rms: summary.rms
+            )
+        }
+        return CapturedAudio(
+            samples: out,
+            fileURL: nil,
+            sampleRate: Int(Self.targetSampleRate),
+            sampleCount: out.count,
+            rms: computeRMS(out)
+        )
+    }
+
+    /// Escape/capture interruption discards the live spool instead of making
+    /// it available for transcription or retry.
+    func cancel() {
+        lock.lock()
+        _ = recoveryState.endCapture()
+        captured.removeAll(keepingCapacity: true)
+        let spool = recordingSpool
+        recordingSpool = nil
+        recordingIsFileBacked = false
+        let pendingPromotion = pendingPreferredDevice
+        pendingPreferredDevice = nil
+        lock.unlock()
+        spool?.cancel()
+
+        if !usePreRoll {
+            sessionQueue.sync {
+                recoveryGeneration += 1
+                recoveryScheduled = false
+                if session.isRunning { session.stopRunning() }
+            }
+        }
+        if let pendingPromotion {
+            sessionQueue.async { [weak self] in
+                self?.handlePreferredDeviceConnected(
+                    uid: pendingPromotion.uid,
+                    name: pendingPromotion.name
+                )
+            }
+        }
     }
 
     // MARK: -
@@ -666,8 +784,31 @@ extension AudioCapture: AVCaptureAudioDataOutputSampleBufferDelegate {
 
         lock.lock()
         let isCapturing = recoveryState.isCapturing
+        var storageFailure: String?
         if isCapturing {
-            captured.append(contentsOf: samples)
+            do {
+                try recordingSpool?.append(samples)
+                if !recordingIsFileBacked {
+                    switch Self.memoryAction(
+                        currentSamples: captured.count,
+                        incomingSamples: samples.count,
+                        hasLiveSpool: recordingSpool != nil
+                    ) {
+                    case .append:
+                        captured.append(contentsOf: samples)
+                    case .switchToFile:
+                        captured.removeAll(keepingCapacity: false)
+                        recordingIsFileBacked = true
+                    }
+                }
+            } catch {
+                storageFailure = error.localizedDescription
+                _ = recoveryState.endCapture()
+                captured.removeAll(keepingCapacity: false)
+                recordingSpool?.cancel()
+                recordingSpool = nil
+                recordingIsFileBacked = false
+            }
         }
         if usePreRoll {
             for s in samples {
@@ -680,6 +821,7 @@ extension AudioCapture: AVCaptureAudioDataOutputSampleBufferDelegate {
         needsAudioFlowConfirmation = false
         lock.unlock()
 
+        if let storageFailure { onCaptureStorageFailed?(storageFailure) }
         if confirmsRecovery { markAudioFlowing() }
 
         // A warm session streams continuously for pre-roll. Waveform work is

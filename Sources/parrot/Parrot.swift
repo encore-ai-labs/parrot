@@ -758,10 +758,12 @@ struct Run: ParsableCommand {
         defer { NotificationCenter.default.removeObserver(terminationObserver) }
 
         let monitor = HotkeyMonitor(hotkeys: configuredHotkeys, debug: debugHotkey)
+        let recordingRecovery = LastRecordingRecovery()
         let capture = AudioCapture(
             device: chosenDevice,
             preferredDeviceUIDs: capturePriorityUIDs,
-            usePreRoll: defaults.warmMicrophone
+            usePreRoll: defaults.warmMicrophone,
+            liveRecordingURL: recordingRecovery.fileURL
         )
         capture.onStatus = { message in
             FileHandle.standardError.write(Data("\(message)\n".utf8))
@@ -837,7 +839,6 @@ struct Run: ParsableCommand {
         }
         pruneHistoryIfNeeded(true)
         let lifecycle = DictationLifecycle()
-        let recordingRecovery = LastRecordingRecovery()
         let restoredRecording: Bool
         do {
             restoredRecording = try recordingRecovery.restorePending()
@@ -891,8 +892,7 @@ struct Run: ParsableCommand {
         }
 
         func transcribeAndDeliver(
-            _ samples: [Float],
-            sampleRate: Int,
+            _ recording: LastRecordingRecovery.Recording,
             mode modeForCapture: DictationMode,
             deliveryRoute: HotkeyModeRouter.DeliveryRoute,
             recognitionContext: Task<String?, Never>?,
@@ -900,18 +900,7 @@ struct Run: ParsableCommand {
             audioDuration seconds: TimeInterval,
             personalizationUpdate: Task<PersonalizationRefresh, Never>
         ) {
-            Task { [modeForCapture, deliveryRoute, recognitionContext, samples] in
-                do {
-                    try recordingRecovery.stage(samples: samples, sampleRate: sampleRate)
-                } catch {
-                    // The samples are still recoverable in memory and normal
-                    // transcription should never fail solely because the
-                    // crash-safety copy could not be written.
-                    FileHandle.standardError.write(Data(
-                        "recovery save failed: \(error.localizedDescription)\n".utf8
-                    ))
-                }
-
+            Task { [modeForCapture, deliveryRoute, recognitionContext, recording] in
                 let started = Date()
                 do {
                     // File I/O and prompt rebuilding normally finish while
@@ -919,11 +908,27 @@ struct Run: ParsableCommand {
                     // decoder and post-processing use one coherent revision.
                     let personalization = await personalizationUpdate.value.snapshot
                     let context = await recognitionContext?.value
-                    let transcription = try await transcriber.transcribe(
-                        samples,
-                        mode: modeForCapture,
-                        recognitionContext: context
-                    )
+                    let transcription: LiveTranscription
+                    switch recording {
+                    case .memory(let samples, _, _):
+                        transcription = try await transcriber.transcribe(
+                            samples,
+                            mode: modeForCapture,
+                            recognitionContext: context
+                        )
+                    case .file(let url, _, _):
+                        let timed = try await transcriber.transcribeFile(
+                            at: url,
+                            mode: modeForCapture,
+                            recognitionContext: context
+                        )
+                        transcription = LiveTranscription(
+                            text: timed.text,
+                            language: timed.language,
+                            segments: timed.segments,
+                            originalText: timed.originalText
+                        )
+                    }
                     let applyCleanup = defaults.cleanup
                         && RecognitionLanguage.supportsEnglishCleanup(transcription.language)
                     if defaults.cleanup && !applyCleanup {
@@ -939,11 +944,21 @@ struct Run: ParsableCommand {
                     if defaults.automaticParagraphs,
                        spokenSelection.mode == .notes,
                        modeForCapture != .notes {
-                        processingSegments = AudioPauseDetector.refining(
-                            transcription.segments,
-                            samples: samples,
-                            sampleRate: Double(sampleRate)
-                        )
+                        switch recording {
+                        case .memory(let samples, let sampleRate, _):
+                            processingSegments = AudioPauseDetector.refining(
+                                transcription.segments,
+                                samples: samples,
+                                sampleRate: Double(sampleRate)
+                            )
+                        case .file(let url, _, _):
+                            processingSegments = (
+                                try? AudioPauseDetector.refining(
+                                    transcription.segments,
+                                    audioAt: url
+                                )
+                            ) ?? transcription.segments
+                        }
                     } else {
                         processingSegments = transcription.segments
                     }
@@ -1056,6 +1071,9 @@ struct Run: ParsableCommand {
                                 "recovery cleanup failed: \(error.localizedDescription)\n".utf8
                             ))
                         }
+                        await MainActor.run {
+                            menuBar.setRecordingRecovery(available: recordingRecovery.hasRecording)
+                        }
                         pruneHistoryIfNeeded(false)
                     }
                 } catch {
@@ -1095,6 +1113,7 @@ struct Run: ParsableCommand {
                 hasNoteJournal: noteJournalWriter != nil
             )
             do {
+                try recordingRecovery.beginLiveCapture()
                 try capture.start()
                 _ = monitor.startExitKeyMonitoring()
                 let selectionSource = selection.isAutomatic
@@ -1122,6 +1141,7 @@ struct Run: ParsableCommand {
                 lifecycle.failStart(sessionID)
                 FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
                 MainActor.assumeIsolated {
+                    menuBar.setRecordingRecovery(available: recordingRecovery.hasRecording)
                     menuBar.setRecordingRecoveryBusy(false)
                 }
             }
@@ -1136,27 +1156,56 @@ struct Run: ParsableCommand {
             let personalizationUpdateForCapture = recordingPersonalizationUpdate
                 ?? preparePersonalization()
             monitor.stopExitKeyMonitoring()
-            let samples = capture.stop()
+            let captured: CapturedAudio
+            let recording: LastRecordingRecovery.Recording?
+            do {
+                captured = try capture.stop()
+                recording = try recordingRecovery.adoptLiveCapture(captured)
+            } catch {
+                contextForCapture?.cancel()
+                _ = lifecycle.finish(sessionID)
+                FileHandle.standardError.write(Data(
+                    "capture finalization failed: \(error.localizedDescription)\n".utf8
+                ))
+                MainActor.assumeIsolated {
+                    overlay?.hide()
+                    menuBar.setRecording(false)
+                    menuBar.setRecordingRecovery(available: recordingRecovery.hasRecording)
+                    menuBar.setRecordingRecoveryBusy(false)
+                }
+                return
+            }
             MainActor.assumeIsolated {
                 overlay?.show(.transcribing)
                 menuBar.setTranscribing()
             }
-            let seconds = Double(samples.count) / AudioCapture.targetSampleRate
-            let rms = computeRMS(samples)
+            let seconds = captured.duration
+            let rms = captured.rms
             FileHandle.standardError.write(Data(
                 String(format: "○ captured %.2fs · rms %.4f\n", seconds, rms).utf8
             ))
-            if dumpWav, !samples.isEmpty {
+            if dumpWav, !captured.isEmpty {
                 let path = "/tmp/parrot-last.wav"
                 do {
-                    try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
+                    let destination = URL(fileURLWithPath: path)
+                    try? FileManager.default.removeItem(at: destination)
+                    if let source = captured.fileURL {
+                        try FileManager.default.copyItem(at: source, to: destination)
+                    } else if let samples = captured.samples {
+                        try WAVWriter.write(
+                            samples: samples,
+                            sampleRate: captured.sampleRate,
+                            to: path
+                        )
+                    }
                     FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
                 } catch {
                     FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
                 }
             }
-            guard !samples.isEmpty else {
+            guard let recording else {
                 contextForCapture?.cancel()
+                try? recordingRecovery.forget()
                 _ = lifecycle.finish(sessionID)
                 MainActor.assumeIsolated {
                     overlay?.hide()
@@ -1171,6 +1220,7 @@ struct Run: ParsableCommand {
                 enabled: !noAudioGate
             ) {
                 contextForCapture?.cancel()
+                try? recordingRecovery.forget()
                 _ = lifecycle.finish(sessionID)
                 FileHandle.standardError.write(Data("× \(rejection.message) — discarded\n".utf8))
                 MainActor.assumeIsolated {
@@ -1184,8 +1234,7 @@ struct Run: ParsableCommand {
             retryDeliveryRoute = deliveryRouteForCapture
             retryContext = contextForCapture
             transcribeAndDeliver(
-                samples,
-                sampleRate: Int(AudioCapture.targetSampleRate),
+                recording,
                 mode: modeForCapture,
                 deliveryRoute: deliveryRouteForCapture,
                 recognitionContext: contextForCapture,
@@ -1200,7 +1249,8 @@ struct Run: ParsableCommand {
             recordingContext?.cancel()
             recordingContext = nil
             monitor.stopExitKeyMonitoring()
-            _ = capture.stop()
+            capture.cancel()
+            try? recordingRecovery.forget()
             FileHandle.standardError.write(Data("× recording cancelled\n".utf8))
             MainActor.assumeIsolated {
                 overlay?.hide()
@@ -1210,11 +1260,20 @@ struct Run: ParsableCommand {
         }
 
         let retryLastRecording = {
-            guard let audio = recordingRecovery.samples(),
+            let preparedRecording: LastRecordingRecovery.Recording?
+            do {
+                preparedRecording = try recordingRecovery.prepareForRetry()
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "couldn't prepare recording retry: \(error.localizedDescription)\n".utf8
+                ))
+                return
+            }
+            guard let recording = preparedRecording,
                   let sessionID = lifecycle.beginRetry()
             else { return }
             let personalizationUpdate = preparePersonalization()
-            let seconds = Double(audio.samples.count) / Double(audio.sampleRate)
+            let seconds = recording.duration
             FileHandle.standardError.write(Data(
                 "↻ retrying last recording · \(retryMode.rawValue)\n".utf8
             ))
@@ -1228,8 +1287,7 @@ struct Run: ParsableCommand {
                 menuBar.setRecordingRecoveryBusy(true)
             }
             transcribeAndDeliver(
-                audio.samples,
-                sampleRate: audio.sampleRate,
+                recording,
                 mode: retryMode,
                 deliveryRoute: retryDeliveryRoute,
                 recognitionContext: retryContext,
@@ -1287,6 +1345,14 @@ struct Run: ParsableCommand {
             DispatchQueue.main.async {
                 FileHandle.standardError.write(Data(
                     "× \(reason) — partial recording discarded\n".utf8
+                ))
+                gesture.handle(.cancelKeyPressed)
+            }
+        }
+        capture.onCaptureStorageFailed = { reason in
+            DispatchQueue.main.async {
+                FileHandle.standardError.write(Data(
+                    "× live recovery failed: \(reason) — recording discarded\n".utf8
                 ))
                 gesture.handle(.cancelKeyPressed)
             }

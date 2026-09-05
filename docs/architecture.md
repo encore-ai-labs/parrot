@@ -2,7 +2,8 @@
 
 ## Goals
 
-1. **CLI executable.** Single binary, launched from the terminal. No menubar, no dock icon, no settings window.
+1. **CLI executable.** Single binary, launched from the terminal, with a lightweight menu-bar
+   status/control surface. No dock icon or settings window.
 2. **Push-to-talk.** Hold Fn, speak, release — transcript appears at the cursor.
 3. **Minimal recording feedback.** A small floating pill at the bottom of the screen while recording, so the user knows the mic is hot. Click-through, borderless, hidden when idle.
 4. **On-device.** No network calls for transcription. Audio never leaves the machine.
@@ -128,8 +129,9 @@ stranded. A latched recording has no down key and remains available after the ta
 **Fn key caveats, two of them:**
 
 1. macOS maps Fn (🌐) to "Show Emoji & Symbols" or "Start Dictation" depending on System
-   Settings → Keyboard → Press 🌐 key to. The tap sees the keypress regardless, but the system
-   action also fires. `parrot doctor` detects this and tells the user to set "Do Nothing".
+   Settings → Keyboard → Press 🌐 key to. When either selected shortcut is Fn, startup temporarily
+   sets that bare-key action to "Do Nothing" before the event tap begins and restores the prior
+   value on a clean exit. `parrot doctor` reports the effective state.
 2. **Third-party keyboards don't send Fn at all.** On those boards `Fn` is a firmware-local
    layer key, handled inside the keyboard to produce F-keys and media controls; macOS never
    sees an event. Only Apple keyboards emit a real `fn`. Anyone on a mechanical keyboard must
@@ -147,6 +149,14 @@ hold yields ~1.78 s of audio. Idle warm buffers update only the ring: Parrot ski
 meter delivery until a capture is active. `parrot settings set --cold-mic` persistently reverts
 to opening the device only while the key is held, trading clipped leading audio for no idle mic
 indicator; `--cold-mic` and `--warm-mic` are one-run overrides.
+
+An active capture also streams PCM16 into the exact private recovery WAV. Ordinary recordings keep
+their Float32 array for the lowest-latency inference path. At two minutes the array is released and
+only the WAV continues growing, bounding capture memory at roughly 7.7 MB; file transcription then
+uses one incremental 120-second chunk at a time. Stop is still controlled solely by the initiating
+hotkey, with no duration timeout. Escape closes and deletes the live spool. A crash or clean process
+termination leaves the payload in place, and startup repairs only the two WAV size fields from the
+regular file length before offering retry.
 
 **Why not `AVAudioEngine`.** It opens the *system default* input the instant
 `engine.inputNode` is touched, before any code can rebind it. Bluetooth can't carry A2DP
@@ -190,7 +200,11 @@ protocol Transcriber {
     var modelID: String { get }
     func warmUp() async throws
     func transcribe(_ audio: [Float], mode: DictationMode) async throws -> LiveTranscription
-    func transcribeFile(at url: URL, mode: DictationMode) async throws -> TimedTranscription
+    func transcribeFile(
+        at url: URL,
+        mode: DictationMode,
+        recognitionContext: String?
+    ) async throws -> TimedTranscription
 }
 ```
 
@@ -418,14 +432,14 @@ plan under an exclusive lock before applying it. Entire days before the cutoff d
 On the cutoff day, stable marked entries are trimmed individually, while ambiguous legacy content
 is preserved. Journals and arbitrary Markdown paths are outside this subsystem.
 
-`LastRecordingRecovery` provides one bounded audio recovery slot. Before inference, accepted
-16 kHz mono samples are streamed as a private PCM WAV and atomically renamed to
-`~/.local/share/parrot/recovery/last-recording.wav`; this avoids materializing a second complete
-audio buffer for a long hands-free note. Successful cursor or journal delivery removes the WAV,
-while inference failure or process interruption leaves it for the next launch. The daemon keeps
-the latest successful samples only in memory so **Retry Last Recording** can reuse the warmed
-model and current mode; a new accepted capture replaces them, and **Forget Last Recording**
-clears memory and disk. Recovery therefore does not become an unbounded audio history.
+`LastRecordingRecovery` provides one bounded audio recovery slot. Capture writes 16 kHz mono PCM
+directly to `~/.local/share/parrot/recovery/last-recording.wav`; no second complete audio buffer or
+post-stop encode is created. Successful cursor or journal delivery removes the WAV, while inference
+failure or process interruption leaves it for the current or next daemon. Short successful captures
+remain in memory so **Retry Last Recording** can reuse the warmed model and current mode; preparing
+that retry recreates its private crash-safety WAV. Long captures remain file-backed and are removed
+after successful delivery. A new capture replaces the slot, and **Forget Last Recording** clears
+memory and disk, so recovery cannot become an unbounded audio history.
 
 `HistoryAudioArchive` is a separate, explicit opt-in for users who need older-note recovery. After
 successful delivery and Markdown-history append, it pairs that entry's ID with a private 16 kHz

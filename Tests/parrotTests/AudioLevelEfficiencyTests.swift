@@ -10,6 +10,33 @@ final class AudioLevelEfficiencyTests: XCTestCase {
         XCTAssertTrue(shouldEmitAudioLevel(isCapturing: true, hasConsumer: true))
     }
 
+    func testLiveSpoolBoundsCaptureMemoryAfterTwoMinutes() {
+        XCTAssertEqual(
+            AudioCapture.memoryAction(
+                currentSamples: AudioCapture.maximumInMemorySamples - 1,
+                incomingSamples: 1,
+                hasLiveSpool: true
+            ),
+            .append
+        )
+        XCTAssertEqual(
+            AudioCapture.memoryAction(
+                currentSamples: AudioCapture.maximumInMemorySamples,
+                incomingSamples: 1,
+                hasLiveSpool: true
+            ),
+            .switchToFile
+        )
+        XCTAssertEqual(
+            AudioCapture.memoryAction(
+                currentSamples: AudioCapture.maximumInMemorySamples,
+                incomingSamples: 1,
+                hasLiveSpool: false
+            ),
+            .append
+        )
+    }
+
     func testCoalescerKeepsLatestLevelWithOnePendingDelivery() {
         var scheduled: [DispatchWorkItem] = []
         var delivered: [Float] = []

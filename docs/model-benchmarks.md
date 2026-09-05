@@ -116,6 +116,15 @@ debug performance harness, 100,000 route selections averaged 11 ms, or about **0
 per capture**. Delivery then reuses the existing `MarkdownJournal` append path. It does not alter
 audio capture, prompt size, inference, or steady-state event routing.
 
+## Optional recognition-context cost
+
+Recognition context is off by default, so established capture and inference paths add no clipboard
+or Accessibility read and reuse their precomputed decoder options. When enabled, source preparation
+is bounded to 2,048 characters and at most 32 context tokens inside the existing 96-token prompt.
+In the debug performance harness, 100 preparations from two 28,000-character inputs averaged
+47 ms total on this Mac, or about **0.47 ms per capture**. Selected-text IPC has a separate 50ms
+timeout and runs concurrently with recording rather than delaying microphone startup.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

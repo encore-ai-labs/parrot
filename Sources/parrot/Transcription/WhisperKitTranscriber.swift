@@ -88,17 +88,31 @@ actor WhisperKitTranscriber: Transcriber {
         }
     }
 
-    func transcribe(_ audio: [Float]) async throws -> LiveTranscription {
-        try await transcribe(audio, mode: .dictation)
-    }
-
-    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> LiveTranscription {
+    func transcribe(
+        _ audio: [Float],
+        mode: DictationMode,
+        recognitionContext: String?
+    ) async throws -> LiveTranscription {
         if pipeline == nil { try await warmUp() }
         guard let pipeline else { throw TranscriberError.notLoaded }
 
+        let basePromptTerms = mode == .notes ? notePromptTerms + promptTerms : promptTerms
+        let contextualOptions: DecodingOptions?
+        if let recognitionContext {
+            contextualOptions = Self.decodingOptions(
+                promptTerms: basePromptTerms,
+                recognitionContext: recognitionContext,
+                tokenizer: pipeline.tokenizer,
+                language: language
+            )
+        } else {
+            contextualOptions = nil
+        }
+
         let results = try await pipeline.transcribe(
             audioArray: audio,
-            decodeOptions: mode == .notes ? noteDecodingOptions : decodingOptions
+            decodeOptions: contextualOptions
+                ?? (mode == .notes ? noteDecodingOptions : decodingOptions)
         )
         var segments = processedSegments(from: results)
         if automaticParagraphs && mode == .notes {
@@ -194,6 +208,7 @@ actor WhisperKitTranscriber: Transcriber {
     /// keeps the fast dictation path effectively constant-sized.
     static func decodingOptions(
         promptTerms: [String],
+        recognitionContext: String? = nil,
         tokenizer: WhisperTokenizer?,
         language: String?
     ) -> DecodingOptions {
@@ -202,22 +217,52 @@ actor WhisperKitTranscriber: Transcriber {
             usePrefillPrompt: true,
             detectLanguage: language == nil
         )
-        guard !promptTerms.isEmpty, let tokenizer else { return options }
+        guard let tokenizer else { return options }
 
         let maximumPromptTokens = 96
+        let maximumContextTokens = 32
+        let persistentLimit = recognitionContext == nil
+            ? maximumPromptTokens
+            : maximumPromptTokens - maximumContextTokens
         var tokens: [Int] = []
         for term in promptTerms {
             let encoded = tokenizer.encode(text: " \(term).")
                 .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
-            guard !encoded.isEmpty, tokens.count + encoded.count <= maximumPromptTokens else {
+            guard !encoded.isEmpty, tokens.count + encoded.count <= persistentLimit else {
                 continue
             }
             tokens.append(contentsOf: encoded)
+        }
+        if let recognitionContext {
+            let contextTokens = tokenizer.encode(text: " \(recognitionContext)")
+                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+            tokens = mergingPromptTokens(
+                persistent: tokens,
+                context: contextTokens,
+                maximumPromptTokens: maximumPromptTokens,
+                maximumContextTokens: maximumContextTokens
+            )
         }
         guard !tokens.isEmpty else { return options }
 
         options.promptTokens = tokens
         return options
+    }
+
+    /// Keep stable personalization first and the most recent task context at
+    /// the suffix Whisper attends to most strongly. Exposed for budget tests
+    /// without constructing a model tokenizer.
+    nonisolated static func mergingPromptTokens(
+        persistent: [Int],
+        context: [Int],
+        maximumPromptTokens: Int = 96,
+        maximumContextTokens: Int = 32
+    ) -> [Int] {
+        let contextSuffix = Array(context.suffix(maximumContextTokens))
+        // Keep personalization work constant whenever context is enabled;
+        // unused context capacity is intentionally not reassigned.
+        let persistentLimit = max(0, maximumPromptTokens - maximumContextTokens)
+        return Array(persistent.prefix(persistentLimit)) + contextSuffix
     }
 }
 

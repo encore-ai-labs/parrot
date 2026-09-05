@@ -74,9 +74,13 @@ final class RecognitionLanguageTests: XCTestCase {
     func testLanguagesAndRunFlagsParse() throws {
         XCTAssertTrue(try Parrot.parseAsRoot(["languages"]) is Languages)
         let run = try XCTUnwrap(
-            try Run.parseAsRoot(["--model", "whisper-base", "--language", "Spanish"]) as? Run
+            try Run.parseAsRoot([
+                "--model", "whisper-base", "--language", "Spanish", "--context", "both",
+            ]) as? Run
         )
         XCTAssertEqual(run.model, "whisper-base")
         XCTAssertEqual(run.language, "Spanish")
+        XCTAssertEqual(run.recognitionContext, "both")
+        XCTAssertThrowsError(try Run.parseAsRoot(["--context", "screen"]))
     }
 }

@@ -211,8 +211,24 @@ Cursor delivery prepares a separate string with one trailing boundary space by d
 concatenation across consecutive captures. It does not double existing whitespace and can be
 disabled with `--no-space-after-paste` or the persisted setting. Preparation lives inside
 `TextInjector`, after delivery routing, so the boundary byte never enters transcript history,
-Markdown journals, local-command stdin, file output, recovery state, or model context. The policy
-does not inspect surrounding application text, selections, windows, or the clipboard.
+Markdown journals, local-command stdin, file output, recovery state, or model context. This spacing
+policy does not inspect surrounding application text, selections, windows, or the clipboard.
+
+### `RecognitionContextCapture`
+
+Recognition context is an explicit opt-in local Whisper hint, independent from delivery and
+app-mode matching. `off` is the built-in default. At hotkey-down the main actor snapshots the
+plain-text pasteboard value and focused process ID only for the configured source. A detached task
+then asks that process for `kAXSelectedTextAttribute` with a 50ms AX messaging timeout, so a slow or
+unsupported application cannot block microphone startup.
+
+`RecognitionContextBuilder` normalizes control/whitespace characters and caps the assembled value
+at 2,048 characters. Whisper reserves at most 32 tokens for the context suffix and at most 64 for
+persistent note/vocabulary/snippet hints, keeping the existing 96-token total and fixed per-capture
+prefill bound. Selection comes last when both sources are enabled because it most closely describes
+the focused writing task. Parakeet disables the feature before capture and reads no external text.
+The captured value remains in memory only, is reused for an explicit retry, and never enters logs,
+history, journals, delivery output, screen capture, or a network request.
 
 ### `MarkdownJournal`
 
@@ -554,7 +570,7 @@ flooding LaunchAgent logs.
 A `Codable` struct at `~/.config/parrot/config.json`, holding the chosen microphone UID,
 lowercase preference, first-run completion flag, and optional defaults for hotkey, model,
 dictation/notes mode, pause-aware paragraphs, speech cleanup, warm/cold microphone policy,
-cursor spacing, and delivery destination.
+cursor spacing, opt-in recognition context, and delivery destination.
 Every field is optional,
 so older config files decode unchanged and nil continues to mean "use the built-in default."
 
@@ -574,8 +590,10 @@ one-run CLI overrides never become accidental persistent state.
 `parrot apps add <running-name-or-bundle-id> --mode notes|dictation` stores an explicit
 `AppModeRule` in the same private config. At the start of each recording,
 `DictationModeController` compares only `NSWorkspace.frontmostApplication.bundleIdentifier`
-against those rules. It never reads window titles, accessibility text, selections,
-clipboards, or pixels, and the selected application is not written to history.
+against those rules. It never reads window titles, accessibility text, selections, clipboards,
+or pixels, and the selected application is not written to history. The independent, explicitly
+enabled recognition-context feature may read a selection or clipboard value as described above;
+app rules never enable that access implicitly.
 
 The controller captures a `DictationMode` before audio capture begins. That immutable value
 travels through transcription and formatting, so changing focus while Whisper runs cannot

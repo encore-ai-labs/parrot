@@ -35,6 +35,7 @@ struct Settings: ParsableCommand {
                         ? "  (inactive without note key)"
                         : "")
             )
+            print("context     \(defaults.recognitionContext.rawValue)  (local Whisper hint)")
             print("model       \(defaults.model)\(config.model == nil ? "  (recommended)" : "")")
             print("language    \(defaults.language)\(config.language == nil ? "  (default)" : "")")
             print("mode        \(defaults.mode.rawValue)\(config.mode == nil ? "  (default)" : "")")
@@ -106,6 +107,12 @@ struct Settings: ParsableCommand {
             help: "Restore the primary delivery destination for the note key."
         )
         var noNoteJournal: Bool = false
+
+        @Option(
+            name: .customLong("context"),
+            help: "Local Whisper hint: off, selected-text, clipboard, or both."
+        )
+        var recognitionContext: String?
 
         @Option(name: .long, help: "Model id from `parrot models list`.")
         var model: String?
@@ -197,6 +204,7 @@ struct Settings: ParsableCommand {
         func validate() throws {
             guard hotkey != nil || noteHotkey != nil || noNoteHotkey
                     || noteJournal != nil || noNoteJournal
+                    || recognitionContext != nil
                     || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
@@ -262,6 +270,12 @@ struct Settings: ParsableCommand {
             if let noteJournal {
                 _ = try MarkdownJournal.resolveURL(noteJournal)
             }
+            if let recognitionContext,
+               RecognitionContextSource.parse(recognitionContext) == nil {
+                throw ValidationError(
+                    "unknown context '\(recognitionContext)'; use off, selected-text, clipboard, or both"
+                )
+            }
             if let hotkey = hotkey.flatMap(Hotkey.parse),
                let noteHotkey = noteHotkey.flatMap(Hotkey.parse),
                hotkey.conflicts(with: noteHotkey) {
@@ -287,6 +301,7 @@ struct Settings: ParsableCommand {
         func run() throws {
             guard hotkey != nil || noteHotkey != nil || noNoteHotkey
                     || noteJournal != nil || noNoteJournal
+                    || recognitionContext != nil
                     || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
@@ -326,6 +341,14 @@ struct Settings: ParsableCommand {
                 config.noteJournalPath = url.path
             } else if noNoteJournal {
                 config.noteJournalPath = nil
+            }
+            if let recognitionContext {
+                guard let parsed = RecognitionContextSource.parse(recognitionContext) else {
+                    throw ValidationError(
+                        "unknown context '\(recognitionContext)'; use off, selected-text, clipboard, or both"
+                    )
+                }
+                config.recognitionContext = parsed.rawValue
             }
             if let noteHotkey = config.noteHotkey.flatMap(Hotkey.parse),
                let primaryHotkey = Hotkey.parse(config.hotkey ?? Hotkey.default.name),
@@ -415,6 +438,7 @@ struct Settings: ParsableCommand {
             config.hotkey = nil
             config.noteHotkey = nil
             config.noteJournalPath = nil
+            config.recognitionContext = nil
             config.model = nil
             config.language = nil
             config.mode = nil

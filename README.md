@@ -230,6 +230,29 @@ the four most recently added trigger phrases may enter Whisper's fixed prompt bu
 bodies never enter model context and nothing is sent over the network. Changes become active on
 the next recording, even when the daemon is already running.
 
+### Optional local recognition context
+
+If names, dates, or project terms are already visible where you are writing, Parrot can use a
+small amount of that text as a local Whisper recognition hint:
+
+```sh
+parrot settings set --context selected-text # focused app's current selection
+parrot settings set --context clipboard     # current plain-text clipboard value
+parrot settings set --context both          # clipboard first, selection prioritized last
+parrot settings set --context off           # default: read neither source
+parrot daemon restart
+```
+
+This is explicit opt-in and Whisper-only. At hotkey-down, Parrot snapshots at most 2,048
+characters, normalizes whitespace, and reserves at most 32 of its existing 96 decoder prompt
+tokens for the newest context. The Accessibility read runs with a 50ms cross-process timeout
+away from microphone startup; a missing selection, denied read, or slow app simply means no hint.
+Parakeet skips context without reading either source because that engine has no prompt API.
+
+Context stays in memory for that capture and its retry. It is never printed, written to transcript
+history or journals, included in delivered text, sent over a network, or used for screen OCR. Use
+`parrot --context selected-text` for a one-run override without changing the saved setting.
+
 ### Transcript history
 
 Successful dictations are also appended to daily Markdown files under
@@ -620,6 +643,7 @@ parrot settings
 parrot settings set --hotkey right-option
 parrot settings set --note-hotkey right-command # optional direct note-mode shortcut
 parrot settings set --note-journal ~/Documents/Notes/inbox.md # only the note key appends here
+parrot settings set --context selected-text # opt-in bounded local Whisper hint
 parrot settings set --model whisper-small.en --mode notes
 parrot settings set --no-auto-paragraphs # disable the note-mode default
 parrot settings set --cleanup
@@ -634,7 +658,7 @@ parrot daemon restart               # apply to a running LaunchAgent
 
 Saved defaults are what a LaunchAgent uses, so launch-at-login no longer falls back to Fn or
 plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--note-hotkey`,
-`--no-note-hotkey`, `--note-journal`, `--no-note-journal`, `--model`,
+`--no-note-hotkey`, `--note-journal`, `--no-note-journal`, `--context`, `--model`,
 `--notes`, `--dictation`, `--auto-paragraphs`, `--no-auto-paragraphs`, `--cleanup`,
 `--no-cleanup`, `--warm-mic`, and `--cold-mic` take priority without changing the file.
 `--journal`, `--command`, and `--paste` similarly select one delivery destination without
@@ -654,9 +678,10 @@ parrot apps clear
 
 An app name works while that app is running; its bundle identifier always works. Rules are
 stored in the same private local config and hot-reload on the next recording—no daemon
-restart is needed. Parrot reads only the frontmost app's bundle identifier at hotkey time. It
-does not inspect window titles, selected text, clipboard contents, or screen pixels, and it
-does not save the active app in transcript history or send it anywhere.
+restart is needed. App-mode matching reads only the frontmost app's bundle identifier at hotkey
+time; it never inspects window titles or screen pixels. Selected text or clipboard content is read
+only when the separate recognition-context setting is explicitly enabled, and neither app identity
+nor context is saved to transcript history or sent anywhere.
 
 The menu-bar icon also has a **Mode** submenu for switching the fallback between Dictation
 and Notes immediately. An automatic app rule temporarily wins while its app is focused, then
@@ -732,6 +757,7 @@ parrot settings                         # show effective saved daemon defaults
 parrot settings set --hotkey end --mode notes
 parrot settings set --note-hotkey right-option # direct local note-mode capture
 parrot settings set --note-journal ~/Documents/Notes/inbox.md # note-key-only inbox
+parrot settings set --context selected-text # opt-in local recognition hint
 parrot settings set --no-note-journal           # note key returns to primary delivery
 parrot settings set --no-note-hotkey           # return to one shortcut
 parrot settings set --history-retention-days 30 # automatic rolling local cleanup
@@ -760,6 +786,7 @@ parrot --model whisper-base --language auto # efficient multilingual auto-detect
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --note-hotkey right-command     # second key always uses note mode
 parrot --note-hotkey right-command --note-journal ~/notes/inbox.md
+parrot --context both                  # one-run selected-text + clipboard hint
 parrot --no-note-journal               # ignore a saved note inbox for this run
 parrot --no-note-hotkey                # ignore a saved note key for this run
 parrot --no-overlay                    # disable the bottom-of-screen pill

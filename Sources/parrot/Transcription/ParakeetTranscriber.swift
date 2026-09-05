@@ -154,8 +154,12 @@ actor ParakeetTranscriber: Transcriber {
         vocabularyReplacer = personalization.vocabularyReplacer
     }
 
-    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> LiveTranscription {
-        _ = mode // formatting is deterministic and shared after recognition
+    func transcribe(
+        _ audio: [Float],
+        mode: DictationMode,
+        recognitionContext: String?
+    ) async throws -> LiveTranscription {
+        _ = recognitionContext // Parakeet has no acoustic prompt API.
         if backend == nil { try await warmUp() }
         guard let backend else { throw TranscriberError.notLoaded }
         let compatibleAudio = Self.paddingShortAudio(audio)

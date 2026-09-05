@@ -26,6 +26,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.hotkey)
         XCTAssertNil(config.noteHotkey)
         XCTAssertNil(config.noteJournalPath)
+        XCTAssertNil(config.recognitionContext)
         XCTAssertNil(config.model)
         XCTAssertNil(config.language)
         XCTAssertNil(config.mode)
@@ -50,6 +51,7 @@ final class ConfigTests: XCTestCase {
         config.hotkey = "right-option"
         config.noteHotkey = "right-command"
         config.noteJournalPath = "/tmp/note-inbox.md"
+        config.recognitionContext = "selected-text"
         config.model = "whisper-small.en"
         config.language = "en"
         config.mode = .notes
@@ -105,6 +107,7 @@ final class ConfigTests: XCTestCase {
                 hotkey: "right-option",
                 noteHotkey: "right-command",
                 noteJournalPath: "/tmp/note-inbox.md",
+                recognitionContext: .off,
                 model: "whisper-small.en",
                 language: "auto",
                 mode: .notes,
@@ -131,6 +134,7 @@ final class ConfigTests: XCTestCase {
                 hotkey: "end",
                 noteHotkey: "right-command",
                 noteJournalPath: "/tmp/note-inbox.md",
+                recognitionContext: .off,
                 model: "whisper-base.en",
                 language: "auto",
                 mode: .dictation,
@@ -144,6 +148,51 @@ final class ConfigTests: XCTestCase {
                 audioHistoryRetentionDays: nil
             )
         )
+    }
+
+    func testRuntimeDefaultsRecognitionContextIsOptInAndCanonicalized() throws {
+        let builtIn = try RuntimeDefaults.resolve(
+            config: Config(),
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(builtIn.recognitionContext, .off)
+
+        var config = Config()
+        config.recognitionContext = "selection"
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(saved.recognitionContext, .selectedText)
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            recognitionContextOverride: "pasteboard",
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(overridden.recognitionContext, .clipboard)
+
+        config.recognitionContext = "screen"
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ))
     }
 
     func testRuntimeDefaultsResolveJournalAndPasteOverrides() throws {
@@ -581,6 +630,7 @@ final class ConfigTests: XCTestCase {
                 "set", "--hotkey", "ralt", "--model", "whisper-small.en",
                 "--note-hotkey", "right-command",
                 "--note-journal", "/tmp/note-inbox.md",
+                "--context", "selection",
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
                 "--no-space-after-paste", "--cold-mic",
@@ -590,6 +640,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(set.hotkey, "ralt")
         XCTAssertEqual(set.noteHotkey, "right-command")
         XCTAssertEqual(set.noteJournal, "/tmp/note-inbox.md")
+        XCTAssertEqual(set.recognitionContext, "selection")
         XCTAssertEqual(set.model, "whisper-small.en")
         XCTAssertEqual(set.language, "English")
         XCTAssertEqual(set.mode, "notes")
@@ -634,6 +685,7 @@ final class ConfigTests: XCTestCase {
             "set", "--no-note-journal",
         ]) is Settings.Set)
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--model", "imaginary"]))
+        XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--context", "screen"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--language", "Klingon"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--mode", "email"]))
         XCTAssertThrowsError(try Settings.parseAsRoot([

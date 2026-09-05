@@ -6,6 +6,7 @@ enum StartupTUI {
         let hotkey: String
         let noteHotkey: String?
         let noteJournal: String?
+        let recognitionContext: String
         let model: String
         let language: String
         let microphone: String
@@ -49,6 +50,9 @@ enum StartupTUI {
             let noteJournal = details.noteJournal.map {
                 " · note inbox: \(displayPath(URL(fileURLWithPath: $0)))"
             } ?? ""
+            let context = details.recognitionContext == "off"
+                ? ""
+                : " · context: \(details.recognitionContext) (local)"
             write(
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
                 " · mic: \(details.microphone) · mode: \(details.mode)" +
@@ -60,7 +64,7 @@ enum StartupTUI {
                 " · cleanup: \(details.cleanup ? "on (English speech)" : "off")" +
                 " · paragraphs: \(details.automaticParagraphs ? "on in notes" : "off")" +
                 " · capture: \(details.warmMicrophone ? "warm/pre-roll" : "cold/on press")" +
-                "\(history)\(audioHistory)\(noteHotkey)\(noteJournal)\(systemAction) · ^C to quit\n"
+                "\(history)\(audioHistory)\(noteHotkey)\(noteJournal)\(context)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
             return
@@ -82,6 +86,12 @@ enum StartupTUI {
             write(row("macOS key", systemHotkeyAction))
         }
         write(row("model", details.model))
+        write(row(
+            "context",
+            details.recognitionContext == "off"
+                ? "off  ·  no selection or clipboard access"
+                : "\(details.recognitionContext)  ·  bounded local Whisper hint"
+        ))
         write(row("language", details.language))
         write(row(
             "mode",

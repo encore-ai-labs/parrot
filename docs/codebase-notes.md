@@ -389,6 +389,15 @@ preserved across an in-memory retry. Both journals are validated before model wa
 reuse the existing locked, synced writer and its cursor fallback. Selection is a constant local
 comparison and adds no additional event tap, model instance, inference pass, or network access.
 
+**3.28 — Recognition lacks bounded local writing context.** ✅ **FIXED**
+
+An explicit, off-by-default setting can now capture selected text, clipboard text, or both at
+hotkey-down and use it only as a local Whisper prompt hint. Cross-process selection reads run away
+from microphone startup with a 50ms messaging timeout; the assembled text is capped at 2,048
+characters and 32 decoder tokens inside the existing 96-token budget. Parakeet skips the read
+entirely. Context is frozen for retry but never logged, delivered, persisted, screen-captured, or
+sent over a network.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

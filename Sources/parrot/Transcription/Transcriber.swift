@@ -4,8 +4,11 @@ protocol Transcriber: Sendable {
     var modelID: String { get }
     func warmUp() async throws
     func updatePersonalization(_ personalization: TranscriberPersonalization) async
-    func transcribe(_ audio: [Float]) async throws -> LiveTranscription
-    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> LiveTranscription
+    func transcribe(
+        _ audio: [Float],
+        mode: DictationMode,
+        recognitionContext: String?
+    ) async throws -> LiveTranscription
     func transcribeFile(at url: URL, mode: DictationMode) async throws -> TimedTranscription
 }
 
@@ -20,6 +23,10 @@ struct TranscriberPersonalization: Sendable {
 extension Transcriber {
     func transcribe(_ audio: [Float]) async throws -> LiveTranscription {
         try await transcribe(audio, mode: .dictation)
+    }
+
+    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> LiveTranscription {
+        try await transcribe(audio, mode: mode, recognitionContext: nil)
     }
 }
 

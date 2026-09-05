@@ -22,6 +22,8 @@ struct Config: Codable, Equatable {
     var noteHotkey: String?
     /// Optional Markdown inbox used only by the dedicated note shortcut.
     var noteJournalPath: String?
+    /// Explicit local text source used as a bounded Whisper recognition hint.
+    var recognitionContext: String?
     /// Default transcription model id.
     var model: String?
     /// Whisper language code, or `auto` for per-recording detection.
@@ -135,6 +137,7 @@ struct RuntimeDefaults: Equatable {
     let hotkey: String
     let noteHotkey: String?
     let noteJournalPath: String?
+    let recognitionContext: RecognitionContextSource
     let model: String
     let language: String
     let mode: DictationMode
@@ -154,6 +157,7 @@ struct RuntimeDefaults: Equatable {
         disableNoteHotkey: Bool = false,
         noteJournalOverride: String? = nil,
         disableNoteJournal: Bool = false,
+        recognitionContextOverride: String? = nil,
         modelOverride: String?,
         languageOverride: String? = nil,
         notes: Bool,
@@ -192,6 +196,11 @@ struct RuntimeDefaults: Equatable {
         let requestedLanguage = languageOverride ?? config.language ?? RecognitionLanguage.automatic
         guard let resolvedLanguage = RecognitionLanguage.canonicalize(requestedLanguage) else {
             throw RuntimeDefaultsError.invalidLanguage(requestedLanguage)
+        }
+        let requestedContext = recognitionContextOverride ?? config.recognitionContext
+            ?? RecognitionContextSource.off.rawValue
+        guard let resolvedContext = RecognitionContextSource.parse(requestedContext) else {
+            throw RuntimeDefaultsError.invalidRecognitionContext(requestedContext)
         }
         let resolvedMode: DictationMode
         if notes {
@@ -239,6 +248,7 @@ struct RuntimeDefaults: Equatable {
             hotkey: resolvedHotkey,
             noteHotkey: resolvedNoteHotkey,
             noteJournalPath: resolvedNoteJournalPath,
+            recognitionContext: resolvedContext,
             model: modelOverride ?? config.model ?? recommendedModel,
             language: resolvedLanguage,
             mode: resolvedMode,
@@ -267,6 +277,7 @@ enum RuntimeDefaultsError: LocalizedError {
     case conflictingDestinations
     case conflictingSavedDestinations
     case invalidLanguage(String)
+    case invalidRecognitionContext(String)
     case invalidHistoryRetention(Int)
     case invalidAudioHistoryRetention(Int)
 
@@ -289,6 +300,8 @@ enum RuntimeDefaultsError: LocalizedError {
                 + "run `parrot settings set --paste` to repair it"
         case .invalidLanguage(let language):
             return "unknown language '\(language)'; run `parrot languages`"
+        case .invalidRecognitionContext(let context):
+            return "unknown recognition context '\(context)'; use off, selected-text, clipboard, or both"
         case .invalidHistoryRetention(let days):
             return "saved history retention is \(days) days; use "
                 + "`parrot settings set --keep-history-forever` or choose 1...3650"

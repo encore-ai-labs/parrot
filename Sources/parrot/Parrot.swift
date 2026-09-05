@@ -141,6 +141,12 @@ struct Run: ParsableCommand {
     var noNoteJournal: Bool = false
 
     @Option(
+        name: .customLong("context"),
+        help: "Local Whisper hint: off, selected-text, clipboard, or both."
+    )
+    var recognitionContext: String?
+
+    @Option(
         name: .long,
         help: "Microphone to record from (name or UID). Run `parrot devices` for the list."
     )
@@ -277,6 +283,12 @@ struct Run: ParsableCommand {
         if let noteJournal {
             _ = try MarkdownJournal.resolveURL(noteJournal)
         }
+        if let recognitionContext,
+           RecognitionContextSource.parse(recognitionContext) == nil {
+            throw ValidationError(
+                "unknown context '\(recognitionContext)'; use off, selected-text, clipboard, or both"
+            )
+        }
         if let command {
             _ = try LocalCommandDelivery(command: command)
         }
@@ -319,6 +331,7 @@ struct Run: ParsableCommand {
                 disableNoteHotkey: noNoteHotkey,
                 noteJournalOverride: noteJournal,
                 disableNoteJournal: noNoteJournal,
+                recognitionContextOverride: recognitionContext,
                 modelOverride: model,
                 languageOverride: language,
                 notes: noteMode,
@@ -383,6 +396,17 @@ struct Run: ParsableCommand {
                     .appending("choose whisper-base/whisper-small or use --language en\n").utf8
             ))
             throw ExitCode(64)
+        }
+        let effectiveRecognitionContext: RecognitionContextSource
+        if chosenModel.engine == .whisperKit {
+            effectiveRecognitionContext = defaults.recognitionContext
+        } else {
+            effectiveRecognitionContext = .off
+            if defaults.recognitionContext != .off {
+                FileHandle.standardError.write(Data(
+                    "recognition context skipped: \(chosenModel.id) does not support prompt hints\n".utf8
+                ))
+            }
         }
         let commandDelivery: LocalCommandDelivery?
         if let deliveryCommand = defaults.deliveryCommand {
@@ -709,6 +733,8 @@ struct Run: ParsableCommand {
         var retryMode = defaults.mode
         var retryDeliveryRoute = HotkeyModeRouter.DeliveryRoute.primary
         var recordingPersonalizationUpdate: Task<PersonalizationRefresh, Never>?
+        var recordingContext: Task<String?, Never>?
+        var retryContext: Task<String?, Never>?
 
         func preparePersonalization() -> Task<PersonalizationRefresh, Never> {
             Task {
@@ -745,11 +771,12 @@ struct Run: ParsableCommand {
             sampleRate: Int,
             mode modeForCapture: DictationMode,
             deliveryRoute: HotkeyModeRouter.DeliveryRoute,
+            recognitionContext: Task<String?, Never>?,
             sessionID: Int,
             audioDuration seconds: TimeInterval,
             personalizationUpdate: Task<PersonalizationRefresh, Never>
         ) {
-            Task { [modeForCapture, deliveryRoute, samples] in
+            Task { [modeForCapture, deliveryRoute, recognitionContext, samples] in
                 do {
                     try recordingRecovery.stage(samples: samples, sampleRate: sampleRate)
                 } catch {
@@ -767,9 +794,11 @@ struct Run: ParsableCommand {
                     // the user is speaking. Awaiting here guarantees that the
                     // decoder and post-processing use one coherent revision.
                     let personalization = await personalizationUpdate.value.snapshot
+                    let context = await recognitionContext?.value
                     let transcription = try await transcriber.transcribe(
                         samples,
-                        mode: modeForCapture
+                        mode: modeForCapture,
+                        recognitionContext: context
                     )
                     let applyCleanup = defaults.cleanup
                         && RecognitionLanguage.supportsEnglishCleanup(transcription.language)
@@ -922,6 +951,9 @@ struct Run: ParsableCommand {
         let startRecording = { (source: String) in
             guard let sessionID = lifecycle.start() else { return }
             recordingPersonalizationUpdate = preparePersonalization()
+            recordingContext = MainActor.assumeIsolated {
+                RecognitionContextCapture.start(source: effectiveRecognitionContext)
+            }
             let usedNoteHotkey = source == chosenNoteHotkey?.name
             let selection = HotkeyModeRouter.selection(
                 source: source,
@@ -960,6 +992,8 @@ struct Run: ParsableCommand {
                     menuBar.setRecordingRecoveryBusy(true)
                 }
             } catch {
+                recordingContext?.cancel()
+                recordingContext = nil
                 lifecycle.failStart(sessionID)
                 FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
                 MainActor.assumeIsolated {
@@ -972,6 +1006,8 @@ struct Run: ParsableCommand {
             guard let sessionID = lifecycle.beginTranscription() else { return }
             let modeForCapture = recordingMode
             let deliveryRouteForCapture = recordingDeliveryRoute
+            let contextForCapture = recordingContext
+            recordingContext = nil
             let personalizationUpdateForCapture = recordingPersonalizationUpdate
                 ?? preparePersonalization()
             monitor.stopExitKeyMonitoring()
@@ -995,6 +1031,7 @@ struct Run: ParsableCommand {
                 }
             }
             guard !samples.isEmpty else {
+                contextForCapture?.cancel()
                 _ = lifecycle.finish(sessionID)
                 MainActor.assumeIsolated {
                     overlay?.hide()
@@ -1008,6 +1045,7 @@ struct Run: ParsableCommand {
                 rms: rms,
                 enabled: !noAudioGate
             ) {
+                contextForCapture?.cancel()
                 _ = lifecycle.finish(sessionID)
                 FileHandle.standardError.write(Data("× \(rejection.message) — discarded\n".utf8))
                 MainActor.assumeIsolated {
@@ -1019,11 +1057,13 @@ struct Run: ParsableCommand {
             }
             retryMode = modeForCapture
             retryDeliveryRoute = deliveryRouteForCapture
+            retryContext = contextForCapture
             transcribeAndDeliver(
                 samples,
                 sampleRate: Int(AudioCapture.targetSampleRate),
                 mode: modeForCapture,
                 deliveryRoute: deliveryRouteForCapture,
+                recognitionContext: contextForCapture,
                 sessionID: sessionID,
                 audioDuration: seconds,
                 personalizationUpdate: personalizationUpdateForCapture
@@ -1032,6 +1072,8 @@ struct Run: ParsableCommand {
 
         let cancelRecording = {
             guard lifecycle.cancelRecording() else { return }
+            recordingContext?.cancel()
+            recordingContext = nil
             monitor.stopExitKeyMonitoring()
             _ = capture.stop()
             FileHandle.standardError.write(Data("× recording cancelled\n".utf8))
@@ -1065,6 +1107,7 @@ struct Run: ParsableCommand {
                 sampleRate: audio.sampleRate,
                 mode: retryMode,
                 deliveryRoute: retryDeliveryRoute,
+                recognitionContext: retryContext,
                 sessionID: sessionID,
                 audioDuration: seconds,
                 personalizationUpdate: personalizationUpdate
@@ -1191,6 +1234,7 @@ struct Run: ParsableCommand {
             hotkey: chosenHotkey.name,
             noteHotkey: chosenNoteHotkey?.name,
             noteJournal: chosenNoteHotkey == nil ? nil : defaults.noteJournalPath,
+            recognitionContext: effectiveRecognitionContext.rawValue,
             model: chosenModel.id,
             language: RecognitionLanguage.displaySelection(defaults.language, model: chosenModel),
             microphone: micName,

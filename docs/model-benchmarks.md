@@ -176,6 +176,18 @@ small metadata fields already written with history. It reads no retained audio a
 request. The test harness groups and summarizes 5,000 mixed-model records to keep that analysis
 cost bounded as history grows; it averaged **100 ms** in the debug performance harness on this Mac.
 
+## Cursor-delivery preparation cost
+
+The privacy-first cursor path now forms small keyboard events on Unicode-scalar boundaries so raw
+UTF-16 chunking cannot split surrogate pairs. In the debug performance harness, preparing a roughly
+9,800-character Unicode note 100 times averaged **224 ms**, or about **2.24 ms per unusually long
+note**. Normal notes are much shorter, and this work happens after inference only when cursor
+delivery is selected.
+
+The optional clipboard compatibility path sends Command-V immediately; its configurable restore
+delay is asynchronous and is not added to transcription or insertion latency. It snapshots local
+pasteboard data only after a finished cursor-bound transcript and performs no model or network work.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

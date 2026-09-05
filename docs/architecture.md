@@ -225,7 +225,24 @@ Adding an engine = one new file conforming to `Transcriber`.
 
 ### `TextInjector`
 
-`CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString` — pastes the transcript at the current cursor position. Works in nearly every text field on macOS (some Electron apps and secure fields are flaky; platform constraint).
+Cursor delivery has two local transports. The default uses `CGEventKeyboardSetUnicodeString`,
+keeping the pasteboard untouched. Text is chunked at Unicode-scalar boundaries rather than raw
+UTF-16 offsets, so an event boundary cannot divide a surrogate pair and corrupt emoji or another
+supplementary-plane character. Some Electron and browser fields still drop simulated text, so an
+explicit compatibility transport snapshots the pasteboard, writes the transcript, and posts
+Command-V.
+
+Clipboard compatibility preserves all pasteboard item types that expose data, subject to a 32 MiB
+memory bound, and restores the snapshot after a configurable 100–5000ms delay (1000ms default). An
+oversized or unavailable snapshot is never replaced; delivery falls back to Unicode events.
+Restoration is conditional on
+the pasteboard change count: a newer user copy is authoritative and also causes Parrot to release
+the old in-memory snapshot. Overlapping Parrot insertions share the true original snapshot rather
+than treating the prior transcript as the original. Clean application termination immediately
+restores a still-pending unchanged snapshot. The delayed restore does not block capture,
+the main run loop, or inference. Keystrokes remain the default because clipboard managers and
+Universal Clipboard can observe temporary clipboard values even though Parrot makes no network
+request itself.
 
 Cursor delivery prepares a separate string with one trailing boundary space by default, avoiding
 concatenation across consecutive captures. It does not double existing whitespace and can be
@@ -233,6 +250,13 @@ disabled with `--no-space-after-paste` or the persisted setting. Preparation liv
 `TextInjector`, after delivery routing, so the boundary byte never enters transcript history,
 Markdown journals, local-command stdin, file output, recovery state, or model context. This spacing
 policy does not inspect surrounding application text, selections, windows, or the clipboard.
+
+`LastTranscriptStore` holds only the latest successful finalized text for the current daemon.
+When history is enabled, a background read seeds it from the newest private Markdown entry after
+startup. The menu-bar **Insert Last Transcript** action is disabled during recording/transcription,
+waits briefly for the menu to return focus, and uses the same configured insertion transport. It
+does not invoke a model, add history, or require retained audio; session-local recovery therefore
+also works under `--no-history`.
 
 ### `RecognitionContextCapture`
 

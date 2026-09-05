@@ -49,6 +49,13 @@ struct Settings: ParsableCommand {
                     + "\(config.spaceAfterPaste == nil ? "  (default)" : "")"
             )
             print(
+                "insertion    " + (defaults.insertionMethod == .keystrokes
+                    ? "keystrokes · clipboard untouched"
+                    : "clipboard · restore after "
+                        + "\(defaults.clipboardRestoreDelayMilliseconds)ms")
+                    + "\(config.insertionMethod == nil ? "  (default)" : "")"
+            )
+            print(
                 "capture      \(defaults.warmMicrophone ? "warm · 300ms pre-roll" : "cold · opens on press")"
                     + "\(config.warmMicrophone == nil ? "  (default)" : "")"
             )
@@ -170,6 +177,24 @@ struct Settings: ParsableCommand {
         var noSpaceAfterPaste: Bool = false
 
         @Flag(
+            name: .customLong("clipboard-paste"),
+            help: "Paste through the clipboard for apps that drop simulated text."
+        )
+        var clipboardPaste: Bool = false
+
+        @Flag(
+            name: .customLong("keystroke-paste"),
+            help: "Insert with Unicode keystrokes without touching the clipboard."
+        )
+        var keystrokePaste: Bool = false
+
+        @Option(
+            name: .customLong("clipboard-restore-delay-ms"),
+            help: "Restore prior clipboard content after 100...5000 milliseconds."
+        )
+        var clipboardRestoreDelayMilliseconds: Int?
+
+        @Flag(
             name: .customLong("warm-mic"),
             help: "Keep the microphone warm for a 300 ms pre-roll."
         )
@@ -213,6 +238,8 @@ struct Settings: ParsableCommand {
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || spaceAfterPaste || noSpaceAfterPaste
+                    || clipboardPaste || keystrokePaste
+                    || clipboardRestoreDelayMilliseconds != nil
                     || warmMicrophone || coldMicrophone
                     || historyRetentionDays != nil || keepHistoryForever
                     || audioHistoryRetentionDays != nil || noAudioHistory else {
@@ -234,6 +261,11 @@ struct Settings: ParsableCommand {
             guard !(spaceAfterPaste && noSpaceAfterPaste) else {
                 throw ValidationError(
                     "pass at most one of --space-after-paste or --no-space-after-paste"
+                )
+            }
+            guard !(clipboardPaste && keystrokePaste) else {
+                throw ValidationError(
+                    "pass at most one of --clipboard-paste or --keystroke-paste"
                 )
             }
             guard !(warmMicrophone && coldMicrophone) else {
@@ -264,6 +296,10 @@ struct Settings: ParsableCommand {
             }
             if let audioHistoryRetentionDays {
                 _ = try HistoryRetentionPolicy(days: audioHistoryRetentionDays)
+            }
+            if let delay = clipboardRestoreDelayMilliseconds,
+               !TextInjector.validClipboardRestoreDelayMilliseconds.contains(delay) {
+                throw ValidationError("--clipboard-restore-delay-ms must be between 100 and 5000")
             }
             if let hotkey, Hotkey.parse(hotkey) == nil {
                 throw ValidationError("unknown hotkey '\(hotkey)'; run `parrot hotkeys`")
@@ -310,6 +346,8 @@ struct Settings: ParsableCommand {
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || spaceAfterPaste || noSpaceAfterPaste
+                    || clipboardPaste || keystrokePaste
+                    || clipboardRestoreDelayMilliseconds != nil
                     || warmMicrophone || coldMicrophone
                     || historyRetentionDays != nil || keepHistoryForever
                     || audioHistoryRetentionDays != nil || noAudioHistory else {
@@ -399,6 +437,19 @@ struct Settings: ParsableCommand {
             if spaceAfterPaste || noSpaceAfterPaste {
                 config.spaceAfterPaste = spaceAfterPaste
             }
+            if clipboardPaste || keystrokePaste {
+                config.insertionMethod = clipboardPaste ? .clipboard : .keystrokes
+            }
+            if let clipboardRestoreDelayMilliseconds {
+                guard TextInjector.validClipboardRestoreDelayMilliseconds.contains(
+                    clipboardRestoreDelayMilliseconds
+                ) else {
+                    throw ValidationError(
+                        "--clipboard-restore-delay-ms must be between 100 and 5000"
+                    )
+                }
+                config.clipboardRestoreDelayMilliseconds = clipboardRestoreDelayMilliseconds
+            }
             if warmMicrophone || coldMicrophone {
                 config.warmMicrophone = warmMicrophone
             }
@@ -451,6 +502,8 @@ struct Settings: ParsableCommand {
             config.cleanup = nil
             config.automaticParagraphs = nil
             config.spaceAfterPaste = nil
+            config.insertionMethod = nil
+            config.clipboardRestoreDelayMilliseconds = nil
             config.warmMicrophone = nil
             config.historyRetentionDays = nil
             config.audioHistoryRetentionDays = nil

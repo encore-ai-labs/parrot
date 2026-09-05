@@ -96,11 +96,38 @@ whitespace is never doubled. This delivery-only space is not stored in history, 
 input, or file transcripts. Disable it for exact-input workflows with
 `parrot settings set --no-space-after-paste`, or use `--no-space-after-paste` for one run.
 
+Direct Unicode keystrokes are the default insertion method: they keep the system clipboard
+untouched and now preserve emoji and other supplementary Unicode characters across event chunks.
+If a particular Electron or browser field drops simulated text, enable the compatibility path:
+
+```sh
+parrot settings set --clipboard-paste
+parrot settings set --clipboard-restore-delay-ms 1500 # increase for a slow target app
+parrot daemon restart
+```
+
+Clipboard insertion snapshots every available pasteboard type up to a 32 MiB safety bound, places
+the transcript there, sends Command-V immediately, and restores the old clipboard after one second
+by default. An oversized or unavailable snapshot leaves the clipboard untouched and falls back to
+Unicode keystrokes. If you
+copy anything during that window, the newer clipboard wins and Parrot discards its snapshot rather
+than overwriting your copy. Repeated Parrot insertions still restore the true pre-Parrot value,
+and a clean daemon quit restores any still-pending unchanged clipboard immediately.
+This mode is explicit because clipboard managers and macOS Universal Clipboard may observe its
+temporary contents; Parrot itself sends no transcript or clipboard data over the network. Use
+`--clipboard-paste` for one run, adjust the bounded 100–5000ms delay when necessary, or return to
+the privacy-first default with `parrot settings set --keystroke-paste`.
+
 If inference fails—or the daemon is interrupted during or after a recording—open the menu-bar bird
 and choose **Retry Recovered Recording**. After a successful short dictation, **Retry Last
 Recording** can immediately reprocess the in-memory audio with the currently selected mode,
 without loading a second model. **Forget Last Recording** clears both the memory copy and any
 recovery file.
+
+The menu also offers **Insert Last Transcript** while Parrot is idle. It reinserts the newest
+successful result using the configured insertion method without rerunning the model, duplicating
+history, or requiring retained audio. The current session remains recoverable even with
+`--no-history`; otherwise the latest private Markdown entry seeds the action after a restart.
 
 Recovery is deliberately a single local slot, not an audio archive. While the mic is active,
 Parrot streams a private 16-bit WAV to
@@ -703,6 +730,9 @@ parrot settings set --warm-mic     # default: fast 300ms pre-roll
 parrot settings set --journal ~/Documents/Notes/inbox.md
 parrot settings set --command '$HOME/bin/route-parrot-note'
 parrot settings set --paste         # restore paste-at-cursor delivery
+parrot settings set --clipboard-paste # compatibility path; restores prior clipboard
+parrot settings set --clipboard-restore-delay-ms 1500
+parrot settings set --keystroke-paste # privacy-first default; clipboard untouched
 parrot settings reset               # resets transcription/formatting/capture/delivery defaults
 parrot daemon restart               # apply to a running LaunchAgent
 ```
@@ -711,7 +741,9 @@ Saved defaults are what a LaunchAgent uses, so launch-at-login no longer falls b
 plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--note-hotkey`,
 `--no-note-hotkey`, `--note-journal`, `--no-note-journal`, `--context`, `--model`,
 `--notes`, `--dictation`, `--auto-paragraphs`, `--no-auto-paragraphs`, `--cleanup`,
-`--no-cleanup`, `--warm-mic`, and `--cold-mic` take priority without changing the file.
+`--no-cleanup`, `--clipboard-paste`, `--keystroke-paste`,
+`--clipboard-restore-delay-ms`, `--warm-mic`, and `--cold-mic` take priority without changing
+the file.
 `--journal`, `--command`, and `--paste` similarly select one delivery destination without
 changing saved defaults. `--reconfigure` resets the complete first-run configuration.
 
@@ -821,6 +853,9 @@ parrot settings set --audio-history-days 7      # opt-in replay/reprocess window
 parrot settings set --no-audio-history          # stop retaining new audio
 parrot settings set --keep-history-forever      # default: never auto-delete history
 parrot settings set --no-space-after-paste # exact cursor text; default adds one boundary space
+parrot settings set --clipboard-paste       # compatibility insertion + clipboard restore
+parrot settings set --keystroke-paste       # default: never touch the clipboard
+parrot --clipboard-restore-delay-ms 1500     # one-run timing for slow paste targets
 parrot --journal ~/Documents/Notes/inbox.md # append there; don't type at cursor
 parrot --command '$HOME/bin/route-parrot-note' # final text on stdin; don't paste
 parrot --paste                         # override any saved destination for one run

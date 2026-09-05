@@ -50,6 +50,11 @@ struct Config: Codable, Equatable {
     /// Add one boundary space after cursor-injected text. This never changes
     /// history, journal, command, or stored-file output.
     var spaceAfterPaste: Bool?
+    /// Cursor insertion transport. Keystrokes remain the local privacy-first
+    /// default; clipboard is an explicit compatibility choice.
+    var insertionMethod: TextInsertionMethod?
+    /// How long clipboard insertion waits before restoring the prior value.
+    var clipboardRestoreDelayMilliseconds: Int?
     /// Keep the microphone warm for a 300 ms pre-roll. Turning this off avoids
     /// an idle mic session at the cost of clipping the start of captures.
     var warmMicrophone: Bool?
@@ -155,6 +160,8 @@ struct RuntimeDefaults: Equatable {
     let cleanup: Bool
     let automaticParagraphs: Bool
     let spaceAfterPaste: Bool
+    let insertionMethod: TextInsertionMethod
+    let clipboardRestoreDelayMilliseconds: Int
     let warmMicrophone: Bool
     let historyRetentionDays: Int?
     let audioHistoryRetentionDays: Int?
@@ -177,6 +184,8 @@ struct RuntimeDefaults: Equatable {
         cleanupOverride: Bool? = nil,
         automaticParagraphsOverride: Bool? = nil,
         spaceAfterPasteOverride: Bool? = nil,
+        insertionMethodOverride: TextInsertionMethod? = nil,
+        clipboardRestoreDelayMillisecondsOverride: Int? = nil,
         warmMicrophoneOverride: Bool? = nil,
         recommendedModel: String
     ) throws -> RuntimeDefaults {
@@ -201,6 +210,16 @@ struct RuntimeDefaults: Equatable {
         if let days = config.audioHistoryRetentionDays,
            !HistoryRetentionPolicy.validDays.contains(days) {
             throw RuntimeDefaultsError.invalidAudioHistoryRetention(days)
+        }
+        let clipboardRestoreDelayMilliseconds = clipboardRestoreDelayMillisecondsOverride
+            ?? config.clipboardRestoreDelayMilliseconds
+            ?? TextInjector.defaultClipboardRestoreDelayMilliseconds
+        guard TextInjector.validClipboardRestoreDelayMilliseconds.contains(
+            clipboardRestoreDelayMilliseconds
+        ) else {
+            throw RuntimeDefaultsError.invalidClipboardRestoreDelay(
+                clipboardRestoreDelayMilliseconds
+            )
         }
         let requestedLanguage = languageOverride ?? config.language ?? RecognitionLanguage.automatic
         guard let resolvedLanguage = RecognitionLanguage.canonicalize(requestedLanguage) else {
@@ -268,6 +287,8 @@ struct RuntimeDefaults: Equatable {
                 ?? config.automaticParagraphs
                 ?? true,
             spaceAfterPaste: spaceAfterPasteOverride ?? config.spaceAfterPaste ?? true,
+            insertionMethod: insertionMethodOverride ?? config.insertionMethod ?? .keystrokes,
+            clipboardRestoreDelayMilliseconds: clipboardRestoreDelayMilliseconds,
             warmMicrophone: warmMicrophoneOverride ?? config.warmMicrophone ?? true,
             historyRetentionDays: config.historyRetentionDays,
             audioHistoryRetentionDays: config.audioHistoryRetentionDays.map { configuredDays in
@@ -287,6 +308,7 @@ enum RuntimeDefaultsError: LocalizedError {
     case conflictingSavedDestinations
     case invalidLanguage(String)
     case invalidRecognitionContext(String)
+    case invalidClipboardRestoreDelay(Int)
     case invalidHistoryRetention(Int)
     case invalidAudioHistoryRetention(Int)
 
@@ -311,6 +333,8 @@ enum RuntimeDefaultsError: LocalizedError {
             return "unknown language '\(language)'; run `parrot languages`"
         case .invalidRecognitionContext(let context):
             return "unknown recognition context '\(context)'; use off, selected-text, clipboard, or both"
+        case .invalidClipboardRestoreDelay(let milliseconds):
+            return "clipboard restore delay is \(milliseconds)ms; choose 100...5000"
         case .invalidHistoryRetention(let days):
             return "saved history retention is \(days) days; use "
                 + "`parrot settings set --keep-history-forever` or choose 1...3650"

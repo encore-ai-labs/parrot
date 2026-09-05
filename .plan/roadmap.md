@@ -220,6 +220,12 @@ pass removes unambiguous hesitation forms and bounded false starts without an LL
 words and emphatic/grammatical repetition are preserved, snippet bodies bypass cleanup, and
 live plus file transcription use identical saved/one-run override semantics.
 
+**6.16 Reliable cursor delivery and last-result recovery** — ✅ **complete.** Unicode-event
+insertion remains the clipboard-free default and no longer splits surrogate pairs. An explicit
+clipboard/Command-V compatibility path preserves every readable pasteboard type, restores after
+a bounded configurable delay, and never overwrites a newer user copy. The idle menu can reinsert
+the last finalized result without inference, duplicate history, or retained audio.
+
 ---
 
 ## Suggested release cadence

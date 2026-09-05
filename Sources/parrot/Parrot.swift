@@ -339,6 +339,24 @@ struct Run: ParsableCommand {
     )
     var noSpaceAfterPaste: Bool = false
 
+    @Flag(
+        name: .customLong("clipboard-paste"),
+        help: "Paste through the clipboard for apps that drop simulated text."
+    )
+    var clipboardPaste: Bool = false
+
+    @Flag(
+        name: .customLong("keystroke-paste"),
+        help: "Insert with Unicode keystrokes without touching the clipboard."
+    )
+    var keystrokePaste: Bool = false
+
+    @Option(
+        name: .customLong("clipboard-restore-delay-ms"),
+        help: "Restore prior clipboard content after 100...5000 milliseconds."
+    )
+    var clipboardRestoreDelayMilliseconds: Int?
+
     @Flag(name: .long, help: "Re-run first-time setup and overwrite saved preferences.")
     var reconfigure: Bool = false
 
@@ -361,6 +379,15 @@ struct Run: ParsableCommand {
             throw ValidationError(
                 "pass at most one of --space-after-paste or --no-space-after-paste"
             )
+        }
+        guard !(clipboardPaste && keystrokePaste) else {
+            throw ValidationError(
+                "pass at most one of --clipboard-paste or --keystroke-paste"
+            )
+        }
+        if let delay = clipboardRestoreDelayMilliseconds,
+           !TextInjector.validClipboardRestoreDelayMilliseconds.contains(delay) {
+            throw ValidationError("--clipboard-restore-delay-ms must be between 100 and 5000")
         }
         guard !(warmMic && coldMic) else {
             throw ValidationError("pass at most one of --warm-mic or --cold-mic")
@@ -440,6 +467,10 @@ struct Run: ParsableCommand {
                 spaceAfterPasteOverride: spaceAfterPaste || noSpaceAfterPaste
                     ? spaceAfterPaste
                     : nil,
+                insertionMethodOverride: clipboardPaste || keystrokePaste
+                    ? (clipboardPaste ? .clipboard : .keystrokes)
+                    : nil,
+                clipboardRestoreDelayMillisecondsOverride: clipboardRestoreDelayMilliseconds,
                 warmMicrophoneOverride: warmMic || coldMic ? warmMic : nil,
                 recommendedModel: recommendedModel
             )
@@ -754,6 +785,9 @@ struct Run: ParsableCommand {
             queue: .main
         ) { _ in
             restoreFnSystemAction()
+            MainActor.assumeIsolated {
+                TextInjector.restoreClipboardIfNeeded()
+            }
         }
         defer { NotificationCenter.default.removeObserver(terminationObserver) }
 
@@ -779,6 +813,7 @@ struct Run: ParsableCommand {
             automaticRulesEnabled: !(noteMode || dictationMode),
             reloadRulesFrom: Config.url
         )
+        let lastTranscriptStore = MainActor.assumeIsolated { LastTranscriptStore() }
         let menuBar = MainActor.assumeIsolated {
             MenuBarController(
                 modelID: chosenModel.id,
@@ -793,9 +828,38 @@ struct Run: ParsableCommand {
                 modeController.setFallbackMode(mode)
             }
         }
+        MainActor.assumeIsolated {
+            menuBar.setLastTranscript(available: false) {
+                guard let text = lastTranscriptStore.text else { return }
+                // Let the status menu close and return focus to the user's app
+                // before delivering the recovery insertion.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    TextInjector.inject(
+                        text,
+                        appendSpace: defaults.spaceAfterPaste,
+                        method: defaults.insertionMethod,
+                        clipboardRestoreDelayMilliseconds:
+                            defaults.clipboardRestoreDelayMilliseconds
+                    )
+                }
+            }
+        }
         let history = noHistory
             ? nil
             : TranscriptHistory(retentionDays: defaults.historyRetentionDays)
+        if history != nil {
+            let latestHistoryText = Task.detached(priority: .utility) {
+                try? TranscriptHistoryReader().recent(limit: 1).first?.text
+            }
+            Task {
+                guard let recovered = await latestHistoryText.value else { return }
+                await MainActor.run {
+                    guard lastTranscriptStore.text == nil else { return }
+                    lastTranscriptStore.update(recovered)
+                    menuBar.setLastTranscript(available: true)
+                }
+            }
+        }
         let audioHistoryRetentionDays: Int? = noHistory
             ? nil
             : defaults.audioHistoryRetentionDays.map { configuredDays in
@@ -1056,8 +1120,18 @@ struct Run: ParsableCommand {
                     }
                     let didFinish = await MainActor.run { () -> Bool in
                         guard lifecycle.finish(sessionID) else { return false }
+                        if deliveryDecision.deliveryCompleted {
+                            lastTranscriptStore.update(text)
+                            menuBar.setLastTranscript(available: true)
+                        }
                         if deliveryDecision.injectAtCursor {
-                            TextInjector.inject(text, appendSpace: defaults.spaceAfterPaste)
+                            TextInjector.inject(
+                                text,
+                                appendSpace: defaults.spaceAfterPaste,
+                                method: defaults.insertionMethod,
+                                clipboardRestoreDelayMilliseconds:
+                                    defaults.clipboardRestoreDelayMilliseconds
+                            )
                         }
                         overlay?.hide()
                         menuBar.setRecording(false)
@@ -1413,6 +1487,9 @@ struct Run: ParsableCommand {
         let historyPath = noHistory
             ? nil
             : StartupTUI.displayPath(TranscriptHistory.fileURL())
+        let cursorInsertionDescription = defaults.insertionMethod == .clipboard
+            ? "paste at cursor · clipboard · restore \(defaults.clipboardRestoreDelayMilliseconds)ms"
+            : "paste at cursor · keystrokes · clipboard untouched"
         let systemHotkeyAction: String?
         switch fnSystemAction?.state {
         case .disabledForParrot:
@@ -1441,7 +1518,8 @@ struct Run: ParsableCommand {
             delivery: journalWriter.map {
                 "journal → \(StartupTUI.displayPath($0.url))"
             } ?? (commandDelivery == nil
-                ? "paste at cursor · boundary space \(defaults.spaceAfterPaste ? "on" : "off")"
+                ? cursorInsertionDescription
+                    + " · boundary space \(defaults.spaceAfterPaste ? "on" : "off")"
                 : "local command ← transcript on stdin"),
             cleanup: defaults.cleanup,
             automaticParagraphs: defaults.automaticParagraphs,

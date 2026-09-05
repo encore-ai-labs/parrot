@@ -11,6 +11,7 @@ final class MenuBarController {
     private let modeLabel: NSMenuItem
     private let dictationModeItem: NSMenuItem
     private let notesModeItem: NSMenuItem
+    private let insertLastTranscriptItem: NSMenuItem
     private let retryRecordingItem: NSMenuItem
     private let forgetRecordingItem: NSMenuItem
     private let updateLabel: NSMenuItem
@@ -18,10 +19,13 @@ final class MenuBarController {
     private let idleTitle: String
     private var updateAction: (() -> Void)?
     private var modeAction: ((DictationMode) -> Void)?
+    private var insertLastTranscriptAction: (() -> Void)?
     private var retryRecordingAction: (() -> Void)?
     private var forgetRecordingAction: (() -> Void)?
     private var recordingRecoveryAvailable = false
     private var recordingRecoveryBusy = false
+    private var interactionBusy = false
+    private var lastTranscriptAvailable = false
 
     init(
         modelID: String,
@@ -76,6 +80,11 @@ final class MenuBarController {
             action: #selector(forgetRecordingClicked),
             keyEquivalent: ""
         )
+        insertLastTranscriptItem = NSMenuItem(
+            title: "Insert Last Transcript",
+            action: #selector(insertLastTranscriptClicked),
+            keyEquivalent: ""
+        )
         dictationModeItem.target = self
         notesModeItem.target = self
         dictationModeItem.isEnabled = true
@@ -86,6 +95,10 @@ final class MenuBarController {
         modeMenu.addItem(notesModeItem)
         modeLabel.submenu = modeMenu
         menu.addItem(modeLabel)
+
+        insertLastTranscriptItem.target = self
+        insertLastTranscriptItem.isEnabled = false
+        menu.addItem(insertLastTranscriptItem)
 
         retryRecordingItem.target = self
         forgetRecordingItem.target = self
@@ -114,11 +127,27 @@ final class MenuBarController {
     }
 
     func setRecording(_ recording: Bool) {
+        interactionBusy = recording
         stateLabel.title = recording ? "● recording" : idleTitle
+        updateInsertLastTranscriptItem()
     }
 
     func setTranscribing() {
+        interactionBusy = true
         stateLabel.title = "transcribing…"
+        updateInsertLastTranscriptItem()
+    }
+
+    func setLastTranscript(available: Bool, action: (() -> Void)? = nil) {
+        if let action { insertLastTranscriptAction = action }
+        lastTranscriptAvailable = available
+        updateInsertLastTranscriptItem()
+    }
+
+    private func updateInsertLastTranscriptItem() {
+        insertLastTranscriptItem.isEnabled = lastTranscriptAvailable
+            && insertLastTranscriptAction != nil
+            && !interactionBusy
     }
 
     func setRecordingRecovery(
@@ -236,6 +265,11 @@ final class MenuBarController {
 
     @objc private func retryRecordingClicked() {
         retryRecordingAction?()
+    }
+
+    @objc private func insertLastTranscriptClicked() {
+        guard !interactionBusy else { return }
+        insertLastTranscriptAction?()
     }
 
     @objc private func forgetRecordingClicked() {

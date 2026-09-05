@@ -38,6 +38,8 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.cleanup)
         XCTAssertNil(config.automaticParagraphs)
         XCTAssertNil(config.spaceAfterPaste)
+        XCTAssertNil(config.insertionMethod)
+        XCTAssertNil(config.clipboardRestoreDelayMilliseconds)
         XCTAssertNil(config.warmMicrophone)
         XCTAssertNil(config.historyRetentionDays)
         XCTAssertNil(config.audioHistoryRetentionDays)
@@ -61,6 +63,8 @@ final class ConfigTests: XCTestCase {
         config.cleanup = true
         config.automaticParagraphs = false
         config.spaceAfterPaste = false
+        config.insertionMethod = .clipboard
+        config.clipboardRestoreDelayMilliseconds = 1_500
         config.warmMicrophone = false
         config.historyRetentionDays = 30
         config.audioHistoryRetentionDays = 7
@@ -121,6 +125,8 @@ final class ConfigTests: XCTestCase {
                 cleanup: false,
                 automaticParagraphs: true,
                 spaceAfterPaste: true,
+                insertionMethod: .keystrokes,
+                clipboardRestoreDelayMilliseconds: 1_000,
                 warmMicrophone: true,
                 historyRetentionDays: nil,
                 audioHistoryRetentionDays: nil
@@ -148,6 +154,8 @@ final class ConfigTests: XCTestCase {
                 cleanup: false,
                 automaticParagraphs: true,
                 spaceAfterPaste: true,
+                insertionMethod: .keystrokes,
+                clipboardRestoreDelayMilliseconds: 1_000,
                 warmMicrophone: true,
                 historyRetentionDays: nil,
                 audioHistoryRetentionDays: nil
@@ -408,6 +416,56 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(overridden.spaceAfterPaste)
     }
 
+    func testRuntimeDefaultsKeepClipboardInsertionExplicitAndBounded() throws {
+        let builtIn = try RuntimeDefaults.resolve(
+            config: Config(),
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(builtIn.insertionMethod, .keystrokes)
+        XCTAssertEqual(builtIn.clipboardRestoreDelayMilliseconds, 1_000)
+
+        var config = Config()
+        config.insertionMethod = .clipboard
+        config.clipboardRestoreDelayMilliseconds = 2_000
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(saved.insertionMethod, .clipboard)
+        XCTAssertEqual(saved.clipboardRestoreDelayMilliseconds, 2_000)
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            insertionMethodOverride: .keystrokes,
+            clipboardRestoreDelayMillisecondsOverride: 500,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(overridden.insertionMethod, .keystrokes)
+        XCTAssertEqual(overridden.clipboardRestoreDelayMilliseconds, 500)
+
+        config.clipboardRestoreDelayMilliseconds = 5_001
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ))
+    }
+
     func testRuntimeDefaultsKeepMicWarmByDefaultAndAllowOverrides() throws {
         var config = Config()
         let builtIn = try RuntimeDefaults.resolve(
@@ -638,7 +696,8 @@ final class ConfigTests: XCTestCase {
                 "--context", "selection",
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
-                "--no-space-after-paste", "--cold-mic",
+                "--no-space-after-paste", "--clipboard-paste",
+                "--clipboard-restore-delay-ms", "1500", "--cold-mic",
                 "--history-retention-days", "30", "--audio-history-days", "7",
             ]) as? Settings.Set
         )
@@ -653,6 +712,8 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(set.cleanup)
         XCTAssertTrue(set.automaticParagraphs)
         XCTAssertTrue(set.noSpaceAfterPaste)
+        XCTAssertTrue(set.clipboardPaste)
+        XCTAssertEqual(set.clipboardRestoreDelayMilliseconds, 1_500)
         XCTAssertTrue(set.coldMicrophone)
         XCTAssertEqual(set.historyRetentionDays, 30)
         XCTAssertEqual(set.audioHistoryRetentionDays, 7)
@@ -710,6 +771,12 @@ final class ConfigTests: XCTestCase {
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--space-after-paste", "--no-space-after-paste",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--clipboard-paste", "--keystroke-paste",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--clipboard-restore-delay-ms", "99",
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--warm-mic", "--cold-mic",

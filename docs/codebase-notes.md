@@ -435,6 +435,16 @@ Escape removes it, successful delivery resolves it, and only the initiating hotk
 recording. The measured active-capture conversion/write cost is ~59 ms per recorded minute and
 1.92 MB of disk per minute; the idle daemon performs no spool work.
 
+**3.33 — Cursor delivery can drop or corrupt text without a recovery action.** ✅ **FIXED**
+
+Privacy-first Unicode events remain the default, but their chunks now preserve UTF-16 surrogate
+pairs. Apps that drop simulated text can opt into a Command-V transport with bounded delayed
+restoration of every readable pasteboard type. Change-count and generation guards prevent an old
+snapshot from overwriting a newer user copy or an overlapping Parrot insertion. The idle menu can
+reinsert the last finalized transcript without inference, duplicate history, or retained audio;
+history seeds the action across restarts while `--no-history` still supports current-session
+recovery.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

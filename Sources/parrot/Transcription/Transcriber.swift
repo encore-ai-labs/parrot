@@ -31,6 +31,10 @@ extension Transcriber {
 }
 
 struct LiveTranscription: Equatable, Sendable {
+    /// Sanitized model output before deterministic vocabulary, cleanup, mode,
+    /// filler, and snippet processing. Kept so local history can recover the
+    /// words the recognizer actually returned.
+    let originalText: String
     let text: String
     let language: String
     let segments: [TimedTranscriptSegment]
@@ -38,8 +42,10 @@ struct LiveTranscription: Equatable, Sendable {
     init(
         text: String,
         language: String,
-        segments: [TimedTranscriptSegment] = []
+        segments: [TimedTranscriptSegment] = [],
+        originalText: String? = nil
     ) {
+        self.originalText = originalText ?? text
         self.text = text
         self.language = language
         self.segments = segments

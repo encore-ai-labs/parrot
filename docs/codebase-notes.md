@@ -398,6 +398,15 @@ characters and 32 decoder tokens inside the existing 96-token budget. Parakeet s
 entirely. Context is frozen for retry but never logged, delivered, persisted, screen-captured, or
 sent over a network.
 
+**3.29 — Local processing can erase the recognizer's recoverable original.** ✅ **FIXED**
+
+Successful live dictations now carry sanitized pre-processing recognition through to history.
+When it differs from delivered text, Parrot stores it as Base64 in a versioned hidden Markdown
+comment and exposes it through `history show|last|copy --original`; local search matches either
+version. Unchanged and older entries fall back to final text. Malformed metadata cannot hide the
+visible transcript, and original text follows the same private permissions, retention, locking,
+and `--no-history` policy instead of creating another database or network path.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

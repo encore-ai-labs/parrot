@@ -122,10 +122,12 @@ actor WhisperKitTranscriber: Transcriber {
                 sampleRate: Double(WhisperKit.sampleRate)
             )
         }
+        let originalText = sanitizedText(from: results)
         return LiveTranscription(
-            text: processedText(from: results),
+            text: vocabularyReplacer.applying(to: originalText),
             language: results.first?.language ?? language ?? "unknown",
-            segments: segments
+            segments: segments,
+            originalText: originalText
         )
     }
 
@@ -154,7 +156,7 @@ actor WhisperKitTranscriber: Transcriber {
             segments = (try? AudioPauseDetector.refining(segments, audioAt: url)) ?? segments
         }
         return TimedTranscription(
-            text: processedText(from: results),
+            text: vocabularyReplacer.applying(to: sanitizedText(from: results)),
             language: results.first?.language ?? "unknown",
             segments: segments
         )
@@ -182,9 +184,9 @@ actor WhisperKitTranscriber: Transcriber {
             }
     }
 
-    private func processedText(from results: [TranscriptionResult]) -> String {
+    private func sanitizedText(from results: [TranscriptionResult]) -> String {
         let raw = results.map(\.text).joined(separator: " ")
-        return vocabularyReplacer.applying(to: TranscriptSanitizer.sanitize(raw))
+        return TranscriptSanitizer.sanitize(raw)
     }
 
     private func rebuildDecodingOptions(tokenizer: WhisperTokenizer?) {

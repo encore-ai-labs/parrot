@@ -451,6 +451,15 @@ note bodies containing arbitrary Markdown headings. A compatibility parser reads
 from older releases. `parrot history` exposes recent listing, local full-text search, exact show,
 latest-text output for pipes, clipboard recovery, and the underlying directory path.
 
+Live transcribers also return sanitized recognizer output before deterministic vocabulary and the
+later cleanup, filler, note, spoken-edit, and snippet pipeline. If that original differs from the
+delivered text, the history writer Base64-encodes it in a versioned HTML comment immediately before
+the visible body. Base64 protects Markdown structure from dictated comment terminators and line
+breaks; it is explicitly not encryption. The reader strips valid or malformed metadata lines from
+the visible result, exposes decoded text through `show`, `last`, and `copy --original`, and searches
+both versions. Older and unchanged entries fall back to final text. The metadata shares its entry's
+private permissions, lock, retention, and `--no-history` behavior; it is never a separate store.
+
 New entries also include a hidden metrics comment with audio and transcription milliseconds
 and, when available, the recognized language code.
 `parrot stats` combines those measurements with localized word counts to report voice time,

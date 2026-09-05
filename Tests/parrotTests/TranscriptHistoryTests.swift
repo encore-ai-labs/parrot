@@ -37,6 +37,24 @@ final class TranscriptHistoryTests: XCTestCase {
         XCTAssertEqual(command.limit, 7)
     }
 
+    func testOriginalHistoryFlagsParseForRecoveryCommands() throws {
+        let show = try XCTUnwrap(
+            try History.Show.parseAsRoot(["entry-id", "--original"]) as? History.Show
+        )
+        XCTAssertEqual(show.id, "entry-id")
+        XCTAssertTrue(show.original)
+
+        let last = try XCTUnwrap(
+            try History.Last.parseAsRoot(["--original"]) as? History.Last
+        )
+        XCTAssertTrue(last.original)
+
+        let copy = try XCTUnwrap(
+            try History.Copy.parseAsRoot(["latest", "--original"]) as? History.Copy
+        )
+        XCTAssertTrue(copy.original)
+    }
+
     func testHistoryPruneCommandDefaultsToPreviewAndValidatesDays() throws {
         let preview = try XCTUnwrap(
             try History.Prune.parseAsRoot(["--keep-days", "30"]) as? History.Prune
@@ -363,6 +381,114 @@ final class TranscriptHistoryTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(record.processingDuration), 0.084, accuracy: 0.0001)
         XCTAssertEqual(record.language, "es")
         XCTAssertEqual(record.text, "timed transcript")
+    }
+
+    func testStoresOriginalRecognitionHiddenAndSearchableOnlyWhenDifferent() async throws {
+        let directory = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let calendar = utcCalendar()
+        let date = try date(
+            year: 2024, month: 9, day: 5, hour: 12, calendar: calendar
+        )
+        let store = TranscriptHistory(directory: directory, calendar: calendar)
+        let original = "Um, private marker -->\nRust pond launch tomorrow."
+
+        _ = try await store.appendEntry(
+            "RustPond launch tomorrow.",
+            at: date,
+            originalText: original
+        )
+        _ = try await store.appendEntry(
+            "unchanged recognition",
+            at: date.addingTimeInterval(1),
+            originalText: "unchanged recognition"
+        )
+
+        let url = TranscriptHistory.fileURL(
+            for: date,
+            directory: directory,
+            calendar: calendar
+        )
+        let markdown = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertFalse(markdown.contains(original))
+        XCTAssertEqual(markdown.components(separatedBy: "parrot-original-v1:").count - 1, 1)
+
+        let reader = TranscriptHistoryReader(directory: directory, calendar: calendar)
+        let records = try reader.all()
+        let changed = try XCTUnwrap(records.first(where: { $0.text == "RustPond launch tomorrow." }))
+        XCTAssertEqual(changed.originalText, original)
+        let unchanged = try XCTUnwrap(records.first(where: { $0.text == "unchanged recognition" }))
+        XCTAssertNil(unchanged.originalText)
+        XCTAssertEqual(try reader.search("private marker", limit: 20).map(\.id), [changed.id])
+    }
+
+    func testMalformedOriginalMetadataCannotHideFinalTranscript() throws {
+        let directory = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("2024-09-05.md")
+        try """
+        # Parrot transcripts — 2024-09-05
+
+        <!-- parrot-entry: 20240905-120000-000 -->
+        ## 12:00:00
+
+        <!-- parrot-original-v1: definitely-not-base64! -->
+        final text survives
+        """.write(to: url, atomically: true, encoding: .utf8)
+
+        let record = try XCTUnwrap(
+            TranscriptHistoryReader(directory: directory, calendar: utcCalendar()).all().first
+        )
+        XCTAssertEqual(record.text, "final text survives")
+        XCTAssertNil(record.originalText)
+    }
+
+    func testReadsOriginalMetadataFromCRLFHistory() throws {
+        let directory = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("2024-09-05.md")
+        let original = "recognized before cleanup"
+        let metadata = try XCTUnwrap(
+            OriginalTranscriptMetadata.line(originalText: original, finalText: "cleaned text")
+        )
+        let markdown = [
+            "# Parrot transcripts — 2024-09-05",
+            "",
+            "<!-- parrot-entry: 20240905-120000-000 -->",
+            "## 12:00:00",
+            "",
+            metadata,
+            "cleaned text",
+            ""
+        ].joined(separator: "\r\n")
+        try markdown.write(to: url, atomically: true, encoding: .utf8)
+
+        let record = try XCTUnwrap(
+            TranscriptHistoryReader(directory: directory, calendar: utcCalendar()).all().first
+        )
+        XCTAssertEqual(record.text, "cleaned text")
+        XCTAssertEqual(record.originalText, original)
+    }
+
+    func testOriginalMetadataRoundTripCostIsBounded() {
+        let original = String(repeating: "A long recognized note. ", count: 1_000)
+        let final = "processed note"
+        var decoded: String?
+
+        measure {
+            for _ in 0..<100 {
+                let line = OriginalTranscriptMetadata.line(
+                    originalText: original,
+                    finalText: final
+                )!
+                decoded = OriginalTranscriptMetadata.extract(
+                    from: line + "\n" + final
+                ).originalText
+            }
+        }
+        XCTAssertEqual(decoded, original.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     func testReadsLegacyHistoryAndDisambiguatesSameSecond() throws {

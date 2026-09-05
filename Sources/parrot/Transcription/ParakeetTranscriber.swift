@@ -188,9 +188,11 @@ actor ParakeetTranscriber: Transcriber {
                     sourceDuration: sourceDuration
                 )
             }
+            let originalText = sanitized(try await manager.transcribe(compatibleAudio))
             return LiveTranscription(
-                text: processed(try await manager.transcribe(compatibleAudio)),
-                language: "en"
+                text: vocabularyReplacer.applying(to: originalText),
+                language: "en",
+                originalText: originalText
             )
         }
     }
@@ -294,7 +296,11 @@ actor ParakeetTranscriber: Transcriber {
     }
 
     private func processed(_ raw: String) -> String {
-        vocabularyReplacer.applying(to: TranscriptSanitizer.sanitize(raw))
+        vocabularyReplacer.applying(to: sanitized(raw))
+    }
+
+    private func sanitized(_ raw: String) -> String {
+        TranscriptSanitizer.sanitize(raw)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -310,10 +316,12 @@ actor ParakeetTranscriber: Transcriber {
             vocabularyReplacer: vocabularyReplacer,
             maximumDuration: sourceDuration
         )
+        let originalText = sanitized(text)
         return LiveTranscription(
-            text: processed(text),
+            text: vocabularyReplacer.applying(to: originalText),
             language: "en",
-            segments: segments
+            segments: segments,
+            originalText: originalText
         )
     }
 }

@@ -4,6 +4,7 @@ struct TranscriptRecord: Equatable {
     let id: String
     let recordedAt: Date
     let text: String
+    let originalText: String?
     let fileURL: URL
     let audioDuration: TimeInterval?
     let processingDuration: TimeInterval?
@@ -13,6 +14,7 @@ struct TranscriptRecord: Equatable {
         id: String,
         recordedAt: Date,
         text: String,
+        originalText: String? = nil,
         fileURL: URL,
         audioDuration: TimeInterval? = nil,
         processingDuration: TimeInterval? = nil,
@@ -21,6 +23,7 @@ struct TranscriptRecord: Equatable {
         self.id = id
         self.recordedAt = recordedAt
         self.text = text
+        self.originalText = originalText
         self.fileURL = fileURL
         self.audioDuration = audioDuration
         self.processingDuration = processingDuration
@@ -90,7 +93,9 @@ struct TranscriptHistoryReader {
         guard !words.isEmpty else { return [] }
 
         let matches = try all().compactMap { record -> (TranscriptRecord, Bool)? in
-            let folded = Self.fold(record.text)
+            let folded = Self.fold(
+                record.text + (record.originalText.map { " \($0)" } ?? "")
+            )
             guard words.allSatisfy({ folded.contains($0) }) else { return nil }
             return (record, folded.contains(query))
         }
@@ -135,12 +140,12 @@ struct TranscriptHistoryReader {
             let contentEnd = index + 1 < markers.count
                 ? markers[index + 1].range.location
                 : source.length
-            let content = source.substring(with: NSRange(
+            let rawContent = source.substring(with: NSRange(
                 location: contentStart,
                 length: max(0, contentEnd - contentStart)
             ))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !content.isEmpty else { continue }
+            let content = OriginalTranscriptMetadata.extract(from: rawContent)
+            guard !content.text.isEmpty else { continue }
 
             let id = source.substring(with: marker.range(at: 1))
             let time = source.substring(with: marker.range(at: 3))
@@ -149,7 +154,8 @@ struct TranscriptHistoryReader {
             records.append(TranscriptRecord(
                 id: id,
                 recordedAt: date,
-                text: content,
+                text: content.text,
+                originalText: content.originalText,
                 fileURL: fileURL,
                 audioDuration: duration(from: metrics["audio-ms"]),
                 processingDuration: duration(from: metrics["processing-ms"]),

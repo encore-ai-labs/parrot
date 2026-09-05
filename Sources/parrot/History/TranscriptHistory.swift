@@ -5,6 +5,42 @@ struct TranscriptHistoryWrite: Equatable, Sendable {
     let fileURL: URL
 }
 
+/// Versioned, Markdown-hidden storage for the recognizer's original text.
+/// Base64 prevents dictated `-->` or newlines from escaping the comment.
+enum OriginalTranscriptMetadata {
+    private static let prefix = "<!-- parrot-original-v1: "
+    private static let suffix = " -->"
+
+    static func line(originalText: String?, finalText: String) -> String? {
+        guard let originalText else { return nil }
+        let original = originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !original.isEmpty, original != finalText else { return nil }
+        return prefix + Data(original.utf8).base64EncodedString() + suffix
+    }
+
+    static func extract(from content: String) -> (text: String, originalText: String?) {
+        let trimmed = content
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+        guard trimmed.hasPrefix(prefix),
+              let lineEnd = trimmed.firstIndex(of: "\n")
+        else { return (trimmed, nil) }
+
+        let line = String(trimmed[..<lineEnd])
+        let text = String(trimmed[trimmed.index(after: lineEnd)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard line.hasSuffix(suffix) else { return (text, nil) }
+        let payloadStart = line.index(line.startIndex, offsetBy: prefix.count)
+        let payloadEnd = line.index(line.endIndex, offsetBy: -suffix.count)
+        let payload = String(line[payloadStart..<payloadEnd])
+        guard let data = Data(base64Encoded: payload),
+              let original = String(data: data, encoding: .utf8),
+              !original.isEmpty
+        else { return (text, nil) }
+        return (text, original)
+    }
+}
+
 /// Appends successful dictations to owner-readable daily Markdown files.
 actor TranscriptHistory {
     enum HistoryError: LocalizedError {
@@ -62,14 +98,16 @@ actor TranscriptHistory {
         at date: Date = Date(),
         audioDuration: TimeInterval? = nil,
         processingDuration: TimeInterval? = nil,
-        language: String? = nil
+        language: String? = nil,
+        originalText: String? = nil
     ) throws -> URL? {
         try appendEntry(
             transcript,
             at: date,
             audioDuration: audioDuration,
             processingDuration: processingDuration,
-            language: language
+            language: language,
+            originalText: originalText
         )?.fileURL
     }
 
@@ -80,7 +118,8 @@ actor TranscriptHistory {
         at date: Date = Date(),
         audioDuration: TimeInterval? = nil,
         processingDuration: TimeInterval? = nil,
-        language: String? = nil
+        language: String? = nil,
+        originalText: String? = nil
     ) throws -> TranscriptHistoryWrite? {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
@@ -120,7 +159,11 @@ actor TranscriptHistory {
             let metrics = metricFields.isEmpty
                 ? ""
                 : "<!-- parrot-metrics: \(metricFields.joined(separator: " ")) -->\n"
-            let entry = "\n<!-- parrot-entry: \(id) -->\n\(metrics)## \(time)\n\n\(text)\n"
+            let original = OriginalTranscriptMetadata.line(
+                originalText: originalText,
+                finalText: text
+            ).map { "\($0)\n" } ?? ""
+            let entry = "\n<!-- parrot-entry: \(id) -->\n\(metrics)## \(time)\n\n\(original)\(text)\n"
 
             if !fileManager.fileExists(atPath: url.path) {
                 let dateName = url.deletingPathExtension().lastPathComponent

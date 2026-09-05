@@ -45,17 +45,23 @@ struct History: ParsableCommand {
         @Argument(help: "Entry ID from list/search, or 'latest'.")
         var id: String = "latest"
 
+        @Flag(name: .long, help: "Show the original recognition before local processing.")
+        var original = false
+
         func run() throws {
             let record = try requireRecord(id)
             print("# \(record.id)\n")
-            print(record.text)
+            print(transcriptText(record, original: original))
         }
     }
 
     /// Print only transcript text, making command substitution and pipes clean.
     struct Last: ParsableCommand {
+        @Flag(name: .long, help: "Print the original recognition before local processing.")
+        var original = false
+
         func run() throws {
-            print(try requireRecord("latest").text)
+            print(transcriptText(try requireRecord("latest"), original: original))
         }
     }
 
@@ -63,11 +69,17 @@ struct History: ParsableCommand {
         @Argument(help: "Entry ID from list/search, or 'latest'.")
         var id: String = "latest"
 
+        @Flag(name: .long, help: "Copy the original recognition before local processing.")
+        var original = false
+
         func run() throws {
             let record = try requireRecord(id)
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
-            guard pasteboard.setString(record.text, forType: .string) else {
+            guard pasteboard.setString(
+                transcriptText(record, original: original),
+                forType: .string
+            ) else {
                 throw ValidationError("macOS did not accept the transcript on the clipboard")
             }
             print("✓ copied \(record.id)")
@@ -384,6 +396,10 @@ private func requireRecord(_ id: String) throws -> TranscriptRecord {
         throw ValidationError("no unique transcript matches '\(id)'")
     }
     return record
+}
+
+private func transcriptText(_ record: TranscriptRecord, original: Bool) -> String {
+    original ? (record.originalText ?? record.text) : record.text
 }
 
 private func requireArchivedRecording(_ id: String) throws -> ArchivedRecording {

@@ -892,7 +892,8 @@ struct Run: ParsableCommand {
                                 text,
                                 audioDuration: seconds,
                                 processingDuration: elapsed,
-                                language: transcription.language
+                                language: transcription.language,
+                                originalText: transcription.originalText
                             )
                         } catch {
                             FileHandle.standardError.write(Data(

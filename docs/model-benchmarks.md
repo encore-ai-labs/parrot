@@ -125,6 +125,15 @@ In the debug performance harness, 100 preparations from two 28,000-character inp
 47 ms total on this Mac, or about **0.47 ms per capture**. Selected-text IPC has a separate 50ms
 timeout and runs concurrently with recording rather than delaying microphone startup.
 
+## Original-recognition history cost
+
+History stores a second text payload only when deterministic local processing changes the result.
+The payload is UTF-8 Base64 inside the existing Markdown entry, so it adds no model pass, audio
+copy, database, or network request. In the debug performance harness, 100 encode-and-decode
+round trips of a roughly 24 KB recognition averaged 142 ms total on this Mac, or about **1.42 ms
+per unusually long changed entry**. Normal dictations are much shorter, unchanged entries store
+nothing extra, and history work remains after successful delivery.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

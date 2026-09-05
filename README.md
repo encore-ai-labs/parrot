@@ -266,14 +266,24 @@ parrot history search project roadmap # all words, case/diacritic insensitive
 parrot history show 20260904-203827-123
 parrot history last                    # transcript text only; useful in pipes
 parrot history copy                    # copy latest, or pass an entry ID
+parrot history show latest --original  # recognition before cleanup/replacements
+parrot history last --original         # original recognition, clean for pipes
+parrot history copy latest --original  # recover original recognition to clipboard
 parrot history path                    # print the Markdown directory
 parrot history prune --keep-days 30    # preview a rolling cleanup
 ```
 
-Search scans only the local Markdown files. New entries contain invisible Markdown comments
-that provide reliable boundaries and IDs even when a note contains its own headings; history
-written by older Parrot versions remains readable. For a private session that should leave no
-transcript history, run:
+Search scans only the local Markdown files and matches both the delivered text and the original
+recognition. When local processing changes a transcript (for example vocabulary replacement,
+cleanup, note formatting, spoken editing, or snippet expansion), Parrot keeps that original in a
+versioned, Base64-encoded hidden Markdown comment. It is not encrypted: anyone who can read the
+private file can decode it. Unchanged entries add no duplicate, and old entries without an original
+fall back to their delivered text for `--original`.
+
+Other invisible comments provide reliable boundaries and IDs even when a note contains its own
+headings; history written by older Parrot versions remains readable. Original recognition follows
+the same retention policy as its entry and is never written with `--no-history`. For a private
+session that should leave no transcript history, run:
 
 ```sh
 parrot --no-history
@@ -749,6 +759,7 @@ parrot snippets add meeting --file template.md
 parrot history                         # list recent local transcripts
 parrot history search project roadmap # search private Markdown history
 parrot history copy                    # recover the latest transcript to clipboard
+parrot history last --original         # recover recognition before local processing
 parrot history audio                   # list opt-in retained local recordings
 parrot history audio reprocess latest  # rerun one through the current local model/mode
 parrot history prune --keep-days 30    # preview; add --confirm to remove old entries

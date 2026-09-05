@@ -27,6 +27,7 @@ struct Settings: ParsableCommand {
             print("hotkey      \(defaults.hotkey)\(config.hotkey == nil ? "  (default)" : "")")
             print("model       \(defaults.model)\(config.model == nil ? "  (recommended)" : "")")
             print("mode        \(defaults.mode.rawValue)\(config.mode == nil ? "  (default)" : "")")
+            print("cleanup     \(defaults.cleanup ? "on" : "off")\(config.cleanup == nil ? "  (default)" : "")")
             if let journalPath = defaults.journalPath {
                 print("delivery    journal → \(StartupTUI.displayPath(URL(fileURLWithPath: journalPath)))")
             } else {
@@ -59,14 +60,24 @@ struct Settings: ParsableCommand {
         @Flag(name: .long, help: "Restore paste-at-cursor delivery.")
         var paste: Bool = false
 
+        @Flag(name: .long, help: "Remove conservative speech fillers and false starts locally.")
+        var cleanup: Bool = false
+
+        @Flag(name: .customLong("no-cleanup"), help: "Preserve speech disfluencies.")
+        var noCleanup: Bool = false
+
         func validate() throws {
-            guard hotkey != nil || model != nil || mode != nil || journal != nil || paste else {
+            guard hotkey != nil || model != nil || mode != nil || journal != nil || paste
+                    || cleanup || noCleanup else {
                 throw ValidationError(
-                    "provide at least one of --hotkey, --model, --mode, --journal, or --paste"
+                    "provide at least one setting to change"
                 )
             }
             guard !(journal != nil && paste) else {
                 throw ValidationError("pass at most one of --journal or --paste")
+            }
+            guard !(cleanup && noCleanup) else {
+                throw ValidationError("pass at most one of --cleanup or --no-cleanup")
             }
             if let hotkey, Hotkey.parse(hotkey) == nil {
                 throw ValidationError("unknown hotkey '\(hotkey)'; run `parrot hotkeys`")
@@ -83,9 +94,10 @@ struct Settings: ParsableCommand {
         }
 
         func run() throws {
-            guard hotkey != nil || model != nil || mode != nil || journal != nil || paste else {
+            guard hotkey != nil || model != nil || mode != nil || journal != nil || paste
+                    || cleanup || noCleanup else {
                 throw ValidationError(
-                    "provide at least one of --hotkey, --model, --mode, --journal, or --paste"
+                    "provide at least one setting to change"
                 )
             }
             var config = Config.load()
@@ -114,6 +126,9 @@ struct Settings: ParsableCommand {
             } else if paste {
                 config.journalPath = nil
             }
+            if cleanup || noCleanup {
+                config.cleanup = cleanup
+            }
             try config.write()
             print("✓ saved Parrot defaults")
             try Show().run()
@@ -123,7 +138,7 @@ struct Settings: ParsableCommand {
 
     struct Reset: ParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Reset hotkey, model, mode, and delivery to built-in defaults."
+            abstract: "Reset hotkey, model, mode, cleanup, and delivery defaults."
         )
 
         func run() throws {
@@ -132,8 +147,9 @@ struct Settings: ParsableCommand {
             config.model = nil
             config.mode = nil
             config.journalPath = nil
+            config.cleanup = nil
             try config.write()
-            print("✓ reset hotkey, model, mode, and delivery defaults")
+            print("✓ reset hotkey, model, mode, cleanup, and delivery defaults")
             print("restart a running Parrot daemon to apply the change")
         }
     }

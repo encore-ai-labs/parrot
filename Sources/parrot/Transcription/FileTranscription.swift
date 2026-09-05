@@ -40,6 +40,12 @@ struct Transcribe: ParsableCommand {
     @Flag(name: .long, help: "Preserve transcript casing even if lowercase is saved.")
     var noLowercase = false
 
+    @Flag(name: .long, help: "Remove conservative speech fillers and false starts locally.")
+    var cleanup = false
+
+    @Flag(name: .customLong("no-cleanup"), help: "Preserve disfluencies even if cleanup is saved.")
+    var noCleanup = false
+
     @Flag(name: .long, help: "Ignore saved personal vocabulary.")
     var noVocabulary = false
 
@@ -74,6 +80,9 @@ struct Transcribe: ParsableCommand {
         }
         guard !(lowercase && noLowercase) else {
             throw ValidationError("pass at most one of --lowercase or --no-lowercase")
+        }
+        guard !(cleanup && noCleanup) else {
+            throw ValidationError("pass at most one of --cleanup or --no-cleanup")
         }
         guard output == nil || outputDirectory == nil else {
             throw ValidationError("pass at most one of --output or --output-directory")
@@ -127,6 +136,12 @@ struct Transcribe: ParsableCommand {
         } else {
             lowercaseOutput = config.lowercase ?? false
         }
+        let cleanupOutput: Bool
+        if cleanup || noCleanup {
+            cleanupOutput = cleanup
+        } else {
+            cleanupOutput = config.cleanup ?? false
+        }
 
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
         let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
@@ -157,6 +172,7 @@ struct Transcribe: ParsableCommand {
                     transcription.text,
                     mode: mode,
                     lowercase: lowercaseOutput,
+                    cleanup: cleanupOutput,
                     snippets: snippetExpander
                 )
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -167,6 +183,10 @@ struct Transcribe: ParsableCommand {
                 let audioSeconds = await Self.audioDuration(
                     at: job.input,
                     fallback: fallbackDuration
+                )
+                let segments = TranscriptProcessing.processSegments(
+                    transcription.segments,
+                    cleanup: cleanupOutput
                 )
                 let report = FileTranscriptReport(
                     source: job.input.path,
@@ -179,7 +199,7 @@ struct Transcribe: ParsableCommand {
                     processingSeconds: processingSeconds,
                     realTimeFactor: audioSeconds > 0 ? processingSeconds / audioSeconds : 0,
                     text: text,
-                    segments: timestamps ? transcription.segments : []
+                    segments: timestamps ? segments : []
                 )
                 let rendered = try FileTranscriptRenderer.render(report, format: format)
                 if let destination = job.destination {
@@ -359,12 +379,30 @@ enum TranscriptProcessing {
         _ raw: String,
         mode: DictationMode,
         lowercase: Bool,
+        cleanup: Bool = false,
         snippets: SnippetExpander
     ) -> String {
-        let formatted = mode == .notes ? NoteFormatter.format(raw) : raw
+        let cleaned = cleanup ? SpeechCleanup.clean(raw) : raw
+        let formatted = mode == .notes ? NoteFormatter.format(cleaned) : cleaned
         let cased = lowercase ? formatted.lowercased() : formatted
         return snippets.applying(to: cased)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func processSegments(
+        _ segments: [TimedTranscriptSegment],
+        cleanup: Bool
+    ) -> [TimedTranscriptSegment] {
+        guard cleanup else { return segments }
+        return segments.compactMap { segment in
+            let text = SpeechCleanup.clean(segment.text)
+            guard !text.isEmpty else { return nil }
+            return TimedTranscriptSegment(
+                startSeconds: segment.startSeconds,
+                endSeconds: segment.endSeconds,
+                text: text
+            )
+        }
     }
 }
 

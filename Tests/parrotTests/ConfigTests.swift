@@ -28,6 +28,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.mode)
         XCTAssertNil(config.appRules)
         XCTAssertNil(config.journalPath)
+        XCTAssertNil(config.cleanup)
         XCTAssertEqual(permissions(at: root), 0o700)
         XCTAssertEqual(permissions(at: url), 0o600)
     }
@@ -41,6 +42,7 @@ final class ConfigTests: XCTestCase {
         config.model = "whisper-small.en"
         config.mode = .notes
         config.journalPath = "/tmp/notes.md"
+        config.cleanup = true
 
         try config.write(to: url)
 
@@ -68,7 +70,8 @@ final class ConfigTests: XCTestCase {
                 hotkey: "right-option",
                 model: "whisper-small.en",
                 mode: .notes,
-                journalPath: nil
+                journalPath: nil,
+                cleanup: false
             )
         )
         XCTAssertEqual(
@@ -84,7 +87,8 @@ final class ConfigTests: XCTestCase {
                 hotkey: "end",
                 model: "whisper-base.en",
                 mode: .dictation,
-                journalPath: nil
+                journalPath: nil,
+                cleanup: false
             )
         )
     }
@@ -137,6 +141,32 @@ final class ConfigTests: XCTestCase {
         ))
     }
 
+    func testRuntimeDefaultsResolveSavedAndOneRunCleanup() throws {
+        var config = Config()
+        config.cleanup = true
+
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertTrue(saved.cleanup)
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            cleanupOverride: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertFalse(overridden.cleanup)
+    }
+
     func testRuntimeDefaultsRejectConflictingModeOverrides() {
         XCTAssertThrowsError(
             try RuntimeDefaults.resolve(
@@ -155,13 +185,14 @@ final class ConfigTests: XCTestCase {
         let set = try XCTUnwrap(
             try Settings.parseAsRoot([
                 "set", "--hotkey", "ralt", "--model", "whisper-small.en",
-                "--mode", "notes", "--journal", "/tmp/inbox.md",
+                "--mode", "notes", "--journal", "/tmp/inbox.md", "--cleanup",
             ]) as? Settings.Set
         )
         XCTAssertEqual(set.hotkey, "ralt")
         XCTAssertEqual(set.model, "whisper-small.en")
         XCTAssertEqual(set.mode, "notes")
         XCTAssertEqual(set.journal, "/tmp/inbox.md")
+        XCTAssertTrue(set.cleanup)
         XCTAssertTrue(try Settings.parseAsRoot(["reset"]) is Settings.Reset)
 
         let paste = try XCTUnwrap(
@@ -177,6 +208,7 @@ final class ConfigTests: XCTestCase {
             "set", "--journal", "/tmp/inbox.md", "--paste",
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--journal", "/tmp/inbox.txt"]))
+        XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--cleanup", "--no-cleanup"]))
     }
 
     private func temporaryDirectory() -> URL {

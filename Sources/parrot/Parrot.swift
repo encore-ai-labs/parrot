@@ -139,6 +139,12 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Don't lowercase transcribed text.")
     var noLowercase: Bool = false
 
+    @Flag(name: .long, help: "Remove conservative speech fillers and false starts locally.")
+    var cleanup: Bool = false
+
+    @Flag(name: .customLong("no-cleanup"), help: "Preserve disfluencies even if cleanup is saved.")
+    var noCleanup: Bool = false
+
     @Flag(name: .long, help: "Don't save successful transcripts to local Markdown history.")
     var noHistory: Bool = false
 
@@ -178,6 +184,9 @@ struct Run: ParsableCommand {
     func validate() throws {
         guard !(journal != nil && paste) else {
             throw ValidationError("pass at most one of --journal or --paste")
+        }
+        guard !(cleanup && noCleanup) else {
+            throw ValidationError("pass at most one of --cleanup or --no-cleanup")
         }
         if let journal {
             _ = try MarkdownJournal.resolveURL(journal)
@@ -222,6 +231,7 @@ struct Run: ParsableCommand {
                 dictation: dictationMode,
                 journalOverride: journal,
                 paste: paste,
+                cleanupOverride: cleanup || noCleanup ? cleanup : nil,
                 recommendedModel: recommendedModel
             )
         } catch {
@@ -540,6 +550,7 @@ struct Run: ParsableCommand {
                         raw,
                         mode: modeForCapture,
                         lowercase: lowercaseMode,
+                        cleanup: defaults.cleanup,
                         snippets: snippetExpander
                     )
                     let elapsed = Date().timeIntervalSince(started)
@@ -710,6 +721,7 @@ struct Run: ParsableCommand {
             delivery: journalWriter.map {
                 "journal → \(StartupTUI.displayPath($0.url))"
             } ?? "paste at cursor",
+            cleanup: defaults.cleanup,
             systemHotkeyAction: systemHotkeyAction
         ))
         var updateInProgress = false

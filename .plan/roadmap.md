@@ -215,6 +215,11 @@ destination turns each finished dictation into a timestamped Markdown section wi
 into the focused app. It is validated before recording, uses locked and synced appends, keeps
 history independently optional, and adds no inference or network work.
 
+**6.15 Conservative local speech cleanup** — ✅ **complete.** An opt-in shared processing
+pass removes unambiguous hesitation forms and bounded false starts without an LLM. Ambiguous
+words and emphatic/grammatical repetition are preserved, snippet bodies bypass cleanup, and
+live plus file transcription use identical saved/one-run override semantics.
+
 ---
 
 ## Suggested release cadence

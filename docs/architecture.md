@@ -217,6 +217,20 @@ After transcription and annotation cleanup, a single deterministic replacement p
 against the original transcript, so replacements cannot cascade. This gives exact results for
 recurring names and jargon without an LLM, network request, or variable post-processing latency.
 
+### `SpeechCleanup`
+
+`--cleanup` enables an opt-in, deterministic pass between transcription/vocabulary replacement
+and note formatting. It removes a conservative set of hesitation forms, bounded exact
+multi-word false starts, selected function-word stutters, and matching prefix restarts. It
+explicitly preserves ambiguous conversational words and meaningful repetition; `--no-cleanup`
+overrides a saved setting for one run.
+
+The implementation performs a fixed number of precompiled regular-expression passes. It loads
+no additional model, allocates no transcript-sized token graph, and makes no network request.
+Cleanup runs before `NoteFormatter` so spoken structure still works, and before
+`SnippetExpander` so saved snippet bodies remain byte-for-byte unchanged. File transcription
+uses the same pass for both primary text and timestamped segment text.
+
 ### `NoteFormatter`
 
 `--notes` enables an explicit spoken-command layer after transcription and vocabulary
@@ -370,8 +384,8 @@ flooding LaunchAgent logs.
 
 A `Codable` struct at `~/.config/parrot/config.json`, holding the chosen microphone UID,
 lowercase preference, first-run completion flag, and optional defaults for hotkey, model,
-dictation/notes mode, and Markdown journal destination. Every field is optional, so older config files decode unchanged and nil
-continues to mean "use the built-in default."
+dictation/notes mode, speech cleanup, and Markdown journal destination. Every field is optional,
+so older config files decode unchanged and nil continues to mean "use the built-in default."
 
 JSON rather than the TOML originally sketched: `Codable` gives it to us for free, and a TOML
 parser would have been a new dependency for a handful of keys. The directory and file are
@@ -464,9 +478,10 @@ Models are not bundled. New downloads live in
 8. `HotkeyMonitor` fires `.released`. Overlay switches to spinner. Status: `transcribing`.
 9. `AudioCapture` stops, hands buffer to active `Transcriber`.
 10. `Transcriber` runs CoreML inference. Returns string.
-11. The mode captured at recording start selects precomputed prompt options; in notes mode,
-    `NoteFormatter` then applies explicit Markdown structure commands.
-12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies.
+11. `SpeechCleanup` optionally removes conservative disfluencies; then the mode captured at
+    recording start selects whether `NoteFormatter` applies explicit Markdown structure commands.
+12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies, which
+    are never passed through cleanup or note formatting.
 13. `TextInjector` posts the string at the cursor, or `MarkdownJournal` durably appends it when
     journal delivery is selected. `TranscriptHistory` independently saves the recovery copy.
 14. Overlay hides. Status: `listening`. Loop.

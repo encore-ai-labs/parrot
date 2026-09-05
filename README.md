@@ -86,6 +86,27 @@ paragraph`. Normal dictation stays unchanged unless note mode is active. Use `--
 for a one-run override when notes are saved as your default. Formatted Markdown is what gets
 pasted and saved to local history.
 
+### Local speech cleanup
+
+For cleaner spoken drafts, enable Parrot's conservative on-device cleanup pass:
+
+```sh
+parrot settings set --cleanup
+parrot daemon restart
+```
+
+It removes hesitation forms such as `um`, `uh`, and `erm`, exact multi-word false starts such
+as “I wanted to, I wanted to…”, a small set of function-word stutters, and prefix restarts such
+as “w- want”. Cleanup is deterministic text processing: it loads no language model, makes no
+network request, and runs before note formatting and snippet insertion. Potentially meaningful
+words and repetitions—including “like”, “right”, “okay”, “very very”, “no, no”, “had had”,
+and “that that”—are deliberately preserved.
+
+Cleanup is off by default so upgrades never rewrite established dictation unexpectedly. Use
+`parrot --cleanup` for one run, `parrot --no-cleanup` to override a saved setting, or
+`parrot settings set --no-cleanup` to turn it off persistently. The same flags work with
+`parrot transcribe` for local audio and video files.
+
 ### Reusable voice snippets
 
 Save text or Markdown you type repeatedly, then insert it during either normal dictation or
@@ -353,23 +374,24 @@ managed model cache location; transcript, config, and legacy-model paths stay un
 ### Settings
 
 Parrot stores settings only at `~/.config/parrot/config.json`, with user-only permissions.
-The chosen microphone and lowercase choice are remembered during setup. Hotkey, model, and
-note/dictation mode can be saved explicitly:
+The chosen microphone and lowercase choice are remembered during setup. Hotkey, model,
+note/dictation mode, cleanup, and delivery can be saved explicitly:
 
 ```sh
 parrot settings
 parrot settings set --hotkey right-option
 parrot settings set --model whisper-small.en --mode notes
+parrot settings set --cleanup
 parrot settings set --journal ~/Documents/Notes/inbox.md
 parrot settings set --paste         # restore paste-at-cursor delivery
-parrot settings reset               # resets hotkey/model/mode/delivery
+parrot settings reset               # resets hotkey/model/mode/cleanup/delivery
 parrot daemon restart               # apply to a running LaunchAgent
 ```
 
 Saved defaults are what a LaunchAgent uses, so launch-at-login no longer falls back to Fn or
 plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--model`,
-`--notes`, and `--dictation` take priority without changing the file. `--reconfigure` resets
-the complete first-run configuration.
+`--notes`, `--dictation`, `--cleanup`, and `--no-cleanup` take priority without changing the
+file. `--reconfigure` resets the complete first-run configuration.
 
 ### App-aware modes
 
@@ -458,6 +480,8 @@ parrot --journal ~/Documents/Notes/inbox.md # append there; don't type at cursor
 parrot --paste                         # override a saved journal for one run
 parrot --notes                         # explicit spoken commands → local Markdown
 parrot --dictation                     # override a saved notes mode for one run
+parrot --cleanup                       # conservative local filler/false-start cleanup
+parrot --no-cleanup                    # preserve disfluencies for this run
 parrot --input-device brio             # pick a specific mic
 parrot --no-pick-mic                   # skip the mic prompt
 parrot --lowercase                     # lowercase all transcribed text

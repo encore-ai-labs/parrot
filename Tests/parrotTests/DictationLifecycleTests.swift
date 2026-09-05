@@ -63,4 +63,10 @@ final class DictationLifecycleTests: XCTestCase {
         let run = try XCTUnwrap(try Run.parseAsRoot(["--no-audio-gate"]) as? Run)
         XCTAssertTrue(run.noAudioGate)
     }
+
+    func testCleanupFlagsParseAndConflict() throws {
+        XCTAssertTrue(try XCTUnwrap(try Run.parseAsRoot(["--cleanup"]) as? Run).cleanup)
+        XCTAssertTrue(try XCTUnwrap(try Run.parseAsRoot(["--no-cleanup"]) as? Run).noCleanup)
+        XCTAssertThrowsError(try Run.parseAsRoot(["--cleanup", "--no-cleanup"]))
+    }
 }

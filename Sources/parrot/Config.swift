@@ -27,6 +27,9 @@ struct Config: Codable, Equatable {
     /// Optional Markdown destination. When set, finished dictations append
     /// here instead of being injected at the cursor.
     var journalPath: String?
+    /// Remove conservative, deterministic speech disfluencies after local
+    /// transcription. Nil preserves the built-in off default.
+    var cleanup: Bool?
 
     static var directory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -109,6 +112,7 @@ struct RuntimeDefaults: Equatable {
     let model: String
     let mode: DictationMode
     let journalPath: String?
+    let cleanup: Bool
 
     static func resolve(
         config: Config,
@@ -118,6 +122,7 @@ struct RuntimeDefaults: Equatable {
         dictation: Bool,
         journalOverride: String? = nil,
         paste: Bool = false,
+        cleanupOverride: Bool? = nil,
         recommendedModel: String
     ) throws -> RuntimeDefaults {
         guard !(notes && dictation) else {
@@ -138,7 +143,8 @@ struct RuntimeDefaults: Equatable {
             hotkey: hotkeyOverride ?? config.hotkey ?? Hotkey.default.name,
             model: modelOverride ?? config.model ?? recommendedModel,
             mode: resolvedMode,
-            journalPath: paste ? nil : journalOverride ?? config.journalPath
+            journalPath: paste ? nil : journalOverride ?? config.journalPath,
+            cleanup: cleanupOverride ?? config.cleanup ?? false
         )
     }
 }

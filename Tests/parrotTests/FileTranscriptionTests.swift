@@ -16,7 +16,7 @@ final class FileTranscriptionTests: XCTestCase {
             try Transcribe.parseAsRoot([
                 "/tmp/one.m4a", "/tmp/two.mp4",
                 "--model", "whisper-small.en",
-                "--notes", "--lowercase", "--no-vocabulary", "--no-snippets",
+                "--notes", "--lowercase", "--cleanup", "--no-vocabulary", "--no-snippets",
                 "--format", "json", "--output-directory", "/tmp/transcripts",
                 "--no-timestamps", "--force",
             ]) as? Transcribe
@@ -25,6 +25,7 @@ final class FileTranscriptionTests: XCTestCase {
         XCTAssertEqual(command.model, "whisper-small.en")
         XCTAssertTrue(command.notes)
         XCTAssertTrue(command.lowercase)
+        XCTAssertTrue(command.cleanup)
         XCTAssertTrue(command.noVocabulary)
         XCTAssertTrue(command.noSnippets)
         XCTAssertEqual(command.format, .json)
@@ -39,6 +40,9 @@ final class FileTranscriptionTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try Transcribe.parseAsRoot(["one.wav", "--lowercase", "--no-lowercase"])
+        )
+        XCTAssertThrowsError(
+            try Transcribe.parseAsRoot(["one.wav", "--cleanup", "--no-cleanup"])
         )
         XCTAssertThrowsError(
             try Transcribe.parseAsRoot([
@@ -196,6 +200,30 @@ final class FileTranscriptionTests: XCTestCase {
         XCTAssertTrue(output.contains("## plan"))
         XCTAssertTrue(output.contains("- [ ] ship it"))
         XCTAssertTrue(output.contains("Regards,\nParth"))
+    }
+
+    func testCleanupAppliesToTimestampSegmentsWithoutChangingTiming() {
+        let segments = [
+            TimedTranscriptSegment(startSeconds: 1, endSeconds: 2, text: "Um."),
+            TimedTranscriptSegment(
+                startSeconds: 2,
+                endSeconds: 4,
+                text: "I wanted to, I wanted to begin."
+            ),
+        ]
+
+        XCTAssertEqual(
+            TranscriptProcessing.processSegments(segments, cleanup: true),
+            [TimedTranscriptSegment(
+                startSeconds: 2,
+                endSeconds: 4,
+                text: "I wanted to begin."
+            )]
+        )
+        XCTAssertEqual(
+            TranscriptProcessing.processSegments(segments, cleanup: false),
+            segments
+        )
     }
 
     func testTimestampFormattingHandlesMinuteAndHourBoundaries() {

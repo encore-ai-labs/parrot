@@ -34,6 +34,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.automaticParagraphs)
         XCTAssertNil(config.spaceAfterPaste)
         XCTAssertNil(config.warmMicrophone)
+        XCTAssertNil(config.historyRetentionDays)
         XCTAssertEqual(permissions(at: root), 0o700)
         XCTAssertEqual(permissions(at: url), 0o600)
     }
@@ -52,6 +53,7 @@ final class ConfigTests: XCTestCase {
         config.automaticParagraphs = false
         config.spaceAfterPaste = false
         config.warmMicrophone = false
+        config.historyRetentionDays = 30
 
         try config.write(to: url)
 
@@ -101,7 +103,8 @@ final class ConfigTests: XCTestCase {
                 cleanup: false,
                 automaticParagraphs: true,
                 spaceAfterPaste: true,
-                warmMicrophone: true
+                warmMicrophone: true,
+                historyRetentionDays: nil
             )
         )
         XCTAssertEqual(
@@ -123,7 +126,8 @@ final class ConfigTests: XCTestCase {
                 cleanup: false,
                 automaticParagraphs: true,
                 spaceAfterPaste: true,
-                warmMicrophone: true
+                warmMicrophone: true,
+                historyRetentionDays: nil
             )
         )
     }
@@ -371,6 +375,38 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(overridden.warmMicrophone)
     }
 
+    func testRuntimeDefaultsValidateOptionalHistoryRetention() throws {
+        var config = Config()
+        XCTAssertNil(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ).historyRetentionDays)
+
+        config.historyRetentionDays = 30
+        XCTAssertEqual(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ).historyRetentionDays, 30)
+
+        config.historyRetentionDays = 0
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ))
+    }
+
     func testRuntimeDefaultsRejectConflictingModeOverrides() {
         XCTAssertThrowsError(
             try RuntimeDefaults.resolve(
@@ -392,6 +428,7 @@ final class ConfigTests: XCTestCase {
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
                 "--no-space-after-paste", "--cold-mic",
+                "--history-retention-days", "30",
             ]) as? Settings.Set
         )
         XCTAssertEqual(set.hotkey, "ralt")
@@ -403,6 +440,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(set.automaticParagraphs)
         XCTAssertTrue(set.noSpaceAfterPaste)
         XCTAssertTrue(set.coldMicrophone)
+        XCTAssertEqual(set.historyRetentionDays, 30)
         XCTAssertTrue(try Settings.parseAsRoot(["reset"]) is Settings.Reset)
 
         let paste = try XCTUnwrap(
@@ -441,6 +479,12 @@ final class ConfigTests: XCTestCase {
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--warm-mic", "--cold-mic",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--history-retention-days", "0",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--history-retention-days", "30", "--keep-history-forever",
         ]))
     }
 

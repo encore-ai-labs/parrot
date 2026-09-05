@@ -41,6 +41,11 @@ struct Settings: ParsableCommand {
                 "capture      \(defaults.warmMicrophone ? "warm · 300ms pre-roll" : "cold · opens on press")"
                     + "\(config.warmMicrophone == nil ? "  (default)" : "")"
             )
+            print(
+                "history      "
+                    + (defaults.historyRetentionDays.map { "keep \($0) days" } ?? "keep forever")
+                    + "\(config.historyRetentionDays == nil ? "  (default)" : "")"
+            )
             if let journalPath = defaults.journalPath {
                 print("delivery    journal → \(StartupTUI.displayPath(URL(fileURLWithPath: journalPath)))")
             } else if defaults.deliveryCommand != nil {
@@ -126,12 +131,25 @@ struct Settings: ParsableCommand {
         )
         var coldMicrophone: Bool = false
 
+        @Option(
+            name: .customLong("history-retention-days"),
+            help: "Automatically remove transcript history older than 1...3650 rolling days."
+        )
+        var historyRetentionDays: Int?
+
+        @Flag(
+            name: .customLong("keep-history-forever"),
+            help: "Disable automatic transcript-history cleanup."
+        )
+        var keepHistoryForever: Bool = false
+
         func validate() throws {
             guard hotkey != nil || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || spaceAfterPaste || noSpaceAfterPaste
-                    || warmMicrophone || coldMicrophone else {
+                    || warmMicrophone || coldMicrophone
+                    || historyRetentionDays != nil || keepHistoryForever else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
@@ -154,6 +172,14 @@ struct Settings: ParsableCommand {
             }
             guard !(warmMicrophone && coldMicrophone) else {
                 throw ValidationError("pass at most one of --warm-mic or --cold-mic")
+            }
+            guard !(historyRetentionDays != nil && keepHistoryForever) else {
+                throw ValidationError(
+                    "pass at most one of --history-retention-days or --keep-history-forever"
+                )
+            }
+            if let historyRetentionDays {
+                _ = try HistoryRetentionPolicy(days: historyRetentionDays)
             }
             if let hotkey, Hotkey.parse(hotkey) == nil {
                 throw ValidationError("unknown hotkey '\(hotkey)'; run `parrot hotkeys`")
@@ -180,7 +206,8 @@ struct Settings: ParsableCommand {
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || spaceAfterPaste || noSpaceAfterPaste
-                    || warmMicrophone || coldMicrophone else {
+                    || warmMicrophone || coldMicrophone
+                    || historyRetentionDays != nil || keepHistoryForever else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
@@ -235,6 +262,12 @@ struct Settings: ParsableCommand {
             if warmMicrophone || coldMicrophone {
                 config.warmMicrophone = warmMicrophone
             }
+            if let historyRetentionDays {
+                _ = try HistoryRetentionPolicy(days: historyRetentionDays)
+                config.historyRetentionDays = historyRetentionDays
+            } else if keepHistoryForever {
+                config.historyRetentionDays = nil
+            }
             let effectiveModelID = config.model ?? ModelRegistry.recommended()?.id ?? ""
             guard let effectiveModel = ModelRegistry.find(effectiveModelID) else {
                 throw ValidationError("no transcription model is available")
@@ -270,8 +303,9 @@ struct Settings: ParsableCommand {
             config.automaticParagraphs = nil
             config.spaceAfterPaste = nil
             config.warmMicrophone = nil
+            config.historyRetentionDays = nil
             try config.write()
-            print("✓ reset transcription, formatting, capture, and delivery defaults")
+            print("✓ reset transcription, formatting, capture, history, and delivery defaults")
             print("restart a running Parrot daemon to apply the change")
         }
     }

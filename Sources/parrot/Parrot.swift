@@ -559,7 +559,30 @@ struct Run: ParsableCommand {
                 modeController.setFallbackMode(mode)
             }
         }
-        let history = noHistory ? nil : TranscriptHistory()
+        let history = noHistory
+            ? nil
+            : TranscriptHistory(retentionDays: defaults.historyRetentionDays)
+        let pruneHistoryIfNeeded: (Bool) -> Void = { force in
+            guard let history else { return }
+            Task(priority: .utility) {
+                do {
+                    guard let plan = try await history.pruneExpiredIfDue(force: force),
+                          plan.entriesRemoved > 0
+                    else { return }
+                    let entryNoun = plan.entriesRemoved == 1 ? "entry" : "entries"
+                    let fileNoun = plan.filesAffected == 1 ? "file" : "files"
+                    FileHandle.standardError.write(Data(
+                        "history retention removed \(plan.entriesRemoved) \(entryNoun) "
+                            .appending("from \(plan.filesAffected) \(fileNoun)\n").utf8
+                    ))
+                } catch {
+                    FileHandle.standardError.write(Data(
+                        "history retention failed: \(error.localizedDescription)\n".utf8
+                    ))
+                }
+            }
+        }
+        pruneHistoryIfNeeded(true)
         let lifecycle = DictationLifecycle()
         let recordingRecovery = LastRecordingRecovery()
         let restoredRecording: Bool
@@ -714,6 +737,7 @@ struct Run: ParsableCommand {
                                 "recovery cleanup failed: \(error.localizedDescription)\n".utf8
                             ))
                         }
+                        pruneHistoryIfNeeded(false)
                     }
                 } catch {
                     FileHandle.standardError.write(Data(
@@ -982,6 +1006,7 @@ struct Run: ParsableCommand {
             vocabularyCount: vocabulary.entries.count,
             snippetCount: snippets.entries.count,
             historyPath: historyPath,
+            historyRetentionDays: defaults.historyRetentionDays,
             delivery: journalWriter.map {
                 "journal → \(StartupTUI.displayPath($0.url))"
             } ?? (commandDelivery == nil

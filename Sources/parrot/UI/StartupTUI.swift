@@ -11,6 +11,7 @@ enum StartupTUI {
         let vocabularyCount: Int
         let snippetCount: Int
         let historyPath: String?
+        let historyRetentionDays: Int?
         let delivery: String
         let cleanup: Bool
         let automaticParagraphs: Bool
@@ -34,7 +35,9 @@ enum StartupTUI {
 
     static func show(_ details: Details) {
         guard TerminalSelect.isAvailable else {
-            let history = details.historyPath.map { " · history: \($0)" } ?? " · history: off"
+            let retention = details.historyRetentionDays.map { " · keep \($0)d" } ?? ""
+            let history = details.historyPath.map { " · history: \($0)\(retention)" }
+                ?? " · history: off"
             let systemAction = details.systemHotkeyAction.map { " · \($0)" } ?? ""
             write(
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
@@ -52,7 +55,9 @@ enum StartupTUI {
             return
         }
 
-        let history = details.historyPath ?? "off (--no-history)"
+        let retention = details.historyRetentionDays.map { " · rolling \($0)d" }
+            ?? " · keep forever"
+        let history = details.historyPath.map { $0 + retention } ?? "off (--no-history)"
         write("\n")
         write(row("version", details.version))
         write(row("hotkey", "\(details.hotkey)  ·  hold to talk / double-tap to lock / esc to cancel"))

@@ -2,6 +2,17 @@ import Foundation
 
 /// Appends successful dictations to owner-readable daily Markdown files.
 actor TranscriptHistory {
+    enum HistoryError: LocalizedError {
+        case unsafeDailyFile(URL)
+
+        var errorDescription: String? {
+            switch self {
+            case .unsafeDailyFile(let url):
+                return "history daily file must be a regular, non-symlink file: \(url.path)"
+            }
+        }
+    }
+
     static var defaultDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local/share/parrot/transcripts", isDirectory: true)
@@ -9,10 +20,17 @@ actor TranscriptHistory {
 
     private let directory: URL
     private let calendar: Calendar
+    private let retentionDays: Int?
+    private var lastRetentionCheck: Date?
 
-    init(directory: URL = TranscriptHistory.defaultDirectory, calendar: Calendar = .current) {
+    init(
+        directory: URL = TranscriptHistory.defaultDirectory,
+        calendar: Calendar = .current,
+        retentionDays: Int? = nil
+    ) {
         self.directory = directory
         self.calendar = calendar
+        self.retentionDays = retentionDays
     }
 
     nonisolated static func fileURL(
@@ -53,45 +71,76 @@ actor TranscriptHistory {
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
 
         let url = Self.fileURL(for: date, directory: directory, calendar: calendar)
-        let time = timestamp(date)
-        let id = entryID(date)
-        // The HTML comment is invisible in rendered Markdown and gives history
-        // commands an unambiguous boundary even when a dictated note contains
-        // a heading that happens to look like a timestamp.
-        var metricFields: [String] = []
-        if let audioDuration, let processingDuration {
-            let audioMilliseconds = max(0, Int((audioDuration * 1_000).rounded()))
-            let processingMilliseconds = max(0, Int((processingDuration * 1_000).rounded()))
-            metricFields.append("audio-ms=\(audioMilliseconds)")
-            metricFields.append("processing-ms=\(processingMilliseconds)")
-        }
-        if let language = language.flatMap(RecognitionLanguage.canonicalize),
-           language != RecognitionLanguage.automatic {
-            metricFields.append("language=\(language)")
-        }
-        let metrics = metricFields.isEmpty
-            ? ""
-            : "<!-- parrot-metrics: \(metricFields.joined(separator: " ")) -->\n"
-        let entry = "\n<!-- parrot-entry: \(id) -->\n\(metrics)## \(time)\n\n\(text)\n"
-
-        if !fileManager.fileExists(atPath: url.path) {
-            let dateName = url.deletingPathExtension().lastPathComponent
-            let header = "# Parrot transcripts — \(dateName)\n" + entry
-            guard fileManager.createFile(
-                atPath: url.path,
-                contents: Data(header.utf8),
-                attributes: [.posixPermissions: 0o600]
-            ) else {
-                throw CocoaError(.fileWriteUnknown)
+        try HistoryFileLock.withLock(
+            directory: directory,
+            mode: .exclusive,
+            createDirectory: true
+        ) {
+            let time = timestamp(date)
+            let id = entryID(date)
+            // The HTML comment is invisible in rendered Markdown and gives history
+            // commands an unambiguous boundary even when a dictated note contains
+            // a heading that happens to look like a timestamp.
+            var metricFields: [String] = []
+            if let audioDuration, let processingDuration {
+                let audioMilliseconds = max(0, Int((audioDuration * 1_000).rounded()))
+                let processingMilliseconds = max(0, Int((processingDuration * 1_000).rounded()))
+                metricFields.append("audio-ms=\(audioMilliseconds)")
+                metricFields.append("processing-ms=\(processingMilliseconds)")
             }
-        } else {
-            let handle = try FileHandle(forWritingTo: url)
-            defer { try? handle.close() }
-            try handle.seekToEnd()
-            try handle.write(contentsOf: Data(entry.utf8))
-            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            if let language = language.flatMap(RecognitionLanguage.canonicalize),
+               language != RecognitionLanguage.automatic {
+                metricFields.append("language=\(language)")
+            }
+            let metrics = metricFields.isEmpty
+                ? ""
+                : "<!-- parrot-metrics: \(metricFields.joined(separator: " ")) -->\n"
+            let entry = "\n<!-- parrot-entry: \(id) -->\n\(metrics)## \(time)\n\n\(text)\n"
+
+            if !fileManager.fileExists(atPath: url.path) {
+                let dateName = url.deletingPathExtension().lastPathComponent
+                let header = "# Parrot transcripts — \(dateName)\n" + entry
+                guard fileManager.createFile(
+                    atPath: url.path,
+                    contents: Data(header.utf8),
+                    attributes: [.posixPermissions: 0o600]
+                ) else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+            } else {
+                let values = try url.resourceValues(
+                    forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
+                )
+                guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                    throw HistoryError.unsafeDailyFile(url)
+                }
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data(entry.utf8))
+                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            }
         }
         return url
+    }
+
+    /// Applies the saved rolling retention at most hourly. The caller can run
+    /// this after delivery so cleanup never extends transcription latency.
+    func pruneExpiredIfDue(
+        at now: Date = Date(),
+        force: Bool = false
+    ) throws -> HistoryPrunePlan? {
+        guard let retentionDays else { return nil }
+        if !force, let lastRetentionCheck,
+           now.timeIntervalSince(lastRetentionCheck) < 3_600 {
+            return nil
+        }
+        self.lastRetentionCheck = now
+        let policy = try HistoryRetentionPolicy(days: retentionDays)
+        return try HistoryRetentionPruner(
+            directory: directory,
+            calendar: calendar
+        ).prune(policy: policy, at: now)
     }
 
     private func timestamp(_ date: Date) -> String {

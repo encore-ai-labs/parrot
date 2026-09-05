@@ -342,6 +342,20 @@ under `~/.local/share/parrot/transcripts/`. The actor serializes writes from ove
 transcription tasks. Its directory is forced to mode `0700` and each file to `0600`.
 `--no-history` disables all history writes for that daemon run.
 
+All daemon appends and CLI reads share a directory-level advisory lock; retention rewrites take
+the exclusive side of that same lock. This coordinates separate Parrot processes and prevents a
+cleanup from replacing a file while a completed transcript is being appended. Readers and cleanup
+accept only exact daily filenames backed by regular, non-symlink files.
+
+History remains unbounded by default for backward compatibility. A saved
+`historyRetentionDays` value opts into an exact rolling 24-hour policy. The daemon applies it once
+at startup, then at most hourly after successful delivery so cleanup never extends recording,
+model, or cursor-delivery latency. `parrot history prune` builds the same plan under a shared lock
+and changes no transcript files unless `--confirm` is supplied; the confirmed path rebuilds its
+plan under an exclusive lock before applying it. Entire days before the cutoff day are deleted.
+On the cutoff day, stable marked entries are trimmed individually, while ambiguous legacy content
+is preserved. Journals and arbitrary Markdown paths are outside this subsystem.
+
 `LastRecordingRecovery` provides one bounded audio recovery slot. Before inference, accepted
 16 kHz mono samples are streamed as a private PCM WAV and atomically renamed to
 `~/.local/share/parrot/recovery/last-recording.wav`; this avoids materializing a second complete

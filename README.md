@@ -28,6 +28,16 @@ prompt; otherwise it updates without prompting. Parrot always swaps in a fresh e
 of overwriting the running binary. A failed or cancelled update leaves the existing binary in place;
 run `parrot update` again to retry.
 
+Very old builds may print `sudo: unable to read password: Input/output error` before they can
+self-update. Bootstrap past that updater bug once with the current installer:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/encore-ai-labs/parrot/master/scripts/install.sh | sh
+```
+
+It uses the normal macOS administrator dialog when `/usr/local/bin` is not writable; subsequent
+`parrot update` runs use the repaired flow.
+
 ## How to use
 
 1. **Run it** in any terminal tab — `parrot`, or `parrot --hotkey end` to pick your own key.
@@ -188,6 +198,7 @@ parrot history show 20260904-203827-123
 parrot history last                    # transcript text only; useful in pipes
 parrot history copy                    # copy latest, or pass an entry ID
 parrot history path                    # print the Markdown directory
+parrot history prune --keep-days 30    # preview a rolling cleanup
 ```
 
 Search scans only the local Markdown files. New entries contain invisible Markdown comments
@@ -198,6 +209,31 @@ transcript history, run:
 ```sh
 parrot --no-history
 ```
+
+History is kept forever by default. To opt into automatic retention, save a rolling window and
+restart the daemon:
+
+```sh
+parrot settings set --history-retention-days 30
+parrot daemon restart
+```
+
+Parrot then removes entries older than exactly 30 × 24 hours at daemon startup and checks at most
+hourly after a completed dictation. Cleanup is local and runs after delivery, so it adds no model,
+network, or inference latency. You can inspect the exact daily files and entry counts first, then
+apply a one-off cleanup explicitly:
+
+```sh
+parrot history prune --keep-days 30
+parrot history prune --keep-days 30 --confirm
+parrot settings set --keep-history-forever
+```
+
+Only regular, non-symlink `YYYY-MM-DD.md` files in Parrot's private history directory are eligible;
+unrelated files and Markdown journals are untouched. On the cutoff day, entries from older Parrot
+versions without stable boundary markers are conservatively preserved. Deletion removes Parrot's
+files at the application level, but cannot promise forensic erasure from filesystem snapshots or
+storage backups.
 
 ### Direct Markdown journal
 
@@ -587,9 +623,12 @@ parrot snippets add meeting --file template.md
 parrot history                         # list recent local transcripts
 parrot history search project roadmap # search private Markdown history
 parrot history copy                    # recover the latest transcript to clipboard
+parrot history prune --keep-days 30    # preview; add --confirm to remove old entries
 parrot stats                            # private usage/timing insights from history
 parrot settings                         # show effective saved daemon defaults
 parrot settings set --hotkey end --mode notes
+parrot settings set --history-retention-days 30 # automatic rolling local cleanup
+parrot settings set --keep-history-forever      # default: never auto-delete history
 parrot settings set --no-space-after-paste # exact cursor text; default adds one boundary space
 parrot --journal ~/Documents/Notes/inbox.md # append there; don't type at cursor
 parrot --command '$HOME/bin/route-parrot-note' # final text on stdin; don't paste

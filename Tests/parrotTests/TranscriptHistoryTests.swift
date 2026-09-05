@@ -13,6 +13,235 @@ final class TranscriptHistoryTests: XCTestCase {
         XCTAssertEqual(command.limit, 7)
     }
 
+    func testHistoryPruneCommandDefaultsToPreviewAndValidatesDays() throws {
+        let preview = try XCTUnwrap(
+            try History.Prune.parseAsRoot(["--keep-days", "30"]) as? History.Prune
+        )
+        XCTAssertEqual(preview.keepDays, 30)
+        XCTAssertFalse(preview.confirm)
+
+        let confirmed = try XCTUnwrap(
+            try History.Prune.parseAsRoot(["--keep-days", "7", "--confirm"])
+                as? History.Prune
+        )
+        XCTAssertTrue(confirmed.confirm)
+        XCTAssertThrowsError(try History.Prune.parseAsRoot(["--keep-days", "0"]))
+        XCTAssertThrowsError(try History.Prune.parseAsRoot(["--keep-days", "3651"]))
+    }
+
+    func testRetentionPreviewAndPruneUseExactRollingCutoff() async throws {
+        let root = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("history", isDirectory: true)
+        let calendar = utcCalendar()
+        let store = TranscriptHistory(directory: directory, calendar: calendar)
+        let now = try date(
+            year: 2024, month: 9, day: 5, hour: 12, minute: 0,
+            calendar: calendar
+        )
+
+        try await store.append(
+            "old full day",
+            at: try date(year: 2024, month: 9, day: 3, hour: 20, calendar: calendar)
+        )
+        try await store.append(
+            "expired boundary entry",
+            at: try date(year: 2024, month: 9, day: 4, hour: 11, calendar: calendar)
+        )
+        try await store.append(
+            "retained boundary entry",
+            at: try date(year: 2024, month: 9, day: 4, hour: 13, calendar: calendar)
+        )
+        try await store.append(
+            "today",
+            at: try date(year: 2024, month: 9, day: 5, hour: 9, calendar: calendar)
+        )
+
+        let unrelated = directory.appendingPathComponent("notes.md")
+        try "user note".write(to: unrelated, atomically: true, encoding: .utf8)
+        let dateShapedUnrelated = directory.appendingPathComponent("2024-09-02.md")
+        try "# Personal daily note\n\nkeep me".write(
+            to: dateShapedUnrelated,
+            atomically: true,
+            encoding: .utf8
+        )
+        let outside = root.appendingPathComponent("outside.md")
+        try "outside".write(to: outside, atomically: true, encoding: .utf8)
+        let symlink = directory.appendingPathComponent("2024-09-01.md")
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: outside)
+
+        let policy = try HistoryRetentionPolicy(days: 1)
+        let pruner = HistoryRetentionPruner(directory: directory, calendar: calendar)
+        let preview = try pruner.preview(policy: policy, at: now)
+
+        XCTAssertEqual(preview.entriesRemoved, 2)
+        XCTAssertEqual(preview.filesAffected, 2)
+        XCTAssertEqual(preview.filesDeleted, 1)
+        XCTAssertEqual(preview.filesRewritten, 1)
+        XCTAssertGreaterThan(preview.bytesRemoved, 0)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("2024-09-03.md").path
+        ))
+        XCTAssertTrue(try String(contentsOf: directory.appendingPathComponent("2024-09-04.md"))
+            .contains("expired boundary entry"))
+
+        let applied = try pruner.prune(policy: policy, at: now)
+        XCTAssertEqual(applied.entriesRemoved, preview.entriesRemoved)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("2024-09-03.md").path
+        ))
+        let records = try TranscriptHistoryReader(
+            directory: directory,
+            calendar: calendar
+        ).all()
+        XCTAssertEqual(Set(records.map(\.text)), ["retained boundary entry", "today"])
+        XCTAssertEqual(try String(contentsOf: unrelated), "user note")
+        XCTAssertEqual(
+            try String(contentsOf: dateShapedUnrelated),
+            "# Personal daily note\n\nkeep me"
+        )
+        XCTAssertEqual(try String(contentsOf: outside), "outside")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: symlink.path))
+        XCTAssertEqual(
+            permissions(at: directory.appendingPathComponent("2024-09-04.md")),
+            0o600
+        )
+        XCTAssertEqual(permissions(at: directory.appendingPathComponent(".history.lock")), 0o600)
+    }
+
+    func testRetentionDeletesEmptyBoundaryFileButPreservesLegacyBoundaryData() async throws {
+        let directory = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let calendar = utcCalendar()
+        let store = TranscriptHistory(directory: directory, calendar: calendar)
+        let now = try date(
+            year: 2024, month: 9, day: 5, hour: 12, calendar: calendar
+        )
+        let boundary = directory.appendingPathComponent("2024-09-04.md")
+        try await store.append(
+            "expired",
+            at: try date(year: 2024, month: 9, day: 4, hour: 10, calendar: calendar)
+        )
+
+        let pruner = HistoryRetentionPruner(directory: directory, calendar: calendar)
+        _ = try pruner.prune(policy: HistoryRetentionPolicy(days: 1), at: now)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: boundary.path))
+
+        try """
+        # Parrot transcripts — 2024-09-04
+
+        ## 10:00:00
+
+        legacy entry
+        """.write(to: boundary, atomically: true, encoding: .utf8)
+        let plan = try pruner.prune(policy: HistoryRetentionPolicy(days: 1), at: now)
+        XCTAssertTrue(plan.actions.isEmpty)
+        XCTAssertTrue(try String(contentsOf: boundary).contains("legacy entry"))
+    }
+
+    func testActorRetentionCheckIsHourlyAndOptIn() async throws {
+        let directory = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let calendar = utcCalendar()
+        let now = try date(
+            year: 2024, month: 9, day: 5, hour: 12, calendar: calendar
+        )
+        let forever = TranscriptHistory(directory: directory, calendar: calendar)
+        let foreverResult = try await forever.pruneExpiredIfDue(at: now, force: true)
+        XCTAssertNil(foreverResult)
+
+        let retained = TranscriptHistory(
+            directory: directory,
+            calendar: calendar,
+            retentionDays: 30
+        )
+        let first = try await retained.pruneExpiredIfDue(at: now, force: true)
+        let throttled = try await retained.pruneExpiredIfDue(
+            at: now.addingTimeInterval(3_599)
+        )
+        let due = try await retained.pruneExpiredIfDue(
+            at: now.addingTimeInterval(3_600)
+        )
+        XCTAssertNotNil(first)
+        XCTAssertNil(throttled)
+        XCTAssertNotNil(due)
+    }
+
+    func testHistoryLockSerializesReadersAndCleanupWriters() throws {
+        let directory = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let exclusiveAcquired = expectation(description: "exclusive lock acquired")
+        let sharedFinished = expectation(description: "shared lock finished")
+        let releaseExclusive = DispatchSemaphore(value: 0)
+        let stateLock = NSLock()
+        var sharedEntered = false
+
+        DispatchQueue.global().async {
+            try! HistoryFileLock.withLock(directory: directory, mode: .exclusive) {
+                exclusiveAcquired.fulfill()
+                releaseExclusive.wait()
+            }
+        }
+        wait(for: [exclusiveAcquired], timeout: 1)
+
+        DispatchQueue.global().async {
+            try! HistoryFileLock.withLock(directory: directory, mode: .shared) {
+                stateLock.lock()
+                sharedEntered = true
+                stateLock.unlock()
+            }
+            sharedFinished.fulfill()
+        }
+        usleep(50_000)
+        stateLock.lock()
+        let enteredBeforeRelease = sharedEntered
+        stateLock.unlock()
+        XCTAssertFalse(enteredBeforeRelease)
+
+        releaseExclusive.signal()
+        wait(for: [sharedFinished], timeout: 1)
+        stateLock.lock()
+        let enteredAfterRelease = sharedEntered
+        stateLock.unlock()
+        XCTAssertTrue(enteredAfterRelease)
+    }
+
+    func testRetentionPreviewPerformanceAcrossTwoThousandEntries() throws {
+        let directory = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var markdown = "# Parrot transcripts — 2024-09-04\n"
+        for index in 0..<2_000 {
+            let minute = index / 60
+            let second = index % 60
+            let time = String(format: "00:%02d:%02d", minute, second)
+            let id = "20240904-\(time.replacingOccurrences(of: ":", with: ""))-000"
+            markdown += "\n<!-- parrot-entry: \(id) -->\n## \(time)\n\nnote \(index)\n"
+        }
+        try markdown.write(
+            to: directory.appendingPathComponent("2024-09-04.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let calendar = utcCalendar()
+        let now = try date(
+            year: 2024, month: 9, day: 5, hour: 0, minute: 16, second: 40,
+            calendar: calendar
+        )
+        let pruner = HistoryRetentionPruner(directory: directory, calendar: calendar)
+        var plan: HistoryPrunePlan?
+        measure {
+            plan = try! pruner.preview(
+                policy: HistoryRetentionPolicy(days: 1),
+                at: now
+            )
+        }
+        XCTAssertEqual(plan?.entriesRemoved, 1_000)
+        XCTAssertEqual(plan?.filesRewritten, 1)
+    }
+
     func testAppendsTranscriptsToPrivateDailyMarkdownFile() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("parrot-history-tests-\(UUID().uuidString)")
@@ -180,5 +409,68 @@ final class TranscriptHistoryTests: XCTestCase {
 
         XCTAssertNil(result)
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    func testAppendRefusesDailySymlinkWithoutChangingItsTarget() async throws {
+        let root = temporaryHistoryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("history", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let outside = root.appendingPathComponent("outside.md")
+        try "outside".write(to: outside, atomically: true, encoding: .utf8)
+        let calendar = utcCalendar()
+        let recordedAt = try date(
+            year: 2024, month: 9, day: 5, hour: 12, calendar: calendar
+        )
+        try FileManager.default.createSymbolicLink(
+            at: directory.appendingPathComponent("2024-09-05.md"),
+            withDestinationURL: outside
+        )
+
+        let store = TranscriptHistory(directory: directory, calendar: calendar)
+        do {
+            _ = try await store.append("must not escape history", at: recordedAt)
+            XCTFail("append should reject a daily symlink")
+        } catch let error as TranscriptHistory.HistoryError {
+            guard case .unsafeDailyFile = error else {
+                return XCTFail("unexpected history error: \(error)")
+            }
+        }
+        XCTAssertEqual(try String(contentsOf: outside), "outside")
+    }
+
+    private func temporaryHistoryRoot() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("parrot-history-retention-tests-\(UUID().uuidString)")
+    }
+
+    private func utcCalendar() -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar
+    }
+
+    private func date(
+        year: Int,
+        month: Int,
+        day: Int,
+        hour: Int,
+        minute: Int = 0,
+        second: Int = 0,
+        calendar: Calendar
+    ) throws -> Date {
+        try XCTUnwrap(calendar.date(from: DateComponents(
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute,
+            second: second
+        )))
+    }
+
+    private func permissions(at url: URL) -> Int {
+        let attributes = try! FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes[.posixPermissions] as! NSNumber).intValue
     }
 }

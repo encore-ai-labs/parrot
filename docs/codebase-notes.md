@@ -280,6 +280,14 @@ Failed launches are now throttled to 30 seconds, install reports bootstrap error
 `parrot daemon status|start|stop|restart|logs` makes the lifecycle observable. Stable signing
 is still required to prevent TCC permission loss after binary replacement (see 3.8).
 
+**3.10a — Local transcript history had no lifecycle controls.** ✅ **FIXED**
+
+History still defaults to keeping everything, but users can now save a 1–3650 day rolling policy
+or preview and confirm a one-off prune. Cleanup is entry-accurate on marked cutoff-day files,
+conservative around legacy entries, restricted to exact regular daily files, and coordinated with
+readers and daemon appends through a cross-process lock. Automatic work runs after delivery rather
+than on the inference path.
+
 **3.11 — Multi-monitor: pill lands on the wrong screen.** ✅ **FIXED**
 
 The overlay now selects the screen containing `NSEvent.mouseLocation`, falling back to

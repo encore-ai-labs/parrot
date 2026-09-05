@@ -44,6 +44,9 @@ struct Config: Codable, Equatable {
     /// Keep the microphone warm for a 300 ms pre-roll. Turning this off avoids
     /// an idle mic session at the cost of clipping the start of captures.
     var warmMicrophone: Bool?
+    /// Optional rolling retention for private transcript history. Nil keeps
+    /// history forever, preserving the existing default.
+    var historyRetentionDays: Int?
 
     static var directory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -132,6 +135,7 @@ struct RuntimeDefaults: Equatable {
     let automaticParagraphs: Bool
     let spaceAfterPaste: Bool
     let warmMicrophone: Bool
+    let historyRetentionDays: Int?
 
     static func resolve(
         config: Config,
@@ -156,6 +160,10 @@ struct RuntimeDefaults: Equatable {
             .filter { $0 }.count
         guard destinationOverrides <= 1 else {
             throw RuntimeDefaultsError.conflictingDestinations
+        }
+        if let days = config.historyRetentionDays,
+           !HistoryRetentionPolicy.validDays.contains(days) {
+            throw RuntimeDefaultsError.invalidHistoryRetention(days)
         }
         let requestedLanguage = languageOverride ?? config.language ?? RecognitionLanguage.automatic
         guard let resolvedLanguage = RecognitionLanguage.canonicalize(requestedLanguage) else {
@@ -199,7 +207,8 @@ struct RuntimeDefaults: Equatable {
                 ?? config.automaticParagraphs
                 ?? true,
             spaceAfterPaste: spaceAfterPasteOverride ?? config.spaceAfterPaste ?? true,
-            warmMicrophone: warmMicrophoneOverride ?? config.warmMicrophone ?? true
+            warmMicrophone: warmMicrophoneOverride ?? config.warmMicrophone ?? true,
+            historyRetentionDays: config.historyRetentionDays
         )
     }
 }
@@ -209,6 +218,7 @@ enum RuntimeDefaultsError: LocalizedError {
     case conflictingDestinations
     case conflictingSavedDestinations
     case invalidLanguage(String)
+    case invalidHistoryRetention(Int)
 
     var errorDescription: String? {
         switch self {
@@ -221,6 +231,9 @@ enum RuntimeDefaultsError: LocalizedError {
                 + "run `parrot settings set --paste` to repair it"
         case .invalidLanguage(let language):
             return "unknown language '\(language)'; run `parrot languages`"
+        case .invalidHistoryRetention(let days):
+            return "saved history retention is \(days) days; use "
+                + "`parrot settings set --keep-history-forever` or choose 1...3650"
         }
     }
 }

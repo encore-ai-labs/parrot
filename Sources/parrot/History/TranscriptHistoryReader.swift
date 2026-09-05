@@ -44,18 +44,29 @@ struct TranscriptHistoryReader {
     func all() throws -> [TranscriptRecord] {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: directory.path) else { return [] }
+        return try HistoryFileLock.withLock(directory: directory, mode: .shared) {
+            try allUnlocked()
+        }
+    }
 
+    private func allUnlocked() throws -> [TranscriptRecord] {
+        let fileManager = FileManager.default
         let urls = try fileManager.contentsOfDirectory(
             at: directory,
-            includingPropertiesForKeys: nil,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         )
         .filter { url in
-            url.pathExtension == "md"
-                && url.deletingPathExtension().lastPathComponent.range(
+            guard url.pathExtension == "md",
+                  url.deletingPathExtension().lastPathComponent.range(
                     of: #"^\d{4}-\d{2}-\d{2}$"#,
                     options: .regularExpression
-                ) != nil
+                  ) != nil,
+                  let values = try? url.resourceValues(
+                    forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
+                  )
+            else { return false }
+            return values.isRegularFile == true && values.isSymbolicLink != true
         }
 
         var records: [TranscriptRecord] = []

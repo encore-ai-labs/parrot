@@ -5,7 +5,7 @@ import Foundation
 struct History: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Find and recover locally saved dictations.",
-        subcommands: [List.self, Search.self, Show.self, Last.self, Copy.self, Path.self],
+        subcommands: [List.self, Search.self, Show.self, Last.self, Copy.self, Path.self, Prune.self],
         defaultSubcommand: List.self
     )
 
@@ -76,6 +76,82 @@ struct History: ParsableCommand {
         func run() throws {
             print(TranscriptHistory.defaultDirectory.path)
         }
+    }
+
+    struct Prune: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Preview or remove transcript history outside a rolling retention window."
+        )
+
+        @Option(
+            name: .customLong("keep-days"),
+            help: "Keep the newest 1...3650 rolling days; defaults to the saved policy."
+        )
+        var keepDays: Int?
+
+        @Flag(
+            name: .long,
+            help: "Apply the cleanup. Without this flag, Parrot only previews it."
+        )
+        var confirm: Bool = false
+
+        func validate() throws {
+            if let keepDays {
+                _ = try HistoryRetentionPolicy(days: keepDays)
+            }
+        }
+
+        func run() throws {
+            let configured = Config.load().historyRetentionDays
+            guard let days = keepDays ?? configured else {
+                throw ValidationError(
+                    "no retention is saved; pass --keep-days or configure "
+                        + "`parrot settings set --history-retention-days <days>`"
+                )
+            }
+            let policy = try HistoryRetentionPolicy(days: days)
+            let pruner = HistoryRetentionPruner()
+            let plan = try confirm
+                ? pruner.prune(policy: policy)
+                : pruner.preview(policy: policy)
+            printPrunePlan(plan, confirmed: confirm)
+        }
+    }
+}
+
+private func printPrunePlan(_ plan: HistoryPrunePlan, confirmed: Bool) {
+    guard !plan.actions.isEmpty else {
+        print("✓ no transcript history is older than the retention cutoff")
+        return
+    }
+    for action in plan.actions {
+        let verb: String
+        switch action {
+        case .delete:
+            verb = confirmed ? "deleted" : "delete"
+        case .rewrite:
+            verb = confirmed ? "trimmed" : "trim"
+        }
+        let noun = action.entries == 1 ? "entry" : "entries"
+        print("  \(verb) \(action.url.lastPathComponent)  ·  \(action.entries) \(noun)")
+    }
+    let bytes = ByteCountFormatter.string(
+        fromByteCount: Int64(plan.bytesRemoved),
+        countStyle: .file
+    )
+    if confirmed {
+        print(
+            "✓ removed \(plan.entriesRemoved) "
+                + "\(plan.entriesRemoved == 1 ? "entry" : "entries") from "
+                + "\(plan.filesAffected) "
+                + "\(plan.filesAffected == 1 ? "file" : "files") · \(bytes)"
+        )
+    } else {
+        print(
+            "preview: \(plan.entriesRemoved) "
+                + "\(plan.entriesRemoved == 1 ? "entry" : "entries") · \(bytes)"
+        )
+        print("no transcript files changed · rerun with --confirm to apply")
     }
 }
 

@@ -22,6 +22,8 @@ struct Config: Codable, Equatable {
     var model: String?
     /// Default text-processing mode.
     var mode: DictationMode?
+    /// Explicit local mappings from application bundle ids to text mode.
+    var appRules: [AppModeRule]?
 
     static var directory: URL {
         FileManager.default.homeDirectoryForCurrentUser

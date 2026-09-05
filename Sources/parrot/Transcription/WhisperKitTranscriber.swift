@@ -9,11 +9,13 @@ actor WhisperKitTranscriber: Transcriber {
     private let downloadProgress: ModelDownloadProgress
     private var pipeline: WhisperKit?
     private var decodingOptions: DecodingOptions?
+    private var noteDecodingOptions: DecodingOptions?
 
     init(
         model: TranscriptionModel,
         vocabulary: PersonalVocabulary = PersonalVocabulary(),
         additionalPromptTerms: [String] = [],
+        notePromptTerms: [String] = [],
         storage: ModelStorage = .default,
         downloadProgress: ModelDownloadProgress = ModelDownloadProgress()
     ) {
@@ -23,9 +25,11 @@ actor WhisperKitTranscriber: Transcriber {
         self.downloadProgress = downloadProgress
         vocabularyReplacer = VocabularyReplacer(entries: vocabulary.entries)
         promptTerms = additionalPromptTerms + vocabulary.promptTerms
+        self.notePromptTerms = notePromptTerms
     }
 
     private let promptTerms: [String]
+    private let notePromptTerms: [String]
 
     /// Loads the model into memory; downloads first if not already on disk.
     /// Call once at startup so the first hotkey press isn't blocked on model
@@ -64,16 +68,26 @@ actor WhisperKitTranscriber: Transcriber {
             promptTerms: promptTerms,
             tokenizer: loadedPipeline.tokenizer
         )
+        noteDecodingOptions = notePromptTerms.isEmpty
+            ? decodingOptions
+            : Self.decodingOptions(
+                promptTerms: notePromptTerms + promptTerms,
+                tokenizer: loadedPipeline.tokenizer
+            )
         FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
     }
 
     func transcribe(_ audio: [Float]) async throws -> String {
+        try await transcribe(audio, mode: .dictation)
+    }
+
+    func transcribe(_ audio: [Float], mode: DictationMode) async throws -> String {
         if pipeline == nil { try await warmUp() }
         guard let pipeline else { throw TranscriberError.notLoaded }
 
         let results = try await pipeline.transcribe(
             audioArray: audio,
-            decodeOptions: decodingOptions
+            decodeOptions: mode == .notes ? noteDecodingOptions : decodingOptions
         )
         let raw = results.map(\.text).joined(separator: " ")
         return vocabularyReplacer.applying(to: TranscriptSanitizer.sanitize(raw))

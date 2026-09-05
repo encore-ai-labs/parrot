@@ -8,14 +8,24 @@ final class MenuBarController {
     private let statusItem: NSStatusItem
     private let modelLabel: NSMenuItem
     private let stateLabel: NSMenuItem
+    private let modeLabel: NSMenuItem
+    private let dictationModeItem: NSMenuItem
+    private let notesModeItem: NSMenuItem
     private let updateLabel: NSMenuItem
     private let modelID: String
     private let idleTitle: String
     private var updateAction: (() -> Void)?
+    private var modeAction: ((DictationMode) -> Void)?
 
-    init(modelID: String, hotkeyName: String) {
+    init(
+        modelID: String,
+        hotkeyName: String,
+        mode: DictationMode,
+        onModeChange: @escaping (DictationMode) -> Void
+    ) {
         self.modelID = modelID
         self.idleTitle = "idle · hold or double-tap \(hotkeyName)"
+        self.modeAction = onModeChange
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         let menu = NSMenu()
@@ -30,6 +40,29 @@ final class MenuBarController {
         menu.addItem(modelLabel)
 
         updateLabel = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        modeLabel = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        modeLabel.isEnabled = true
+        dictationModeItem = NSMenuItem(
+            title: "Dictation",
+            action: #selector(dictationModeClicked),
+            keyEquivalent: ""
+        )
+        notesModeItem = NSMenuItem(
+            title: "Notes",
+            action: #selector(notesModeClicked),
+            keyEquivalent: ""
+        )
+        dictationModeItem.target = self
+        notesModeItem.target = self
+        dictationModeItem.isEnabled = true
+        notesModeItem.isEnabled = true
+        let modeMenu = NSMenu()
+        modeMenu.autoenablesItems = false
+        modeMenu.addItem(dictationModeItem)
+        modeMenu.addItem(notesModeItem)
+        modeLabel.submenu = modeMenu
+        menu.addItem(modeLabel)
+
         updateLabel.isEnabled = false
         updateLabel.isHidden = true
         menu.addItem(updateLabel)
@@ -45,6 +78,7 @@ final class MenuBarController {
         menu.addItem(quit)
 
         statusItem.menu = menu
+        setMode(mode)
         configureButton(recording: false)
     }
 
@@ -54,6 +88,22 @@ final class MenuBarController {
 
     func setTranscribing() {
         stateLabel.title = "transcribing…"
+    }
+
+    func setMode(_ mode: DictationMode, automaticApplicationName: String? = nil) {
+        if let applicationName = automaticApplicationName {
+            modeLabel.title = "mode: \(mode.rawValue) · \(applicationName) (automatic)"
+            modeLabel.toolTip = "An app rule controls this mode until focus changes."
+            dictationModeItem.isEnabled = false
+            notesModeItem.isEnabled = false
+        } else {
+            modeLabel.title = "mode: \(mode.rawValue)"
+            modeLabel.toolTip = nil
+            dictationModeItem.isEnabled = true
+            notesModeItem.isEnabled = true
+        }
+        dictationModeItem.state = mode == .dictation ? .on : .off
+        notesModeItem.state = mode == .notes ? .on : .off
     }
 
     func setUpdateAvailable(_ version: String, action: @escaping () -> Void) {
@@ -112,5 +162,15 @@ final class MenuBarController {
 
     @objc private func updateClicked() {
         updateAction?()
+    }
+
+    @objc private func dictationModeClicked() {
+        modeAction?(.dictation)
+        setMode(.dictation)
+    }
+
+    @objc private func notesModeClicked() {
+        modeAction?(.notes)
+        setMode(.notes)
     }
 }

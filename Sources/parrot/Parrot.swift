@@ -11,7 +11,7 @@ struct Parrot: ParsableCommand {
         version: AppVersion.current,
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
-            Hotkeys.self, Devices.self, Vocabulary.self, Snippets.self,
+            Hotkeys.self, Devices.self, Apps.self, Vocabulary.self, Snippets.self,
             History.self, Stats.self, Settings.self, Install.self, Daemon.self, Update.self,
         ],
         defaultSubcommand: Run.self
@@ -207,8 +207,6 @@ struct Run: ParsableCommand {
             FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
             throw ExitCode(64)
         }
-        let activeNoteMode = defaults.mode == .notes
-
         let chosenHotkey: Hotkey
         guard let parsedHotkey = Hotkey.parse(defaults.hotkey) else {
             let kind = hotkey == nil ? "saved hotkey" : "hotkey"
@@ -360,12 +358,11 @@ struct Run: ParsableCommand {
             snippets = SnippetLibrary()
         }
         let snippetExpander = SnippetExpander(entries: snippets.entries)
-        let additionalPromptTerms = (activeNoteMode ? NoteFormatter.promptTerms : [])
-            + snippets.promptTerms
         let transcriber = WhisperKitTranscriber(
             model: chosenModel,
             vocabulary: vocabulary,
-            additionalPromptTerms: additionalPromptTerms
+            additionalPromptTerms: snippets.promptTerms,
+            notePromptTerms: NoteFormatter.promptTerms
         )
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
@@ -411,19 +408,43 @@ struct Run: ParsableCommand {
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
         }
+        let modeController = DictationModeController(
+            fallbackMode: defaults.mode,
+            rules: config.savedAppRules,
+            automaticRulesEnabled: !(noteMode || dictationMode),
+            reloadRulesFrom: Config.url
+        )
         let menuBar = MainActor.assumeIsolated {
-            MenuBarController(modelID: chosenModel.id, hotkeyName: chosenHotkey.name)
+            MenuBarController(
+                modelID: chosenModel.id,
+                hotkeyName: chosenHotkey.name,
+                mode: defaults.mode
+            ) { mode in
+                modeController.setFallbackMode(mode)
+            }
         }
         let history = noHistory ? nil : TranscriptHistory()
         let lifecycle = DictationLifecycle()
+        var recordingMode = defaults.mode
 
         let startRecording = {
             guard let sessionID = lifecycle.start() else { return }
+            let selection = modeController.selection(
+                frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            )
+            recordingMode = selection.mode
             do {
                 try capture.start()
                 _ = monitor.startExitKeyMonitoring(exitOnAnyKey: false)
-                FileHandle.standardError.write(Data("● recording\n".utf8))
+                let automatic = selection.isAutomatic ? " · automatic" : ""
+                FileHandle.standardError.write(Data(
+                    "● recording · \(selection.mode.rawValue)\(automatic)\n".utf8
+                ))
                 MainActor.assumeIsolated {
+                    menuBar.setMode(
+                        selection.mode,
+                        automaticApplicationName: selection.automaticApplicationName
+                    )
                     overlay?.show(.recording)
                     menuBar.setRecording(true)
                 }
@@ -435,6 +456,7 @@ struct Run: ParsableCommand {
 
         let stopRecording = {
             guard let sessionID = lifecycle.beginTranscription() else { return }
+            let modeForCapture = recordingMode
             monitor.stopExitKeyMonitoring()
             let samples = capture.stop()
             MainActor.assumeIsolated {
@@ -476,11 +498,11 @@ struct Run: ParsableCommand {
                 }
                 return
             }
-            Task {
+            Task { [modeForCapture] in
                 let started = Date()
                 do {
-                    let raw = try await transcriber.transcribe(samples)
-                    let formatted = activeNoteMode ? NoteFormatter.format(raw) : raw
+                    let raw = try await transcriber.transcribe(samples, mode: modeForCapture)
+                    let formatted = modeForCapture == .notes ? NoteFormatter.format(raw) : raw
                     let cased = lowercaseMode ? formatted.lowercased() : formatted
                     let text = snippetExpander.applying(to: cased)
                     let elapsed = Date().timeIntervalSince(started)
@@ -607,7 +629,7 @@ struct Run: ParsableCommand {
             hotkey: chosenHotkey.name,
             model: chosenModel.id,
             microphone: micName,
-            mode: activeNoteMode ? "notes" : "dictation",
+            mode: defaults.mode.rawValue,
             vocabularyCount: vocabulary.entries.count,
             snippetCount: snippets.entries.count,
             historyPath: historyPath,

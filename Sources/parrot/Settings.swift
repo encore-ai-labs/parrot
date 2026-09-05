@@ -27,6 +27,7 @@ struct Settings: ParsableCommand {
             print("hotkey      \(defaults.hotkey)\(config.hotkey == nil ? "  (default)" : "")")
             print("model       \(defaults.model)\(config.model == nil ? "  (recommended)" : "")")
             print("mode        \(defaults.mode.rawValue)\(config.mode == nil ? "  (default)" : "")")
+            print("app rules   \(config.savedAppRules.count)")
             print("lowercase   \((config.lowercase ?? false) ? "on" : "off")")
             print("microphone  \(config.inputDeviceUID ?? "automatic")")
             print("config      \(Config.url.path)")

@@ -187,6 +187,11 @@ stores hotkey, model, and dictation/notes mode in the private JSON config. Foreg
 LaunchAgent startup share CLI > saved > built-in precedence; `--dictation` provides a one-run
 escape from a saved notes mode.
 
+**6.10 Local app-aware modes** — ✅ **done.** Explicit bundle-id rules hot-reload and select
+dictation/notes at recording start without reading screen content or retaining active-app
+history. The menu bar switches the fallback live, and both modes use precomputed prompt
+options on the same model pipeline.
+
 ---
 
 ## Suggested release cadence

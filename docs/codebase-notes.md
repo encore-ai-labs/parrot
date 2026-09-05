@@ -62,6 +62,7 @@ than described — see the banner below. Everything else still stands.
 | `models list\|download` | `Parrot.swift:191` | Registry listing / prefetch |
 | `hotkeys` | `Parrot.swift` → `Hotkey.swift` | List push-to-talk keys |
 | `devices` | `Parrot.swift` → `AudioDevices.swift` | List microphones |
+| `apps list\|add\|remove\|clear\|current` | `Apps.swift` → `AppModeRules.swift` | Private automatic mode rules |
 | `settings show\|set\|reset` | `Settings.swift` → `Config.swift` | Persistent local daemon defaults |
 | `install` | `Install.swift` | LaunchAgent write/remove |
 
@@ -304,6 +305,13 @@ an explicit ready message.
 Those choices now have explicit `parrot settings show|set|reset` commands and are stored in
 the existing user-only JSON config. Foreground and LaunchAgent runs share one resolver;
 `--hotkey`, `--model`, `--notes`, and `--dictation` remain non-persistent one-run overrides.
+
+**3.19 — Mode switching requires a daemon restart and cannot follow the active app.** ✅ **FIXED**
+
+The menu bar changes the fallback mode immediately. Explicit app rules compare only the
+frontmost bundle id at recording start and hot-reload after config changes. The mode is frozen
+for the complete recording/transcription generation, active-app data is not added to history,
+and dictation/notes decoding options are precomputed on one loaded model pipeline.
 
 ### P3 — docs/code drift
 

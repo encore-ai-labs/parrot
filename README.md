@@ -290,6 +290,30 @@ plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--mod
 `--notes`, and `--dictation` take priority without changing the file. `--reconfigure` resets
 the complete first-run configuration.
 
+### App-aware modes
+
+Parrot can automatically use note mode in selected apps and plain dictation everywhere else:
+
+```sh
+parrot apps add Notes --mode notes
+parrot apps add com.apple.TextEdit --mode notes
+parrot apps list
+parrot apps remove Notes
+parrot apps clear
+```
+
+An app name works while that app is running; its bundle identifier always works. Rules are
+stored in the same private local config and hot-reload on the next recording—no daemon
+restart is needed. Parrot reads only the frontmost app's bundle identifier at hotkey time. It
+does not inspect window titles, selected text, clipboard contents, or screen pixels, and it
+does not save the active app in transcript history or send it anywhere.
+
+The menu-bar icon also has a **Mode** submenu for switching the fallback between Dictation
+and Notes immediately. An automatic app rule temporarily wins while its app is focused, then
+Parrot returns to the chosen fallback. Passing `--notes` or `--dictation` disables automatic
+rules for that run. Both modes share one loaded speech model; their prompt tokens are
+precomputed during warmup, so switching does not load another model or add a network step.
+
 ### Using a different key
 
 **On a third-party keyboard, `fn` will not work** — and not because of parrot. On those boards
@@ -335,6 +359,8 @@ parrot models migrate                  # safely move known legacy model bundles
 parrot models benchmark <id> --audio sample.wav
 parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones
+parrot apps add Notes --mode notes     # local automatic mode rule
+parrot apps list                       # show saved app-mode rules
 parrot vocabulary                      # list personal recognition hints/replacements
 parrot vocabulary add "rust pond" --as RustPond
 parrot snippets                        # list reusable local voice snippets

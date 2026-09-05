@@ -335,6 +335,29 @@ manages the daemon defaults. Because the LaunchAgent intentionally supplies no w
 arguments beyond `--skip-doctor`, it follows the same saved values as a foreground launch;
 one-run CLI overrides never become accidental persistent state.
 
+### Local app-mode rules
+
+`parrot apps add <running-name-or-bundle-id> --mode notes|dictation` stores an explicit
+`AppModeRule` in the same private config. At the start of each recording,
+`DictationModeController` compares only `NSWorkspace.frontmostApplication.bundleIdentifier`
+against those rules. It never reads window titles, accessibility text, selections,
+clipboards, or pixels, and the selected application is not written to history.
+
+The controller captures a `DictationMode` before audio capture begins. That immutable value
+travels through transcription and formatting, so changing focus while Whisper runs cannot
+change an in-flight result. A rule wins only for a matching foreground app and naturally
+reverts to the menu-selected fallback elsewhere. Explicit `--notes` or `--dictation` disables
+rules for that process. A config file signature (inode, size, and modification time) is
+checked at recording start; the file is decoded only after an actual change, so rule commands
+hot-reload with a measured steady-state cost of about 42 microseconds per recording with 100
+rules.
+
+`WhisperKitTranscriber` still owns one model pipeline. During its existing warmup it
+precomputes separate bounded decoding options for dictation and notes. Selecting a mode is an
+in-memory options choice—not a model load, a tokenizer pass, or a network request on the hot
+path. The menu-bar Mode submenu changes only the fallback and is disabled while an automatic
+rule controls the current app.
+
 ### `TerminalSelect`
 
 Arrow-key menus for the first-run questions. Puts the terminal in raw mode (`ECHO` and
@@ -390,8 +413,8 @@ Models are not bundled. New downloads live in
 8. `HotkeyMonitor` fires `.released`. Overlay switches to spinner. Status: `transcribing`.
 9. `AudioCapture` stops, hands buffer to active `Transcriber`.
 10. `Transcriber` runs CoreML inference. Returns string.
-11. If saved or one-run note mode is active, `NoteFormatter` applies explicit Markdown
-    structure commands.
+11. The mode captured at recording start selects precomputed prompt options; in notes mode,
+    `NoteFormatter` then applies explicit Markdown structure commands.
 12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies.
 13. `TextInjector` posts the string at the cursor and `TranscriptHistory` saves it locally.
 14. Overlay hides. Status: `listening`. Loop.
@@ -431,6 +454,10 @@ parrot/
     Doctor.swift                # permission + Fn-mapping checks
     Setup.swift                 # interactive first-run permission grant
     Install.swift               # LaunchAgent CLI lifecycle controls
+    Config.swift                # private persistent defaults and precedence
+    Settings.swift              # saved default management CLI
+    Apps.swift                  # app-mode rule CLI
+    AppModeRules.swift          # frontmost bundle-id mode policy + hot reload
 
     Daemon/
       DaemonLock.swift          # cross-process hotkey/mic ownership lock

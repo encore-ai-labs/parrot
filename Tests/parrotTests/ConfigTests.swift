@@ -26,6 +26,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.hotkey)
         XCTAssertNil(config.model)
         XCTAssertNil(config.mode)
+        XCTAssertNil(config.appRules)
         XCTAssertEqual(permissions(at: root), 0o700)
         XCTAssertEqual(permissions(at: url), 0o600)
     }

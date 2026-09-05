@@ -66,12 +66,11 @@ struct ModelBenchmark: ParsableCommand {
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
         let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
         let snippetExpander = SnippetExpander(entries: snippets.entries)
-        let additionalPromptTerms = (notes ? NoteFormatter.promptTerms : [])
-            + snippets.promptTerms
         let transcriber = WhisperKitTranscriber(
             model: model,
             vocabulary: vocabulary,
-            additionalPromptTerms: additionalPromptTerms
+            additionalPromptTerms: snippets.promptTerms,
+            notePromptTerms: NoteFormatter.promptTerms
         )
 
         if !json {
@@ -91,7 +90,8 @@ struct ModelBenchmark: ParsableCommand {
         var transcript = ""
         for index in 1...runs {
             let started = ContinuousClock.now
-            let raw = try waitForAsync { try await transcriber.transcribe(samples) }
+            let mode: DictationMode = notes ? .notes : .dictation
+            let raw = try waitForAsync { try await transcriber.transcribe(samples, mode: mode) }
             let formatted = notes ? NoteFormatter.format(raw) : raw
             transcript = snippetExpander.applying(to: formatted)
             let seconds = elapsedSeconds(since: started)

@@ -11,7 +11,7 @@ struct Parrot: ParsableCommand {
         version: AppVersion.current,
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
-            Hotkeys.self, Devices.self, Install.self, Update.self,
+            Hotkeys.self, Devices.self, Vocabulary.self, Install.self, Update.self,
         ],
         defaultSubcommand: Run.self
     )
@@ -299,7 +299,16 @@ struct Run: ParsableCommand {
             FileHandle.standardError.write(Data("\(warning)\n".utf8))
         }
 
-        let transcriber = WhisperKitTranscriber(model: chosenModel)
+        let vocabulary: PersonalVocabulary
+        do {
+            vocabulary = try PersonalVocabulary.load()
+        } catch {
+            FileHandle.standardError.write(Data(
+                "warning: couldn't load vocabulary: \(error.localizedDescription)\n".utf8
+            ))
+            vocabulary = PersonalVocabulary()
+        }
+        let transcriber = WhisperKitTranscriber(model: chosenModel, vocabulary: vocabulary)
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
         Task.detached {
@@ -506,6 +515,7 @@ struct Run: ParsableCommand {
             hotkey: chosenHotkey.name,
             model: chosenModel.id,
             microphone: micName,
+            vocabularyCount: vocabulary.entries.count,
             historyPath: historyPath,
             systemHotkeyAction: systemHotkeyAction
         ))
@@ -597,6 +607,74 @@ struct Doctor: ParsableCommand {
         DoctorReport.print(checks)
         if !DoctorReport.allOK(checks) {
             throw ExitCode(1)
+        }
+    }
+}
+
+struct Vocabulary: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Teach Parrot names, jargon, and exact written forms.",
+        subcommands: [List.self, Add.self, Remove.self],
+        defaultSubcommand: List.self
+    )
+
+    struct List: ParsableCommand {
+        func run() throws {
+            let vocabulary = try PersonalVocabulary.load()
+            guard !vocabulary.entries.isEmpty else {
+                print("no vocabulary entries yet")
+                print("add one with: parrot vocabulary add RustPond")
+                print("or replace speech: parrot vocabulary add 'rust pond' --as RustPond")
+                return
+            }
+
+            for entry in vocabulary.entries.sorted(by: {
+                $0.spoken.localizedCaseInsensitiveCompare($1.spoken) == .orderedAscending
+            }) {
+                if entry.spoken == entry.written {
+                    print("  \(entry.written)")
+                } else {
+                    print("  \(entry.spoken)  →  \(entry.written)")
+                }
+            }
+            print("\nlocal file: \(PersonalVocabulary.url.path)")
+        }
+    }
+
+    struct Add: ParsableCommand {
+        @Argument(help: "The term as spoken, or its preferred spelling when --as is omitted.")
+        var spoken: String
+
+        @Option(name: .customLong("as"), help: "Exact text to write when the spoken form is heard.")
+        var written: String?
+
+        func run() throws {
+            var vocabulary = try PersonalVocabulary.load()
+            let output = written ?? spoken
+            let updated = try vocabulary.set(spoken: spoken, written: output)
+            try vocabulary.save()
+            let verb = updated ? "updated" : "learned"
+            if spoken == output {
+                print("✓ \(verb) \(output)")
+            } else {
+                print("✓ \(verb) \(spoken) → \(output)")
+            }
+            print("restart a running Parrot daemon to load the change")
+        }
+    }
+
+    struct Remove: ParsableCommand {
+        @Argument(help: "The spoken form of the entry to remove.")
+        var spoken: String
+
+        func run() throws {
+            var vocabulary = try PersonalVocabulary.load()
+            guard vocabulary.remove(spoken: spoken) else {
+                throw ValidationError("no vocabulary entry matches '\(spoken)'")
+            }
+            try vocabulary.save()
+            print("✓ forgot \(spoken)")
+            print("restart a running Parrot daemon to load the change")
         }
     }
 }

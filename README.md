@@ -115,6 +115,27 @@ lowercase mode
 Keeping capitalization is the default. Your answer is saved, so it only asks once. Change it any time with `--lowercase` /
 `--no-lowercase`, or re-run the whole first-time setup with `--reconfigure`.
 
+### Personal vocabulary
+
+Teach Parrot names, acronyms, product jargon, and exact spellings that matter in your notes:
+
+```sh
+parrot vocabulary add RustPond
+parrot vocabulary add "rust pond" --as RustPond
+parrot vocabulary add "jay son" --as JSON
+parrot vocabulary list
+parrot vocabulary remove "jay son"
+```
+
+Preferred spellings bias Whisper during recognition, within a fixed prompt budget so a large
+vocabulary cannot grow dictation latency without bound. Entries with `--as` also run through
+a deterministic, case-insensitive replacement pass. Replacements match whole words or phrases,
+never substrings, and do not cascade into one another.
+
+The vocabulary is stored only at `~/.config/parrot/vocabulary.json` with user-only permissions
+(`0600`). Restart a running daemon after changing it. No vocabulary, transcript, or audio is
+sent to a server.
+
 ### Settings
 
 Answers are saved to `~/.config/parrot/config.json` — the chosen mic and whether lowercase
@@ -158,6 +179,8 @@ parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
 parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones
+parrot vocabulary                      # list personal recognition hints/replacements
+parrot vocabulary add "rust pond" --as RustPond
 parrot --input-device brio             # pick a specific mic
 parrot --no-pick-mic                   # skip the mic prompt
 parrot --lowercase                     # lowercase all transcribed text

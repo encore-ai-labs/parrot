@@ -57,6 +57,12 @@ $ parrot
                                     │  │  Parakeet  │  │
                                     │  └────────────┘  │
                                     └────────┬─────────┘
+                                            │ String
+                                            ▼
+                                    ┌──────────────────┐
+                                    │    Personal      │
+                                    │   Vocabulary     │
+                                    └────────┬─────────┘
                                              │ String
                                              ▼
                                     ┌──────────────────┐
@@ -76,6 +82,7 @@ Subcommands:
 - `parrot models list` — show registered models, mark which are downloaded
 - `parrot models download <id>` — pre-fetch a model
 - `parrot doctor` — check microphone and accessibility permissions, print remediation steps
+- `parrot vocabulary` — manage local recognition hints and exact text replacements
 
 ### `HotkeyMonitor`
 
@@ -168,6 +175,18 @@ Adding an engine = one new file conforming to `Transcriber`.
 ### `TextInjector`
 
 `CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString` — pastes the transcript at the current cursor position. Works in nearly every text field on macOS (some Electron apps and secure fields are flaky; platform constraint).
+
+### `PersonalVocabulary`
+
+Local vocabulary lives at `~/.config/parrot/vocabulary.json` with mode `0600`. Short preferred
+spellings are encoded into Whisper prompt tokens once when the model warms up. The prompt is
+capped at 96 tokens and prioritizes the most recently added terms, bounding both prefill cost
+and context usage regardless of vocabulary size.
+
+After transcription and annotation cleanup, a single deterministic replacement pass applies
+`spoken → written` mappings case-insensitively at word/phrase boundaries. Matches are computed
+against the original transcript, so replacements cannot cascade. This gives exact results for
+recurring names and jargon without an LLM, network request, or variable post-processing latency.
 
 ### `TranscriptHistory`
 

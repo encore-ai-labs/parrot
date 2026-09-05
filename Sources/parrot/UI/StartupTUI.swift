@@ -59,7 +59,10 @@ enum StartupTUI {
         }
         write(row("model", details.model))
         write(row("language", details.language))
-        write(row("mode", details.mode + (details.mode == "notes" ? "  (spoken Markdown commands)" : "")))
+        write(row(
+            "mode",
+            details.mode + (details.mode == "notes" ? "  (Markdown + local backtrack)" : "")
+        ))
         write(row("microphone", details.microphone))
         let vocabulary = details.vocabularyCount == 1
             ? "1 term"

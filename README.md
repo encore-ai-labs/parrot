@@ -97,12 +97,24 @@ remain authoritative. Use `--no-auto-paragraphs` for one run or save the prefere
 | `heading one`, `heading three` | `# ` or `### ` heading |
 | `period`, `comma`, `colon`, `semicolon` | Punctuation |
 | `question mark`, `exclamation point`, `em dash` | Punctuation |
+| `scratch that`, `delete that`, `never mind` | Remove the current clause or last punctuated phrase |
+| `delete last word`, `delete previous word` | Remove the latest word |
+| `delete last sentence`, `delete previous sentence` | Remove the latest sentence |
+| `undo that` | Restore the most recent spoken deletion |
 
-Note mode changes only these exact commands; it does not summarize, invent, or rewrite your
-words. To speak a command literally, prefix it with `literal`—for example, `literal new
-paragraph`. Normal dictation stays unchanged unless note mode is active. Use `--dictation`
-for a one-run override when notes are saved as your default. Formatted Markdown is what gets
-pasted and saved to local history.
+The edit commands make corrections before text leaves Parrot. For example, saying “The deadline
+is Monday, scratch that, the deadline is Tuesday” produces only “The deadline is Tuesday.”
+Backtracking uses punctuation, line boundaries, and Markdown prefixes—not semantic guessing—so
+it has constant model cost and preserves earlier clauses, list markers, checkboxes, and headings.
+Parrot deliberately does not reinterpret an ambiguous word such as “actually”; say `scratch that`
+when you want a correction.
+
+Note mode changes only these exact commands; it does not summarize, invent, or rewrite your words.
+To speak any command literally, prefix it with `literal`—for example, `literal scratch that` or
+`literal new paragraph`. Editing runs after Markdown formatting but before snippet expansion, so
+commands in a saved snippet body remain untouched. Normal dictation stays unchanged unless note
+mode is active. Use `--dictation` for a one-run override when notes are saved as your default.
+The corrected Markdown is what gets pasted, routed, and saved to local history.
 
 ### Local speech cleanup
 

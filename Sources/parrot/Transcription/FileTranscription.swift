@@ -437,7 +437,8 @@ enum TranscriptProcessing {
             : raw
         let cleaned = cleanup ? SpeechCleanup.clean(structured) : structured
         let formatted = mode == .notes ? NoteFormatter.format(cleaned) : cleaned
-        let cased = lowercase ? formatted.lowercased() : formatted
+        let edited = mode == .notes ? SpokenEditProcessor.apply(formatted) : formatted
+        let cased = lowercase ? edited.lowercased() : edited
         return snippets.applying(to: cased)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }

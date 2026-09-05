@@ -323,6 +323,14 @@ terminate complete pipelines. Failed delivery never falls back into a potentiall
 does not add a history entry that retry would duplicate; it keeps the recording recovery slot available.
 The runner is post-inference, so it adds no model work or recognition-memory cost.
 
+**3.21 — Correcting a thought mid-note requires stopping and editing by hand.** ✅ **FIXED**
+
+Note mode now applies explicit local backtrack commands after Markdown formatting and before snippet
+expansion. `scratch that`, word/sentence deletion, and `undo that` operate on mechanically bounded
+suffixes while preserving list/task/heading prefixes. Literal escaping and full dictation-mode bypass
+prevent unintended edits; the undo stack stores only removed suffixes and is capped at 32. Edit phrases
+do not consume prompt tokens, so the feature adds no model or network step.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

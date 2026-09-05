@@ -286,6 +286,21 @@ application, or make a network request. The command phrases are included in Whis
 96-token prompt budget only when note mode is active, improving their recognition without an
 unbounded latency cost.
 
+### `SpokenEditProcessor`
+
+After `NoteFormatter` creates Markdown structure, note mode runs a deterministic backtrack pass.
+Explicit commands—`scratch that`, `delete last word`, `delete last sentence`, and `undo that`—edit
+only the transcript suffix already produced in the current capture. Clause and sentence scope uses
+fixed punctuation/line boundaries; Markdown list, checkbox, and heading prefixes are preserved.
+`literal <command>` keeps the words, and ordinary dictation bypasses the processor entirely.
+
+Undo records only the removed suffix and its UTF-16 insertion offset, not complete transcript
+snapshots, and retains at most 32 actions. Static regular expressions are compiled once. The pass
+runs before `SnippetExpander`, preventing commands inside a user-owned snippet body from executing.
+Edit phrases do not consume Whisper prompt tokens, so recognition uses the exact same model path as
+existing note mode. There is no extra model, semantic rewrite, application context, network request,
+or unbounded memory growth.
+
 ### `SnippetLibrary` / `SnippetExpander`
 
 Reusable multiline text lives in owner-readable `~/.config/parrot/snippets.json`. The explicit

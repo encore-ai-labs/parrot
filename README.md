@@ -175,6 +175,26 @@ The vocabulary is stored only at `~/.config/parrot/vocabulary.json` with user-on
 (`0600`). Restart a running daemon after changing it. No vocabulary, transcript, or audio is
 sent to a server.
 
+### Benchmark local models
+
+Measure a model with the same audio on your own Mac instead of relying on generic benchmark
+claims. Record a short representative sample (running Parrot once with `--dump-wav` writes the
+last capture to `/tmp/parrot-last.wav`), then run:
+
+```sh
+parrot models benchmark whisper-base.en \
+  --audio /tmp/parrot-last.wav \
+  --reference "The exact words you dictated." \
+  --runs 3
+```
+
+Parrot reports model-load time, every inference time, median latency, and real-time factor
+(RTF; lower is faster). With a reference it also reports word-error rate (WER; lower is more
+accurate). The benchmark uses your saved vocabulary by default; pass `--no-vocabulary` for a
+clean model comparison or `--notes` to benchmark the complete local note-formatting path.
+Use `--json` to save comparable machine-readable reports. Download each candidate first with
+`parrot models download <id>` so network time is not included in model-load time.
+
 ### Settings
 
 Answers are saved to `~/.config/parrot/config.json` — the chosen mic and whether lowercase
@@ -216,6 +236,7 @@ parrot install --uninstall             # remove the LaunchAgent
 parrot doctor                          # check permissions + fn key setting
 parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
+parrot models benchmark <id> --audio sample.wav
 parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones
 parrot vocabulary                      # list personal recognition hints/replacements

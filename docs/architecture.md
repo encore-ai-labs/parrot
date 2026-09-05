@@ -260,6 +260,14 @@ single binary with nothing to install alongside it. Adding a model = appending a
 
 The registry is the single source of truth for: download URLs, file names, sizes, recommended flags, what shows up in `parrot models list`.
 
+`parrot models benchmark` loads any AVFoundation-readable local audio file through
+WhisperKit's 16 kHz conversion path, warms one registered model, and repeats inference on the
+same samples. It reports load time separately from median inference latency and real-time
+factor. An optional reference transcript adds locally computed, case/punctuation-insensitive
+word-error rate. JSON output includes the hardware model, macOS version, exact run timings,
+note-mode state, and vocabulary count so results remain comparable. No audio, reference, or
+transcript leaves the Mac.
+
 ### `ModelDownloader` — not built
 
 WhisperKit handles downloading itself, so there is no `ModelDownloader.swift`.
@@ -314,13 +322,13 @@ This is a macOS platform behavior, not a parrot bug. `parrot doctor` will identi
 
 ## Models — what ships
 
-Initial registry:
+Current registry:
 
 | Engine | Model | Size | Notes |
 |---|---|---|---|
-| WhisperKit | `whisper-base.en` | ~80 MB | Fast, English only, low resource |
-| WhisperKit | `whisper-large-v3-turbo` | ~800 MB | Recommended for daily use |
-| Parakeet | `parakeet-tdt-0.6b-v3` | ~600 MB | English, fastest on ANE |
+| WhisperKit | `whisper-base.en` | ~145 MB | Default; fastest English dictation |
+| WhisperKit | `whisper-small.en` | ~488 MB | More accurate English, higher latency |
+| WhisperKit | `whisper-large-v3-turbo` | ~1.62 GB | Highest-capacity multilingual option |
 
 Models currently live in `~/Documents/huggingface/` (WhisperKit's default). Not bundled — fetched on first selection or via `parrot models download`.
 

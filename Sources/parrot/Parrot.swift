@@ -694,7 +694,7 @@ struct Vocabulary: ParsableCommand {
 struct Models: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Manage transcription models.",
-        subcommands: [List.self, Download.self]
+        subcommands: [List.self, Download.self, ModelBenchmark.self]
     )
 
     struct List: ParsableCommand {

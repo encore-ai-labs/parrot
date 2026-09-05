@@ -5,6 +5,7 @@ enum StartupTUI {
         let version: String
         let hotkey: String
         let noteHotkey: String?
+        let noteJournal: String?
         let model: String
         let language: String
         let microphone: String
@@ -45,6 +46,9 @@ enum StartupTUI {
                 ?? " · audio history: off"
             let systemAction = details.systemHotkeyAction.map { " · \($0)" } ?? ""
             let noteHotkey = details.noteHotkey.map { " · notes key: \($0)" } ?? ""
+            let noteJournal = details.noteJournal.map {
+                " · note inbox: \(displayPath(URL(fileURLWithPath: $0)))"
+            } ?? ""
             write(
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
                 " · mic: \(details.microphone) · mode: \(details.mode)" +
@@ -56,7 +60,7 @@ enum StartupTUI {
                 " · cleanup: \(details.cleanup ? "on (English speech)" : "off")" +
                 " · paragraphs: \(details.automaticParagraphs ? "on in notes" : "off")" +
                 " · capture: \(details.warmMicrophone ? "warm/pre-roll" : "cold/on press")" +
-                "\(history)\(audioHistory)\(noteHotkey)\(systemAction) · ^C to quit\n"
+                "\(history)\(audioHistory)\(noteHotkey)\(noteJournal)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
             return
@@ -70,6 +74,9 @@ enum StartupTUI {
         write(row("hotkey", "\(details.hotkey)  ·  hold to talk / double-tap to lock / esc to cancel"))
         if let noteHotkey = details.noteHotkey {
             write(row("notes key", "\(noteHotkey)  ·  always starts note mode"))
+        }
+        if let noteJournal = details.noteJournal {
+            write(row("note inbox", displayPath(URL(fileURLWithPath: noteJournal))))
         }
         if let systemHotkeyAction = details.systemHotkeyAction {
             write(row("macOS key", systemHotkeyAction))

@@ -221,6 +221,12 @@ does not inspect surrounding application text, selections, windows, or the clipb
 `--paste` is the one-run override. Journal delivery is separate from private transcript history,
 so history can remain a recovery log or be disabled independently.
 
+An optional `--note-journal` is a second, source-routed destination. Only a capture initiated by
+the dedicated note hotkey selects it; the primary hotkey retains its cursor, journal, or command
+route. Mode and destination are frozen together at hotkey-down and preserved for in-memory retry,
+so an app switch or menu change cannot redirect a completed thought. Route selection is a constant
+comparison before capture and adds no model, event-tap, or network work.
+
 The writer validates its destination before model warmup, creates only missing directories,
 uses owner-only permissions for new paths, and leaves permissions on an existing journal alone.
 Each append is one advisory-locked `O_APPEND` transaction followed by `fsync`, keeping entries

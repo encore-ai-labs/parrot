@@ -381,6 +381,14 @@ keyDown/keyUp events are rejected synchronously before copying to the main queue
 the tap while either key is down, the partial capture is cancelled instead of losing the release
 edge and becoming stranded; an already latched capture remains active.
 
+**3.27 — A note shortcut still shares the primary delivery destination.** ✅ **FIXED**
+
+The dedicated note key can now own a separate Markdown inbox while primary dictation continues
+to paste, append elsewhere, or run a local command. The route is frozen with the capture and
+preserved across an in-memory retry. Both journals are validated before model warmup; note appends
+reuse the existing locked, synced writer and its cursor fallback. Selection is a constant local
+comparison and adds no additional event tap, model instance, inference pass, or network access.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

@@ -25,6 +25,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(config.setupCompleted, true)
         XCTAssertNil(config.hotkey)
         XCTAssertNil(config.noteHotkey)
+        XCTAssertNil(config.noteJournalPath)
         XCTAssertNil(config.model)
         XCTAssertNil(config.language)
         XCTAssertNil(config.mode)
@@ -48,6 +49,7 @@ final class ConfigTests: XCTestCase {
         var config = Config()
         config.hotkey = "right-option"
         config.noteHotkey = "right-command"
+        config.noteJournalPath = "/tmp/note-inbox.md"
         config.model = "whisper-small.en"
         config.language = "en"
         config.mode = .notes
@@ -86,6 +88,7 @@ final class ConfigTests: XCTestCase {
         var config = Config()
         config.hotkey = "right-option"
         config.noteHotkey = "right-command"
+        config.noteJournalPath = "/tmp/note-inbox.md"
         config.model = "whisper-small.en"
         config.mode = .notes
 
@@ -101,6 +104,7 @@ final class ConfigTests: XCTestCase {
             RuntimeDefaults(
                 hotkey: "right-option",
                 noteHotkey: "right-command",
+                noteJournalPath: "/tmp/note-inbox.md",
                 model: "whisper-small.en",
                 language: "auto",
                 mode: .notes,
@@ -126,6 +130,7 @@ final class ConfigTests: XCTestCase {
             RuntimeDefaults(
                 hotkey: "end",
                 noteHotkey: "right-command",
+                noteJournalPath: "/tmp/note-inbox.md",
                 model: "whisper-base.en",
                 language: "auto",
                 mode: .dictation,
@@ -465,6 +470,7 @@ final class ConfigTests: XCTestCase {
         var config = Config()
         config.hotkey = "fn"
         config.noteHotkey = "right-option"
+        config.noteJournalPath = "/tmp/note-inbox.md"
 
         let saved = try RuntimeDefaults.resolve(
             config: config,
@@ -475,6 +481,7 @@ final class ConfigTests: XCTestCase {
             recommendedModel: "whisper-base.en"
         )
         XCTAssertEqual(saved.noteHotkey, "right-option")
+        XCTAssertEqual(saved.noteJournalPath, "/tmp/note-inbox.md")
 
         let overridden = try RuntimeDefaults.resolve(
             config: config,
@@ -486,6 +493,28 @@ final class ConfigTests: XCTestCase {
             recommendedModel: "whisper-base.en"
         )
         XCTAssertEqual(overridden.noteHotkey, "end")
+
+        let journalOverridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            noteJournalOverride: "/tmp/quick-notes.md",
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(journalOverridden.noteJournalPath, "/tmp/quick-notes.md")
+
+        let journalDisabled = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            disableNoteJournal: true,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertNil(journalDisabled.noteJournalPath)
 
         let disabled = try RuntimeDefaults.resolve(
             config: config,
@@ -521,14 +550,28 @@ final class ConfigTests: XCTestCase {
 
         let run = try XCTUnwrap(try Run.parseAsRoot([
             "--hotkey", "fn", "--note-hotkey", "right-option",
+            "--note-journal", "/tmp/note-inbox.md",
         ]) as? Run)
         XCTAssertEqual(run.noteHotkey, "right-option")
+        XCTAssertEqual(run.noteJournal, "/tmp/note-inbox.md")
         XCTAssertTrue(try XCTUnwrap(
             try Run.parseAsRoot(["--no-note-hotkey"]) as? Run
         ).noNoteHotkey)
         XCTAssertThrowsError(try Run.parseAsRoot([
             "--note-hotkey", "end", "--no-note-hotkey",
         ]))
+        XCTAssertThrowsError(try Run.parseAsRoot([
+            "--note-journal", "/tmp/inbox.md", "--no-note-journal",
+        ]))
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: Config(),
+            hotkeyOverride: nil,
+            noteJournalOverride: "/tmp/inbox.md",
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ))
     }
 
     func testSettingsCommandsParseAndValidateValues() throws {
@@ -537,6 +580,7 @@ final class ConfigTests: XCTestCase {
             try Settings.parseAsRoot([
                 "set", "--hotkey", "ralt", "--model", "whisper-small.en",
                 "--note-hotkey", "right-command",
+                "--note-journal", "/tmp/note-inbox.md",
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
                 "--no-space-after-paste", "--cold-mic",
@@ -545,6 +589,7 @@ final class ConfigTests: XCTestCase {
         )
         XCTAssertEqual(set.hotkey, "ralt")
         XCTAssertEqual(set.noteHotkey, "right-command")
+        XCTAssertEqual(set.noteJournal, "/tmp/note-inbox.md")
         XCTAssertEqual(set.model, "whisper-small.en")
         XCTAssertEqual(set.language, "English")
         XCTAssertEqual(set.mode, "notes")
@@ -581,6 +626,12 @@ final class ConfigTests: XCTestCase {
         ]))
         XCTAssertTrue(try Settings.parseAsRoot([
             "set", "--no-note-hotkey",
+        ]) is Settings.Set)
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--note-journal", "/tmp/inbox.md", "--no-note-journal",
+        ]))
+        XCTAssertTrue(try Settings.parseAsRoot([
+            "set", "--no-note-journal",
         ]) is Settings.Set)
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--model", "imaginary"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--language", "Klingon"]))

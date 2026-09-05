@@ -111,6 +111,11 @@ checks with two configured modifier hotkeys averaged 3–5 ms, or **0.3–0.5 mi
 Modifier-only pairs never subscribe to ordinary keyDown/keyUp events. If a plain key is configured,
 unrelated keystrokes are rejected synchronously before Parrot copies or dispatches them.
 
+The optional note-inbox destination adds one source/availability comparison at hotkey-down. In the
+debug performance harness, 100,000 route selections averaged 11 ms, or about **0.11 microseconds
+per capture**. Delivery then reuses the existing `MarkdownJournal` append path. It does not alter
+audio capture, prompt size, inference, or steady-state event routing.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

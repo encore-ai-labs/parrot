@@ -129,6 +129,18 @@ struct Run: ParsableCommand {
     var noNoteHotkey: Bool = false
 
     @Option(
+        name: .customLong("note-journal"),
+        help: "Append note-key captures to this Markdown file for this run."
+    )
+    var noteJournal: String?
+
+    @Flag(
+        name: .customLong("no-note-journal"),
+        help: "Disable a saved note-key journal for this run."
+    )
+    var noNoteJournal: Bool = false
+
+    @Option(
         name: .long,
         help: "Microphone to record from (name or UID). Run `parrot devices` for the list."
     )
@@ -256,8 +268,14 @@ struct Run: ParsableCommand {
         guard !(noteHotkey != nil && noNoteHotkey) else {
             throw ValidationError("pass at most one of --note-hotkey or --no-note-hotkey")
         }
+        guard !(noteJournal != nil && noNoteJournal) else {
+            throw ValidationError("pass at most one of --note-journal or --no-note-journal")
+        }
         if let journal {
             _ = try MarkdownJournal.resolveURL(journal)
+        }
+        if let noteJournal {
+            _ = try MarkdownJournal.resolveURL(noteJournal)
         }
         if let command {
             _ = try LocalCommandDelivery(command: command)
@@ -299,6 +317,8 @@ struct Run: ParsableCommand {
                 hotkeyOverride: hotkey,
                 noteHotkeyOverride: noteHotkey,
                 disableNoteHotkey: noNoteHotkey,
+                noteJournalOverride: noteJournal,
+                disableNoteJournal: noNoteJournal,
                 modelOverride: model,
                 languageOverride: language,
                 notes: noteMode,
@@ -538,6 +558,22 @@ struct Run: ParsableCommand {
         } else {
             journalWriter = nil
         }
+        let noteJournalWriter: MarkdownJournal?
+        if chosenNoteHotkey != nil, let noteJournalPath = defaults.noteJournalPath {
+            do {
+                let url = try MarkdownJournal.resolveURL(noteJournalPath)
+                let writer = MarkdownJournal(url: url)
+                try writer.prepare()
+                noteJournalWriter = writer
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "note journal unavailable: \(error.localizedDescription)\n".utf8
+                ))
+                throw ExitCode(1)
+            }
+        } else {
+            noteJournalWriter = nil
+        }
         let transcriber = TranscriberFactory.make(
             model: chosenModel,
             language: defaults.language,
@@ -669,6 +705,9 @@ struct Run: ParsableCommand {
             ))
         }
         var recordingMode = defaults.mode
+        var recordingDeliveryRoute = HotkeyModeRouter.DeliveryRoute.primary
+        var retryMode = defaults.mode
+        var retryDeliveryRoute = HotkeyModeRouter.DeliveryRoute.primary
         var recordingPersonalizationUpdate: Task<PersonalizationRefresh, Never>?
 
         func preparePersonalization() -> Task<PersonalizationRefresh, Never> {
@@ -705,11 +744,12 @@ struct Run: ParsableCommand {
             _ samples: [Float],
             sampleRate: Int,
             mode modeForCapture: DictationMode,
+            deliveryRoute: HotkeyModeRouter.DeliveryRoute,
             sessionID: Int,
             audioDuration seconds: TimeInterval,
             personalizationUpdate: Task<PersonalizationRefresh, Never>
         ) {
-            Task { [modeForCapture, samples] in
+            Task { [modeForCapture, deliveryRoute, samples] in
                 do {
                     try recordingRecovery.stage(samples: samples, sampleRate: sampleRate)
                 } catch {
@@ -775,10 +815,16 @@ struct Run: ParsableCommand {
                         ? String(format: "→ %.2fs · %@\n", elapsed, text)
                         : String(format: "→ %.2fs · ", elapsed) + "\(text.count) chars\n"
                     FileHandle.standardError.write(Data(completionLog.utf8))
+                    let journalForCapture = deliveryRoute == .noteJournal
+                        ? noteJournalWriter
+                        : journalWriter
+                    let commandForCapture = deliveryRoute == .noteJournal
+                        ? nil
+                        : commandDelivery
                     var deliveredToJournal = false
-                    if let journalWriter {
+                    if let journalForCapture {
                         do {
-                            if let url = try journalWriter.append(text) {
+                            if let url = try journalForCapture.append(text) {
                                 deliveredToJournal = true
                                 FileHandle.standardError.write(Data(
                                     "✓ appended to \(StartupTUI.displayPath(url))\n".utf8
@@ -790,10 +836,10 @@ struct Run: ParsableCommand {
                             ))
                         }
                     }
-                    var commandDeliverySucceeded = commandDelivery == nil
-                    if let commandDelivery {
+                    var commandDeliverySucceeded = commandForCapture == nil
+                    if let commandForCapture {
                         do {
-                            try commandDelivery.deliver(text)
+                            try commandForCapture.deliver(text)
                             commandDeliverySucceeded = true
                             FileHandle.standardError.write(Data(
                                 "✓ delivered to local command\n".utf8
@@ -807,7 +853,7 @@ struct Run: ParsableCommand {
                     }
                     let deliveryDecision = TranscriptDeliveryDecision.resolve(
                         deliveredToJournal: deliveredToJournal,
-                        commandConfigured: commandDelivery != nil,
+                        commandConfigured: commandForCapture != nil,
                         commandSucceeded: commandDeliverySucceeded
                     )
                     var historyWrite: TranscriptHistoryWrite?
@@ -886,14 +932,23 @@ struct Run: ParsableCommand {
                 )
             }
             recordingMode = selection.mode
+            recordingDeliveryRoute = HotkeyModeRouter.deliveryRoute(
+                source: source,
+                noteHotkeyName: chosenNoteHotkey?.name,
+                hasNoteJournal: noteJournalWriter != nil
+            )
             do {
                 try capture.start()
                 _ = monitor.startExitKeyMonitoring()
                 let selectionSource = selection.isAutomatic
                     ? " · automatic"
                     : (usedNoteHotkey ? " · note hotkey" : "")
+                let deliverySource = recordingDeliveryRoute == .noteJournal
+                    ? " · note inbox"
+                    : ""
                 FileHandle.standardError.write(Data(
-                    "● recording · \(selection.mode.rawValue)\(selectionSource)\n".utf8
+                    "● recording · \(selection.mode.rawValue)\(selectionSource)"
+                        .appending("\(deliverySource)\n").utf8
                 ))
                 MainActor.assumeIsolated {
                     menuBar.setMode(
@@ -916,6 +971,7 @@ struct Run: ParsableCommand {
         let stopRecording = {
             guard let sessionID = lifecycle.beginTranscription() else { return }
             let modeForCapture = recordingMode
+            let deliveryRouteForCapture = recordingDeliveryRoute
             let personalizationUpdateForCapture = recordingPersonalizationUpdate
                 ?? preparePersonalization()
             monitor.stopExitKeyMonitoring()
@@ -961,10 +1017,13 @@ struct Run: ParsableCommand {
                 }
                 return
             }
+            retryMode = modeForCapture
+            retryDeliveryRoute = deliveryRouteForCapture
             transcribeAndDeliver(
                 samples,
                 sampleRate: Int(AudioCapture.targetSampleRate),
                 mode: modeForCapture,
+                deliveryRoute: deliveryRouteForCapture,
                 sessionID: sessionID,
                 audioDuration: seconds,
                 personalizationUpdate: personalizationUpdateForCapture
@@ -987,18 +1046,15 @@ struct Run: ParsableCommand {
             guard let audio = recordingRecovery.samples(),
                   let sessionID = lifecycle.beginRetry()
             else { return }
-            let selection = modeController.selection(
-                frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            )
             let personalizationUpdate = preparePersonalization()
             let seconds = Double(audio.samples.count) / Double(audio.sampleRate)
             FileHandle.standardError.write(Data(
-                "↻ retrying last recording · \(selection.mode.rawValue)\n".utf8
+                "↻ retrying last recording · \(retryMode.rawValue)\n".utf8
             ))
             MainActor.assumeIsolated {
                 menuBar.setMode(
-                    selection.mode,
-                    automaticApplicationName: selection.automaticApplicationName
+                    retryMode,
+                    automaticApplicationName: nil
                 )
                 overlay?.show(.transcribing)
                 menuBar.setTranscribing()
@@ -1007,7 +1063,8 @@ struct Run: ParsableCommand {
             transcribeAndDeliver(
                 audio.samples,
                 sampleRate: audio.sampleRate,
-                mode: selection.mode,
+                mode: retryMode,
+                deliveryRoute: retryDeliveryRoute,
                 sessionID: sessionID,
                 audioDuration: seconds,
                 personalizationUpdate: personalizationUpdate
@@ -1133,6 +1190,7 @@ struct Run: ParsableCommand {
             version: AppVersion.current,
             hotkey: chosenHotkey.name,
             noteHotkey: chosenNoteHotkey?.name,
+            noteJournal: chosenNoteHotkey == nil ? nil : defaults.noteJournalPath,
             model: chosenModel.id,
             language: RecognitionLanguage.displaySelection(defaults.language, model: chosenModel),
             microphone: micName,

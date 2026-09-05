@@ -26,6 +26,15 @@ struct Settings: ParsableCommand {
             )
             print("hotkey      \(defaults.hotkey)\(config.hotkey == nil ? "  (default)" : "")")
             print("note key    \(defaults.noteHotkey ?? "off")")
+            print(
+                "note inbox  "
+                    + (defaults.noteJournalPath.map {
+                        StartupTUI.displayPath(URL(fileURLWithPath: $0))
+                    } ?? "off")
+                    + (defaults.noteHotkey == nil && defaults.noteJournalPath != nil
+                        ? "  (inactive without note key)"
+                        : "")
+            )
             print("model       \(defaults.model)\(config.model == nil ? "  (recommended)" : "")")
             print("language    \(defaults.language)\(config.language == nil ? "  (default)" : "")")
             print("mode        \(defaults.mode.rawValue)\(config.mode == nil ? "  (default)" : "")")
@@ -85,6 +94,18 @@ struct Settings: ParsableCommand {
             help: "Disable the dedicated note-mode shortcut."
         )
         var noNoteHotkey: Bool = false
+
+        @Option(
+            name: .customLong("note-journal"),
+            help: "Append dedicated note-key captures to this Markdown file."
+        )
+        var noteJournal: String?
+
+        @Flag(
+            name: .customLong("no-note-journal"),
+            help: "Restore the primary delivery destination for the note key."
+        )
+        var noNoteJournal: Bool = false
 
         @Option(name: .long, help: "Model id from `parrot models list`.")
         var model: String?
@@ -175,6 +196,7 @@ struct Settings: ParsableCommand {
 
         func validate() throws {
             guard hotkey != nil || noteHotkey != nil || noNoteHotkey
+                    || noteJournal != nil || noNoteJournal
                     || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
@@ -220,6 +242,11 @@ struct Settings: ParsableCommand {
                     "pass at most one of --note-hotkey or --no-note-hotkey"
                 )
             }
+            guard !(noteJournal != nil && noNoteJournal) else {
+                throw ValidationError(
+                    "pass at most one of --note-journal or --no-note-journal"
+                )
+            }
             if let historyRetentionDays {
                 _ = try HistoryRetentionPolicy(days: historyRetentionDays)
             }
@@ -231,6 +258,9 @@ struct Settings: ParsableCommand {
             }
             if let noteHotkey, Hotkey.parse(noteHotkey) == nil {
                 throw ValidationError("unknown note hotkey '\(noteHotkey)'; run `parrot hotkeys`")
+            }
+            if let noteJournal {
+                _ = try MarkdownJournal.resolveURL(noteJournal)
             }
             if let hotkey = hotkey.flatMap(Hotkey.parse),
                let noteHotkey = noteHotkey.flatMap(Hotkey.parse),
@@ -256,6 +286,7 @@ struct Settings: ParsableCommand {
 
         func run() throws {
             guard hotkey != nil || noteHotkey != nil || noNoteHotkey
+                    || noteJournal != nil || noNoteJournal
                     || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
@@ -283,6 +314,18 @@ struct Settings: ParsableCommand {
                 config.noteHotkey = parsed.name
             } else if noNoteHotkey {
                 config.noteHotkey = nil
+            }
+            if let noteJournal {
+                guard config.noteHotkey != nil else {
+                    throw ValidationError(
+                        "--note-journal requires a dedicated note key; also pass --note-hotkey"
+                    )
+                }
+                let url = try MarkdownJournal.resolveURL(noteJournal)
+                try MarkdownJournal(url: url).prepare()
+                config.noteJournalPath = url.path
+            } else if noNoteJournal {
+                config.noteJournalPath = nil
             }
             if let noteHotkey = config.noteHotkey.flatMap(Hotkey.parse),
                let primaryHotkey = Hotkey.parse(config.hotkey ?? Hotkey.default.name),
@@ -371,6 +414,7 @@ struct Settings: ParsableCommand {
             var config = Config.load()
             config.hotkey = nil
             config.noteHotkey = nil
+            config.noteJournalPath = nil
             config.model = nil
             config.language = nil
             config.mode = nil

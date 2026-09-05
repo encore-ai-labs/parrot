@@ -28,6 +28,45 @@ final class AppModeRulesTests: XCTestCase {
         XCTAssertTrue(primarySelectionWasRead)
     }
 
+    func testDedicatedNoteHotkeyAloneSelectsTheNoteJournal() {
+        XCTAssertEqual(
+            HotkeyModeRouter.deliveryRoute(
+                source: "right-option",
+                noteHotkeyName: "right-option",
+                hasNoteJournal: true
+            ),
+            .noteJournal
+        )
+        XCTAssertEqual(
+            HotkeyModeRouter.deliveryRoute(
+                source: "fn",
+                noteHotkeyName: "right-option",
+                hasNoteJournal: true
+            ),
+            .primary
+        )
+        XCTAssertEqual(
+            HotkeyModeRouter.deliveryRoute(
+                source: "right-option",
+                noteHotkeyName: "right-option",
+                hasNoteJournal: false
+            ),
+            .primary
+        )
+    }
+
+    func testNoteJournalRoutingCostStaysNegligible() {
+        measure {
+            for _ in 0..<100_000 {
+                _ = HotkeyModeRouter.deliveryRoute(
+                    source: "right-option",
+                    noteHotkeyName: "right-option",
+                    hasNoteJournal: true
+                )
+            }
+        }
+    }
+
     func testRuleOverridesFallbackAndRevertsForAnotherApp() {
         let controller = DictationModeController(
             fallbackMode: .dictation,

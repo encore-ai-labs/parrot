@@ -21,6 +21,11 @@ struct AppModeSelection: Equatable {
 /// rules and the fallback mode. The primary selection stays lazy so hitting
 /// the note key does not inspect or retain the frontmost application at all.
 enum HotkeyModeRouter {
+    enum DeliveryRoute: Equatable {
+        case primary
+        case noteJournal
+    }
+
     static func selection(
         source: String,
         noteHotkeyName: String?,
@@ -30,6 +35,14 @@ enum HotkeyModeRouter {
             return AppModeSelection(mode: .notes, automaticApplicationName: nil)
         }
         return primarySelection()
+    }
+
+    static func deliveryRoute(
+        source: String,
+        noteHotkeyName: String?,
+        hasNoteJournal: Bool
+    ) -> DeliveryRoute {
+        source == noteHotkeyName && hasNoteJournal ? .noteJournal : .primary
     }
 }
 

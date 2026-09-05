@@ -69,10 +69,12 @@ Ordinary keys, including Return, remain usable and do not stop the recording.
 Press **Escape** at any point while recording to cancel and discard the audio without
 transcribing, saving history, or injecting text. Escape is consumed as part of cancellation.
 
-For an instant note-taking lane, configure an optional second key:
+For an instant note-taking lane, configure an optional second key. It can also append directly to
+a local Markdown inbox while the primary key keeps typing at the cursor:
 
 ```sh
-parrot settings set --note-hotkey right-option
+parrot settings set --note-hotkey right-option \
+  --note-journal ~/Documents/Notes/inbox.md
 parrot daemon restart
 ```
 
@@ -81,6 +83,12 @@ capture in local Markdown note mode. Both support hold and double-tap. A locked 
 stopped only by the same key that started it—the other configured key is ignored—and Escape still
 cancels. Parrot routes both through one event tap and does not inspect the frontmost app when the
 dedicated note key is used. Disable it with `parrot settings set --no-note-hotkey`.
+The note inbox is an independent per-shortcut destination: it does not change the primary key's
+saved paste, journal, or command route. Disable only that routing with
+`parrot settings set --no-note-journal`. New inbox files and directories are private; existing
+permissions are preserved. Appends use the same advisory lock and `fsync` durability as normal
+journal delivery. Retrying a recording preserves the mode and destination that originally
+captured it.
 
 Cursor delivery adds one trailing boundary space by default, so consecutive captures become
 `first thought. second thought.` instead of `first thought.second thought.` Existing trailing
@@ -611,6 +619,7 @@ can be saved explicitly:
 parrot settings
 parrot settings set --hotkey right-option
 parrot settings set --note-hotkey right-command # optional direct note-mode shortcut
+parrot settings set --note-journal ~/Documents/Notes/inbox.md # only the note key appends here
 parrot settings set --model whisper-small.en --mode notes
 parrot settings set --no-auto-paragraphs # disable the note-mode default
 parrot settings set --cleanup
@@ -625,7 +634,7 @@ parrot daemon restart               # apply to a running LaunchAgent
 
 Saved defaults are what a LaunchAgent uses, so launch-at-login no longer falls back to Fn or
 plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--note-hotkey`,
-`--no-note-hotkey`, `--model`,
+`--no-note-hotkey`, `--note-journal`, `--no-note-journal`, `--model`,
 `--notes`, `--dictation`, `--auto-paragraphs`, `--no-auto-paragraphs`, `--cleanup`,
 `--no-cleanup`, `--warm-mic`, and `--cold-mic` take priority without changing the file.
 `--journal`, `--command`, and `--paste` similarly select one delivery destination without
@@ -722,6 +731,8 @@ parrot stats                            # private usage/timing insights from his
 parrot settings                         # show effective saved daemon defaults
 parrot settings set --hotkey end --mode notes
 parrot settings set --note-hotkey right-option # direct local note-mode capture
+parrot settings set --note-journal ~/Documents/Notes/inbox.md # note-key-only inbox
+parrot settings set --no-note-journal           # note key returns to primary delivery
 parrot settings set --no-note-hotkey           # return to one shortcut
 parrot settings set --history-retention-days 30 # automatic rolling local cleanup
 parrot settings set --audio-history-days 7      # opt-in replay/reprocess window
@@ -748,6 +759,8 @@ parrot --model whisper-large-v3-turbo  # bigger, multilingual, slower first-run
 parrot --model whisper-base --language auto # efficient multilingual auto-detection
 parrot --hotkey right-option           # change the push-to-talk key
 parrot --note-hotkey right-command     # second key always uses note mode
+parrot --note-hotkey right-command --note-journal ~/notes/inbox.md
+parrot --no-note-journal               # ignore a saved note inbox for this run
 parrot --no-note-hotkey                # ignore a saved note key for this run
 parrot --no-overlay                    # disable the bottom-of-screen pill
 parrot run --debug-hotkey              # print keycodes for every key you press

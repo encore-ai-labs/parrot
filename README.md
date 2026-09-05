@@ -199,6 +199,33 @@ parrot --paste
 parrot settings set --paste
 ```
 
+### Local command delivery
+
+Route each finalized dictation into any local script or CLI that accepts standard input:
+
+```sh
+parrot --command /usr/bin/pbcopy                         # one run: copy instead of paste
+parrot settings set --command '$HOME/bin/route-parrot-note'
+parrot daemon restart
+```
+
+This is the extensible path for Obsidian helpers, task managers, project-specific Markdown
+routers, and other user-owned automations. Parrot invokes `/bin/zsh -lc` with the configured
+command and writes the final UTF-8 text to standard input. Dictated text is never inserted into
+the command string, arguments, or environment, so shell syntax in a transcript remains inert.
+Standard output is discarded; on failure, at most 4 KiB of standard error is shown for diagnosis.
+
+Commands run with your macOS user permissions and inherit your environment. They get 10 seconds;
+after that Parrot terminates the command's entire process group. Parrot itself makes no network
+request for delivery, though a script you explicitly configure can. Commands must finish in the
+foreground; Parrot also cleans up background children when the shell returns. Command, journal,
+and cursor delivery are mutually exclusive. After successful delivery, private history is written
+normally. If the command fails, Parrot does not risk duplicate side effects by falling back to
+cursor paste or adding a retry-duplicate history entry; it keeps the last recording available from
+the menu bar for retry. Restore normal cursor delivery with
+`parrot settings set --paste`. For a plain Markdown inbox, prefer the built-in `--journal` path:
+it adds timestamps, locks and syncs each append, and does not execute a shell.
+
 ### Transcribe voice memos and recordings
 
 Turn an existing audio or video file into a private local Markdown note with the same saved
@@ -434,6 +461,7 @@ parrot settings set --model whisper-small.en --mode notes
 parrot settings set --no-auto-paragraphs # disable the note-mode default
 parrot settings set --cleanup
 parrot settings set --journal ~/Documents/Notes/inbox.md
+parrot settings set --command '$HOME/bin/route-parrot-note'
 parrot settings set --paste         # restore paste-at-cursor delivery
 parrot settings reset               # resets transcription/formatting/delivery defaults
 parrot daemon restart               # apply to a running LaunchAgent
@@ -442,8 +470,9 @@ parrot daemon restart               # apply to a running LaunchAgent
 Saved defaults are what a LaunchAgent uses, so launch-at-login no longer falls back to Fn or
 plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--model`,
 `--notes`, `--dictation`, `--auto-paragraphs`, `--no-auto-paragraphs`, `--cleanup`, and
-`--no-cleanup` take priority without changing the file. `--reconfigure` resets the complete
-first-run configuration.
+`--no-cleanup` take priority without changing the file. `--journal`, `--command`, and `--paste`
+similarly select one delivery destination without changing saved defaults. `--reconfigure`
+resets the complete first-run configuration.
 
 ### App-aware modes
 
@@ -530,7 +559,8 @@ parrot stats                            # private usage/timing insights from his
 parrot settings                         # show effective saved daemon defaults
 parrot settings set --hotkey end --mode notes
 parrot --journal ~/Documents/Notes/inbox.md # append there; don't type at cursor
-parrot --paste                         # override a saved journal for one run
+parrot --command '$HOME/bin/route-parrot-note' # final text on stdin; don't paste
+parrot --paste                         # override any saved destination for one run
 parrot --notes                         # explicit spoken commands → local Markdown
 parrot --notes --no-auto-paragraphs    # keep a long note continuous
 parrot --dictation                     # override a saved notes mode for one run

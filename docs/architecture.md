@@ -212,6 +212,24 @@ Each append is one advisory-locked `O_APPEND` transaction followed by `fsync`, k
 whole across concurrent callers and durable before the UI reports completion. If a runtime
 append fails, delivery falls back to `TextInjector` rather than silently dropping the result.
 
+### `LocalCommandDelivery`
+
+`--command <shell-command>` replaces cursor injection with an explicit user-owned local workflow;
+the same destination can be persisted with `parrot settings set --command`. Journal, command, and
+cursor delivery are mutually exclusive, while private transcript history remains independent.
+
+The runner invokes `/bin/zsh -lc` but never interpolates the transcript into shell source, argv, or
+the environment. Final UTF-8 text is supplied only through a private, automatically unlinked stdin
+file, so large notes cannot deadlock on a pipe and dictated shell syntax remains data. Stdout goes to
+`/dev/null`; a nonblocking bounded reader drains stderr while retaining at most 4 KiB for failures.
+The child starts in its own process group. A 10-second timeout sends TERM and then KILL to that group,
+preventing a pipeline or grandchild from being stranded; lingering background children are also
+cleaned up after a successful shell exit. A command failure suppresses cursor fallback and history
+insertion to avoid duplicate side effects or retry entries, and retains the last-recording recovery
+slot for an explicit retry.
+Command execution begins only after recognition and text processing, so it does not change model load,
+inference latency, accuracy, or resident model memory.
+
 ### `PersonalVocabulary`
 
 Local vocabulary lives at `~/.config/parrot/vocabulary.json` with mode `0600`. Short preferred

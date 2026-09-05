@@ -117,8 +117,18 @@ final class MarkdownJournalTests: XCTestCase {
 
         let paste = try XCTUnwrap(try Run.parseAsRoot(["--paste"]) as? Run)
         XCTAssertTrue(paste.paste)
+        let command = try XCTUnwrap(
+            try Run.parseAsRoot(["--command", "/Users/me/bin/save-note"]) as? Run
+        )
+        XCTAssertEqual(command.command, "/Users/me/bin/save-note")
         XCTAssertThrowsError(try Run.parseAsRoot([
             "--journal", "/tmp/inbox.md", "--paste",
+        ]))
+        XCTAssertThrowsError(try Run.parseAsRoot([
+            "--journal", "/tmp/inbox.md", "--command", "/usr/bin/true",
+        ]))
+        XCTAssertThrowsError(try Run.parseAsRoot([
+            "--command", "/usr/bin/true", "--paste",
         ]))
         XCTAssertThrowsError(try Run.parseAsRoot(["--journal", "/tmp/inbox.txt"]))
     }

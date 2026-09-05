@@ -29,6 +29,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.mode)
         XCTAssertNil(config.appRules)
         XCTAssertNil(config.journalPath)
+        XCTAssertNil(config.deliveryCommand)
         XCTAssertNil(config.cleanup)
         XCTAssertNil(config.automaticParagraphs)
         XCTAssertEqual(permissions(at: root), 0o700)
@@ -55,6 +56,22 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(permissions(at: url.deletingLastPathComponent()), 0o700)
     }
 
+    func testConfigRoundTripsPrivateLocalCommandSetting() throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("config.json")
+        var config = Config()
+        config.deliveryCommand = "$HOME/bin/route-parrot-note --inbox"
+
+        try config.write(to: url)
+
+        XCTAssertEqual(
+            Config.load(from: url).deliveryCommand,
+            "$HOME/bin/route-parrot-note --inbox"
+        )
+        XCTAssertEqual(permissions(at: url), 0o600)
+    }
+
     func testRuntimeDefaultsUseSavedValuesAndCLIOverrides() throws {
         var config = Config()
         config.hotkey = "right-option"
@@ -76,6 +93,7 @@ final class ConfigTests: XCTestCase {
                 language: "auto",
                 mode: .notes,
                 journalPath: nil,
+                deliveryCommand: nil,
                 cleanup: false,
                 automaticParagraphs: true
             )
@@ -95,6 +113,7 @@ final class ConfigTests: XCTestCase {
                 language: "auto",
                 mode: .dictation,
                 journalPath: nil,
+                deliveryCommand: nil,
                 cleanup: false,
                 automaticParagraphs: true
             )
@@ -136,6 +155,7 @@ final class ConfigTests: XCTestCase {
             recommendedModel: "whisper-base.en"
         )
         XCTAssertNil(pasted.journalPath)
+        XCTAssertNil(pasted.deliveryCommand)
 
         XCTAssertThrowsError(try RuntimeDefaults.resolve(
             config: config,
@@ -145,6 +165,69 @@ final class ConfigTests: XCTestCase {
             dictation: false,
             journalOverride: "/tmp/override.md",
             paste: true,
+            recommendedModel: "whisper-base.en"
+        ))
+    }
+
+    func testRuntimeDefaultsResolveExclusiveLocalCommandDelivery() throws {
+        var config = Config()
+        config.deliveryCommand = "/Users/me/bin/save-note"
+
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(saved.deliveryCommand, "/Users/me/bin/save-note")
+        XCTAssertNil(saved.journalPath)
+
+        let journalOverride = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            journalOverride: "/tmp/note.md",
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(journalOverride.journalPath, "/tmp/note.md")
+        XCTAssertNil(journalOverride.deliveryCommand)
+
+        config.deliveryCommand = nil
+        config.journalPath = "/tmp/saved.md"
+        let commandOverride = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            commandOverride: "/Users/me/bin/save-note",
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertNil(commandOverride.journalPath)
+        XCTAssertEqual(commandOverride.deliveryCommand, "/Users/me/bin/save-note")
+
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            journalOverride: "/tmp/override.md",
+            commandOverride: "/Users/me/bin/save-note",
+            recommendedModel: "whisper-base.en"
+        ))
+
+        config.deliveryCommand = "/Users/me/bin/save-note"
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
             recommendedModel: "whisper-base.en"
         ))
     }
@@ -245,6 +328,12 @@ final class ConfigTests: XCTestCase {
             try Settings.parseAsRoot(["set", "--paste"]) as? Settings.Set
         )
         XCTAssertTrue(paste.paste)
+        let command = try XCTUnwrap(
+            try Settings.parseAsRoot([
+                "set", "--command", "/Users/me/bin/save-note --tag inbox",
+            ]) as? Settings.Set
+        )
+        XCTAssertEqual(command.command, "/Users/me/bin/save-note --tag inbox")
 
         XCTAssertThrowsError(try Settings.parseAsRoot(["set"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--hotkey", "space"]))
@@ -254,6 +343,13 @@ final class ConfigTests: XCTestCase {
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--journal", "/tmp/inbox.md", "--paste",
         ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--journal", "/tmp/inbox.md", "--command", "/usr/bin/true",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--command", "/usr/bin/true", "--paste",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--command", "   "]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--journal", "/tmp/inbox.txt"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--cleanup", "--no-cleanup"]))
         XCTAssertThrowsError(try Settings.parseAsRoot([

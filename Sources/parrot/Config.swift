@@ -29,6 +29,9 @@ struct Config: Codable, Equatable {
     /// Optional Markdown destination. When set, finished dictations append
     /// here instead of being injected at the cursor.
     var journalPath: String?
+    /// Optional user-owned local command. Final text is written to its stdin
+    /// instead of being injected at the cursor.
+    var deliveryCommand: String?
     /// Remove conservative, deterministic speech disfluencies after local
     /// transcription. Nil preserves the built-in off default.
     var cleanup: Bool?
@@ -118,6 +121,7 @@ struct RuntimeDefaults: Equatable {
     let language: String
     let mode: DictationMode
     let journalPath: String?
+    let deliveryCommand: String?
     let cleanup: Bool
     let automaticParagraphs: Bool
 
@@ -129,6 +133,7 @@ struct RuntimeDefaults: Equatable {
         notes: Bool,
         dictation: Bool,
         journalOverride: String? = nil,
+        commandOverride: String? = nil,
         paste: Bool = false,
         cleanupOverride: Bool? = nil,
         automaticParagraphsOverride: Bool? = nil,
@@ -137,7 +142,9 @@ struct RuntimeDefaults: Equatable {
         guard !(notes && dictation) else {
             throw RuntimeDefaultsError.conflictingModes
         }
-        guard !(journalOverride != nil && paste) else {
+        let destinationOverrides = [journalOverride != nil, commandOverride != nil, paste]
+            .filter { $0 }.count
+        guard destinationOverrides <= 1 else {
             throw RuntimeDefaultsError.conflictingDestinations
         }
         let requestedLanguage = languageOverride ?? config.language ?? RecognitionLanguage.automatic
@@ -152,12 +159,31 @@ struct RuntimeDefaults: Equatable {
         } else {
             resolvedMode = config.mode ?? .dictation
         }
+        let resolvedJournalPath: String?
+        let resolvedDeliveryCommand: String?
+        if paste {
+            resolvedJournalPath = nil
+            resolvedDeliveryCommand = nil
+        } else if let journalOverride {
+            resolvedJournalPath = journalOverride
+            resolvedDeliveryCommand = nil
+        } else if let commandOverride {
+            resolvedJournalPath = nil
+            resolvedDeliveryCommand = commandOverride
+        } else {
+            guard config.journalPath == nil || config.deliveryCommand == nil else {
+                throw RuntimeDefaultsError.conflictingSavedDestinations
+            }
+            resolvedJournalPath = config.journalPath
+            resolvedDeliveryCommand = config.deliveryCommand
+        }
         return RuntimeDefaults(
             hotkey: hotkeyOverride ?? config.hotkey ?? Hotkey.default.name,
             model: modelOverride ?? config.model ?? recommendedModel,
             language: resolvedLanguage,
             mode: resolvedMode,
-            journalPath: paste ? nil : journalOverride ?? config.journalPath,
+            journalPath: resolvedJournalPath,
+            deliveryCommand: resolvedDeliveryCommand,
             cleanup: cleanupOverride ?? config.cleanup ?? false,
             automaticParagraphs: automaticParagraphsOverride
                 ?? config.automaticParagraphs
@@ -169,6 +195,7 @@ struct RuntimeDefaults: Equatable {
 enum RuntimeDefaultsError: LocalizedError {
     case conflictingModes
     case conflictingDestinations
+    case conflictingSavedDestinations
     case invalidLanguage(String)
 
     var errorDescription: String? {
@@ -176,7 +203,10 @@ enum RuntimeDefaultsError: LocalizedError {
         case .conflictingModes:
             return "pass at most one of --notes or --dictation"
         case .conflictingDestinations:
-            return "pass at most one of --journal or --paste"
+            return "pass at most one of --journal, --command, or --paste"
+        case .conflictingSavedDestinations:
+            return "saved delivery has both journal and command destinations; "
+                + "run `parrot settings set --paste` to repair it"
         case .invalidLanguage(let language):
             return "unknown language '\(language)'; run `parrot languages`"
         }

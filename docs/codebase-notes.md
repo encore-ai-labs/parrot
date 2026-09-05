@@ -314,6 +314,15 @@ frontmost bundle id at recording start and hot-reload after config changes. The 
 for the complete recording/transcription generation, active-app data is not added to history,
 and dictation/notes decoding options are precomputed on one loaded model pipeline.
 
+**3.20 — Live dictation can only paste or append to one built-in journal.** ✅ **FIXED**
+
+`--command` and `parrot settings set --command` now hand finalized text to an explicitly configured
+local zsh workflow over stdin. Transcript bytes never enter shell source, argv, or environment;
+diagnostics are bounded, execution is capped at 10 seconds, and a separate process group lets Parrot
+terminate complete pipelines. Failed delivery never falls back into a potentially duplicate paste and
+does not add a history entry that retry would duplicate; it keeps the recording recovery slot available.
+The runner is post-inference, so it adds no model work or recognition-memory cost.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

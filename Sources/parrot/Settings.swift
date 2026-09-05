@@ -35,6 +35,8 @@ struct Settings: ParsableCommand {
             )
             if let journalPath = defaults.journalPath {
                 print("delivery    journal → \(StartupTUI.displayPath(URL(fileURLWithPath: journalPath)))")
+            } else if defaults.deliveryCommand != nil {
+                print("delivery    local command ← transcript on stdin")
             } else {
                 print("delivery    paste at cursor  (default)")
             }
@@ -65,6 +67,12 @@ struct Settings: ParsableCommand {
         @Option(name: .long, help: "Append dictations to this Markdown file instead of pasting.")
         var journal: String?
 
+        @Option(
+            name: .long,
+            help: "Run a local zsh command with final text on stdin instead of pasting."
+        )
+        var command: String?
+
         @Flag(name: .long, help: "Restore paste-at-cursor delivery.")
         var paste: Bool = false
 
@@ -87,14 +95,15 @@ struct Settings: ParsableCommand {
         var noAutomaticParagraphs: Bool = false
 
         func validate() throws {
-            guard hotkey != nil || model != nil || language != nil || mode != nil || journal != nil || paste
+            guard hotkey != nil || model != nil || language != nil || mode != nil
+                    || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
             }
-            guard !(journal != nil && paste) else {
-                throw ValidationError("pass at most one of --journal or --paste")
+            guard [journal != nil, command != nil, paste].filter({ $0 }).count <= 1 else {
+                throw ValidationError("pass at most one of --journal, --command, or --paste")
             }
             guard !(cleanup && noCleanup) else {
                 throw ValidationError("pass at most one of --cleanup or --no-cleanup")
@@ -119,10 +128,14 @@ struct Settings: ParsableCommand {
             if let journal {
                 _ = try MarkdownJournal.resolveURL(journal)
             }
+            if let command {
+                _ = try LocalCommandDelivery(command: command)
+            }
         }
 
         func run() throws {
-            guard hotkey != nil || model != nil || language != nil || mode != nil || journal != nil || paste
+            guard hotkey != nil || model != nil || language != nil || mode != nil
+                    || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs else {
                 throw ValidationError(
                     "provide at least one setting to change"
@@ -157,8 +170,14 @@ struct Settings: ParsableCommand {
                 let url = try MarkdownJournal.resolveURL(journal)
                 try MarkdownJournal(url: url).prepare()
                 config.journalPath = url.path
+                config.deliveryCommand = nil
+            } else if let command {
+                let delivery = try LocalCommandDelivery(command: command)
+                config.deliveryCommand = delivery.command
+                config.journalPath = nil
             } else if paste {
                 config.journalPath = nil
+                config.deliveryCommand = nil
             }
             if cleanup || noCleanup {
                 config.cleanup = cleanup
@@ -196,6 +215,7 @@ struct Settings: ParsableCommand {
             config.language = nil
             config.mode = nil
             config.journalPath = nil
+            config.deliveryCommand = nil
             config.cleanup = nil
             config.automaticParagraphs = nil
             try config.write()

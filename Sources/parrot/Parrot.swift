@@ -187,7 +187,13 @@ struct Run: ParsableCommand {
     )
     var journal: String?
 
-    @Flag(name: .long, help: "Type at the cursor even when a journal default is saved.")
+    @Option(
+        name: .long,
+        help: "Run a local zsh command with final text on stdin instead of typing at the cursor."
+    )
+    var command: String?
+
+    @Flag(name: .long, help: "Type at the cursor even when another delivery default is saved.")
     var paste: Bool = false
 
     @Flag(name: .long, help: "Re-run first-time setup and overwrite saved preferences.")
@@ -197,8 +203,8 @@ struct Run: ParsableCommand {
     var waitForPID: Int32?
 
     func validate() throws {
-        guard !(journal != nil && paste) else {
-            throw ValidationError("pass at most one of --journal or --paste")
+        guard [journal != nil, command != nil, paste].filter({ $0 }).count <= 1 else {
+            throw ValidationError("pass at most one of --journal, --command, or --paste")
         }
         guard !(cleanup && noCleanup) else {
             throw ValidationError("pass at most one of --cleanup or --no-cleanup")
@@ -210,6 +216,9 @@ struct Run: ParsableCommand {
         }
         if let journal {
             _ = try MarkdownJournal.resolveURL(journal)
+        }
+        if let command {
+            _ = try LocalCommandDelivery(command: command)
         }
     }
 
@@ -251,6 +260,7 @@ struct Run: ParsableCommand {
                 notes: noteMode,
                 dictation: dictationMode,
                 journalOverride: journal,
+                commandOverride: command,
                 paste: paste,
                 cleanupOverride: cleanup || noCleanup ? cleanup : nil,
                 automaticParagraphsOverride: automaticParagraphs || noAutomaticParagraphs
@@ -289,6 +299,19 @@ struct Run: ParsableCommand {
                     .appending("choose whisper-base/whisper-small or use --language en\n").utf8
             ))
             throw ExitCode(64)
+        }
+        let commandDelivery: LocalCommandDelivery?
+        if let deliveryCommand = defaults.deliveryCommand {
+            do {
+                commandDelivery = try LocalCommandDelivery(command: deliveryCommand)
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "local command unavailable: \(error.localizedDescription)\n".utf8
+                ))
+                throw ExitCode(1)
+            }
+        } else {
+            commandDelivery = nil
         }
 
         let fnSystemAction: FnSystemActionOverride?
@@ -571,20 +594,6 @@ struct Run: ParsableCommand {
                         ? String(format: "→ %.2fs · %@\n", elapsed, text)
                         : String(format: "→ %.2fs · ", elapsed) + "\(text.count) chars\n"
                     FileHandle.standardError.write(Data(completionLog.utf8))
-                    if let history {
-                        do {
-                            _ = try await history.append(
-                                text,
-                                audioDuration: seconds,
-                                processingDuration: elapsed,
-                                language: transcription.language
-                            )
-                        } catch {
-                            FileHandle.standardError.write(Data(
-                                "history write failed: \(error)\n".utf8
-                            ))
-                        }
-                    }
                     var deliveredToJournal = false
                     if let journalWriter {
                         do {
@@ -600,10 +609,43 @@ struct Run: ParsableCommand {
                             ))
                         }
                     }
-                    let shouldInjectAtCursor = !deliveredToJournal
+                    var commandDeliverySucceeded = commandDelivery == nil
+                    if let commandDelivery {
+                        do {
+                            try commandDelivery.deliver(text)
+                            commandDeliverySucceeded = true
+                            FileHandle.standardError.write(Data(
+                                "✓ delivered to local command\n".utf8
+                            ))
+                        } catch {
+                            FileHandle.standardError.write(Data(
+                                "command delivery failed: \(error.localizedDescription)"
+                                    .appending(" · retry is available in the menu bar\n").utf8
+                            ))
+                        }
+                    }
+                    let deliveryDecision = TranscriptDeliveryDecision.resolve(
+                        deliveredToJournal: deliveredToJournal,
+                        commandConfigured: commandDelivery != nil,
+                        commandSucceeded: commandDeliverySucceeded
+                    )
+                    if deliveryDecision.deliveryCompleted, let history {
+                        do {
+                            _ = try await history.append(
+                                text,
+                                audioDuration: seconds,
+                                processingDuration: elapsed,
+                                language: transcription.language
+                            )
+                        } catch {
+                            FileHandle.standardError.write(Data(
+                                "history write failed: \(error)\n".utf8
+                            ))
+                        }
+                    }
                     let didFinish = await MainActor.run { () -> Bool in
                         guard lifecycle.finish(sessionID) else { return false }
-                        if shouldInjectAtCursor {
+                        if deliveryDecision.injectAtCursor {
                             TextInjector.inject(text)
                         }
                         overlay?.hide()
@@ -612,7 +654,7 @@ struct Run: ParsableCommand {
                         menuBar.setRecordingRecoveryBusy(false)
                         return true
                     }
-                    if didFinish {
+                    if didFinish && deliveryDecision.deliveryCompleted {
                         do {
                             try recordingRecovery.markDelivered()
                         } catch {
@@ -890,7 +932,7 @@ struct Run: ParsableCommand {
             historyPath: historyPath,
             delivery: journalWriter.map {
                 "journal → \(StartupTUI.displayPath($0.url))"
-            } ?? "paste at cursor",
+            } ?? (commandDelivery == nil ? "paste at cursor" : "local command ← transcript on stdin"),
             cleanup: defaults.cleanup,
             automaticParagraphs: defaults.automaticParagraphs,
             systemHotkeyAction: systemHotkeyAction

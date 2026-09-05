@@ -7,7 +7,7 @@ import Foundation
 /// edges. Requires Accessibility permission. If the tap fails to register,
 /// callers will see an error from `start()`.
 final class HotkeyMonitor {
-    enum Event { case pressed, released, exitKeyPressed, cancelKeyPressed }
+    enum Event { case pressed, released, cancelKeyPressed }
     enum HotkeyError: Error { case tapCreateFailed }
 
     private let hotkey: Hotkey
@@ -18,7 +18,6 @@ final class HotkeyMonitor {
     private var exitKeyTap: CFMachPort?
     private var exitKeyRunLoopSource: CFRunLoopSource?
     private var swallowedExitKeyCode: Int64?
-    private var exitOnAnyKey = false
     private var isPressed = false
 
     init(hotkey: Hotkey = .default, debug: Bool = false) {
@@ -99,12 +98,11 @@ final class HotkeyMonitor {
         onEvent = nil
     }
 
-    /// While recording, consume Escape as a cancel key. In latched mode, also
-    /// consume the first ordinary keypress so Return does not submit before the
-    /// transcript is inserted. The tap exists only while the mic is recording.
+    /// While recording, consume Escape as a cancel key. The tap exists only
+    /// while the mic is recording; ordinary keystrokes pass through untouched
+    /// to the focused application.
     @discardableResult
-    func startExitKeyMonitoring(exitOnAnyKey: Bool) -> Bool {
-        self.exitOnAnyKey = exitOnAnyKey
+    func startExitKeyMonitoring() -> Bool {
         guard exitKeyTap == nil else { return true }
 
         let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
@@ -144,7 +142,6 @@ final class HotkeyMonitor {
         }
         exitKeyTap = nil
         exitKeyRunLoopSource = nil
-        exitOnAnyKey = false
     }
 
     fileprivate func reenableExitKeyTap() {
@@ -152,7 +149,7 @@ final class HotkeyMonitor {
         CGEvent.tapEnable(tap: exitKeyTap, enable: true)
     }
 
-    fileprivate func handleExitKey(type: CGEventType, event: CGEvent) -> Bool {
+    func handleExitKey(type: CGEventType, event: CGEvent) -> Bool {
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
 
         // The activation key itself remains under the primary monitor's
@@ -173,17 +170,17 @@ final class HotkeyMonitor {
         }
 
         let isEscape = keycode == 53
-        guard isEscape || exitOnAnyKey else { return false }
+        guard isEscape else { return false }
         guard type == .keyDown else { return false }
         guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return false }
         if debug {
             FileHandle.standardError.write(Data(
-                "  [debug] latched exit keycode=\(keycode)\n".utf8
+                "  [debug] recording cancel keycode=\(keycode)\n".utf8
             ))
         }
         swallowedExitKeyCode = keycode
         DispatchQueue.main.async { [weak self] in
-            self?.onEvent?(isEscape ? .cancelKeyPressed : .exitKeyPressed)
+            self?.onEvent?(.cancelKeyPressed)
         }
         return true
     }

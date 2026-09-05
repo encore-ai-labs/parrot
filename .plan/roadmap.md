@@ -210,6 +210,11 @@ benchmark interfaces. Same-audio M3 Max measurements are checked into
 [`docs/model-benchmarks.md`](../docs/model-benchmarks.md); Whisper Base remains the default
 because it loads much faster and uses less warm memory.
 
+**6.14 Direct local Markdown journal** — ✅ **complete.** A saved or one-run journal
+destination turns each finished dictation into a timestamped Markdown section without injecting
+into the focused app. It is validated before recording, uses locked and synced appends, keeps
+history independently optional, and adds no inference or network work.
+
 ---
 
 ## Suggested release cadence

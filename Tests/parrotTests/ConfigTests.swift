@@ -27,6 +27,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.model)
         XCTAssertNil(config.mode)
         XCTAssertNil(config.appRules)
+        XCTAssertNil(config.journalPath)
         XCTAssertEqual(permissions(at: root), 0o700)
         XCTAssertEqual(permissions(at: url), 0o600)
     }
@@ -39,6 +40,7 @@ final class ConfigTests: XCTestCase {
         config.hotkey = "right-option"
         config.model = "whisper-small.en"
         config.mode = .notes
+        config.journalPath = "/tmp/notes.md"
 
         try config.write(to: url)
 
@@ -65,7 +67,8 @@ final class ConfigTests: XCTestCase {
             RuntimeDefaults(
                 hotkey: "right-option",
                 model: "whisper-small.en",
-                mode: .notes
+                mode: .notes,
+                journalPath: nil
             )
         )
         XCTAssertEqual(
@@ -77,8 +80,61 @@ final class ConfigTests: XCTestCase {
                 dictation: true,
                 recommendedModel: "ignored"
             ),
-            RuntimeDefaults(hotkey: "end", model: "whisper-base.en", mode: .dictation)
+            RuntimeDefaults(
+                hotkey: "end",
+                model: "whisper-base.en",
+                mode: .dictation,
+                journalPath: nil
+            )
         )
+    }
+
+    func testRuntimeDefaultsResolveJournalAndPasteOverrides() throws {
+        var config = Config()
+        config.journalPath = "/tmp/saved.md"
+
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(saved.journalPath, "/tmp/saved.md")
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            journalOverride: "/tmp/override.md",
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(overridden.journalPath, "/tmp/override.md")
+
+        let pasted = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            paste: true,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertNil(pasted.journalPath)
+
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            journalOverride: "/tmp/override.md",
+            paste: true,
+            recommendedModel: "whisper-base.en"
+        ))
     }
 
     func testRuntimeDefaultsRejectConflictingModeOverrides() {
@@ -99,18 +155,28 @@ final class ConfigTests: XCTestCase {
         let set = try XCTUnwrap(
             try Settings.parseAsRoot([
                 "set", "--hotkey", "ralt", "--model", "whisper-small.en",
-                "--mode", "notes",
+                "--mode", "notes", "--journal", "/tmp/inbox.md",
             ]) as? Settings.Set
         )
         XCTAssertEqual(set.hotkey, "ralt")
         XCTAssertEqual(set.model, "whisper-small.en")
         XCTAssertEqual(set.mode, "notes")
+        XCTAssertEqual(set.journal, "/tmp/inbox.md")
         XCTAssertTrue(try Settings.parseAsRoot(["reset"]) is Settings.Reset)
+
+        let paste = try XCTUnwrap(
+            try Settings.parseAsRoot(["set", "--paste"]) as? Settings.Set
+        )
+        XCTAssertTrue(paste.paste)
 
         XCTAssertThrowsError(try Settings.parseAsRoot(["set"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--hotkey", "space"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--model", "imaginary"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--mode", "email"]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--journal", "/tmp/inbox.md", "--paste",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--journal", "/tmp/inbox.txt"]))
     }
 
     private func temporaryDirectory() -> URL {

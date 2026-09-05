@@ -27,6 +27,11 @@ struct Settings: ParsableCommand {
             print("hotkey      \(defaults.hotkey)\(config.hotkey == nil ? "  (default)" : "")")
             print("model       \(defaults.model)\(config.model == nil ? "  (recommended)" : "")")
             print("mode        \(defaults.mode.rawValue)\(config.mode == nil ? "  (default)" : "")")
+            if let journalPath = defaults.journalPath {
+                print("delivery    journal → \(StartupTUI.displayPath(URL(fileURLWithPath: journalPath)))")
+            } else {
+                print("delivery    paste at cursor  (default)")
+            }
             print("app rules   \(config.savedAppRules.count)")
             print("lowercase   \((config.lowercase ?? false) ? "on" : "off")")
             print("microphone  \(config.inputDeviceUID ?? "automatic")")
@@ -48,9 +53,20 @@ struct Settings: ParsableCommand {
         @Option(name: .long, help: "Text-processing mode: dictation or notes.")
         var mode: String?
 
+        @Option(name: .long, help: "Append dictations to this Markdown file instead of pasting.")
+        var journal: String?
+
+        @Flag(name: .long, help: "Restore paste-at-cursor delivery.")
+        var paste: Bool = false
+
         func validate() throws {
-            guard hotkey != nil || model != nil || mode != nil else {
-                throw ValidationError("provide at least one of --hotkey, --model, or --mode")
+            guard hotkey != nil || model != nil || mode != nil || journal != nil || paste else {
+                throw ValidationError(
+                    "provide at least one of --hotkey, --model, --mode, --journal, or --paste"
+                )
+            }
+            guard !(journal != nil && paste) else {
+                throw ValidationError("pass at most one of --journal or --paste")
             }
             if let hotkey, Hotkey.parse(hotkey) == nil {
                 throw ValidationError("unknown hotkey '\(hotkey)'; run `parrot hotkeys`")
@@ -61,11 +77,16 @@ struct Settings: ParsableCommand {
             if let mode, DictationMode.parse(mode) == nil {
                 throw ValidationError("unknown mode '\(mode)'; use dictation or notes")
             }
+            if let journal {
+                _ = try MarkdownJournal.resolveURL(journal)
+            }
         }
 
         func run() throws {
-            guard hotkey != nil || model != nil || mode != nil else {
-                throw ValidationError("provide at least one of --hotkey, --model, or --mode")
+            guard hotkey != nil || model != nil || mode != nil || journal != nil || paste else {
+                throw ValidationError(
+                    "provide at least one of --hotkey, --model, --mode, --journal, or --paste"
+                )
             }
             var config = Config.load()
             if let hotkey {
@@ -86,6 +107,13 @@ struct Settings: ParsableCommand {
                 }
                 config.mode = parsed
             }
+            if let journal {
+                let url = try MarkdownJournal.resolveURL(journal)
+                try MarkdownJournal(url: url).prepare()
+                config.journalPath = url.path
+            } else if paste {
+                config.journalPath = nil
+            }
             try config.write()
             print("✓ saved Parrot defaults")
             try Show().run()
@@ -95,7 +123,7 @@ struct Settings: ParsableCommand {
 
     struct Reset: ParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Reset hotkey, model, and mode to built-in defaults."
+            abstract: "Reset hotkey, model, mode, and delivery to built-in defaults."
         )
 
         func run() throws {
@@ -103,8 +131,9 @@ struct Settings: ParsableCommand {
             config.hotkey = nil
             config.model = nil
             config.mode = nil
+            config.journalPath = nil
             try config.write()
-            print("✓ reset hotkey, model, and mode defaults")
+            print("✓ reset hotkey, model, mode, and delivery defaults")
             print("restart a running Parrot daemon to apply the change")
         }
     }

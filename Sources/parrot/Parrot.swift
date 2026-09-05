@@ -160,11 +160,29 @@ struct Run: ParsableCommand {
     )
     var dictationMode: Bool = false
 
+    @Option(
+        name: .long,
+        help: "Append dictations to this Markdown file instead of typing at the cursor."
+    )
+    var journal: String?
+
+    @Flag(name: .long, help: "Type at the cursor even when a journal default is saved.")
+    var paste: Bool = false
+
     @Flag(name: .long, help: "Re-run first-time setup and overwrite saved preferences.")
     var reconfigure: Bool = false
 
     @Option(name: .customLong("wait-for-pid"), help: .hidden)
     var waitForPID: Int32?
+
+    func validate() throws {
+        guard !(journal != nil && paste) else {
+            throw ValidationError("pass at most one of --journal or --paste")
+        }
+        if let journal {
+            _ = try MarkdownJournal.resolveURL(journal)
+        }
+    }
 
     func run() throws {
         LaunchAgentManager.trimInheritedLogsIfNeeded()
@@ -202,6 +220,8 @@ struct Run: ParsableCommand {
                 modelOverride: model,
                 notes: noteMode,
                 dictation: dictationMode,
+                journalOverride: journal,
+                paste: paste,
                 recommendedModel: recommendedModel
             )
         } catch {
@@ -359,6 +379,22 @@ struct Run: ParsableCommand {
             snippets = SnippetLibrary()
         }
         let snippetExpander = SnippetExpander(entries: snippets.entries)
+        let journalWriter: MarkdownJournal?
+        if let journalPath = defaults.journalPath {
+            do {
+                let url = try MarkdownJournal.resolveURL(journalPath)
+                let writer = MarkdownJournal(url: url)
+                try writer.prepare()
+                journalWriter = writer
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "journal unavailable: \(error.localizedDescription)\n".utf8
+                ))
+                throw ExitCode(1)
+            }
+        } else {
+            journalWriter = nil
+        }
         let transcriber = TranscriberFactory.make(
             model: chosenModel,
             vocabulary: vocabulary,
@@ -433,7 +469,7 @@ struct Run: ParsableCommand {
             recordingMode = selection.mode
             do {
                 try capture.start()
-                _ = monitor.startExitKeyMonitoring(exitOnAnyKey: false)
+                _ = monitor.startExitKeyMonitoring()
                 let automatic = selection.isAutomatic ? " · automatic" : ""
                 FileHandle.standardError.write(Data(
                     "● recording · \(selection.mode.rawValue)\(automatic)\n".utf8
@@ -524,9 +560,27 @@ struct Run: ParsableCommand {
                             ))
                         }
                     }
+                    var deliveredToJournal = false
+                    if let journalWriter {
+                        do {
+                            if let url = try journalWriter.append(text) {
+                                deliveredToJournal = true
+                                FileHandle.standardError.write(Data(
+                                    "✓ appended to \(StartupTUI.displayPath(url))\n".utf8
+                                ))
+                            }
+                        } catch {
+                            FileHandle.standardError.write(Data(
+                                "journal write failed: \(error.localizedDescription)\n".utf8
+                            ))
+                        }
+                    }
+                    let shouldInjectAtCursor = !deliveredToJournal
                     await MainActor.run {
                         guard lifecycle.finish(sessionID) else { return }
-                        TextInjector.inject(text)
+                        if shouldInjectAtCursor {
+                            TextInjector.inject(text)
+                        }
                         overlay?.hide()
                         menuBar.setRecording(false)
                     }
@@ -561,9 +615,9 @@ struct Run: ParsableCommand {
             case .cancelRecording:
                 cancelRecording()
             case .setLatched(true):
-                if monitor.startExitKeyMonitoring(exitOnAnyKey: true) {
+                if monitor.startExitKeyMonitoring() {
                     FileHandle.standardError.write(Data(
-                        "↔ recording locked · any key transcribes · esc cancels\n".utf8
+                        "↔ recording locked · tap \(chosenHotkey.name) to transcribe · esc cancels\n".utf8
                     ))
                 }
             case .setLatched(false):
@@ -607,8 +661,6 @@ struct Run: ParsableCommand {
                     gesture.handle(.hotkeyPressed)
                 case .released:
                     gesture.handle(.hotkeyReleased)
-                case .exitKeyPressed:
-                    gesture.handle(.otherKeyPressed)
                 case .cancelKeyPressed:
                     gesture.handle(.cancelKeyPressed)
                 }
@@ -655,6 +707,9 @@ struct Run: ParsableCommand {
             vocabularyCount: vocabulary.entries.count,
             snippetCount: snippets.entries.count,
             historyPath: historyPath,
+            delivery: journalWriter.map {
+                "journal → \(StartupTUI.displayPath($0.url))"
+            } ?? "paste at cursor",
             systemHotkeyAction: systemHotkeyAction
         ))
         var updateInProgress = false

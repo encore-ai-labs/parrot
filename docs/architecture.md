@@ -110,11 +110,10 @@ The tap subscribes to `keyDown`/`keyUp` only when the chosen hotkey needs them (
 copying every keystroke on the system.
 
 A quick double-tap locks recording on. A first release inside the 550 ms double-tap window
-waits out that window; longer push-to-talk holds still stop immediately. While locked, a second,
-temporary event tap watches for the first non-hotkey `keyDown`, consumes that key and its
-matching `keyUp`, and ends the recording. Keeping this in a separate tap means ordinary
-push-to-talk mode still does not observe unrelated keystrokes. Pressing the hotkey once more
-also ends a locked recording.
+waits out that window; longer push-to-talk holds still stop immediately. Once locked, only
+pressing the selected hotkey again ends and transcribes the recording. A temporary event tap
+watches only for Escape so it can cancel and discard; all other ordinary keystrokes pass
+through to the focused application without ending the recording.
 
 When macOS disables the tap (`tapDisabledByTimeout` / `tapDisabledByUserInput`) it is
 re-armed immediately. Left unhandled, parrot keeps running — menu bar icon and all — while
@@ -192,6 +191,19 @@ Adding an engine = one new file conforming to `Transcriber`.
 ### `TextInjector`
 
 `CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString` — pastes the transcript at the current cursor position. Works in nearly every text field on macOS (some Electron apps and secure fields are flaky; platform constraint).
+
+### `MarkdownJournal`
+
+`--journal <path>` replaces cursor injection with a timestamped append to a user-selected
+`.md` or `.markdown` file. The path can also be saved with `parrot settings set --journal`;
+`--paste` is the one-run override. Journal delivery is separate from private transcript history,
+so history can remain a recovery log or be disabled independently.
+
+The writer validates its destination before model warmup, creates only missing directories,
+uses owner-only permissions for new paths, and leaves permissions on an existing journal alone.
+Each append is one advisory-locked `O_APPEND` transaction followed by `fsync`, keeping entries
+whole across concurrent callers and durable before the UI reports completion. If a runtime
+append fails, delivery falls back to `TextInjector` rather than silently dropping the result.
 
 ### `PersonalVocabulary`
 
@@ -357,8 +369,8 @@ flooding LaunchAgent logs.
 ### `Config`
 
 A `Codable` struct at `~/.config/parrot/config.json`, holding the chosen microphone UID,
-lowercase preference, first-run completion flag, and optional defaults for hotkey, model, and
-dictation/notes mode. Every field is optional, so older config files decode unchanged and nil
+lowercase preference, first-run completion flag, and optional defaults for hotkey, model,
+dictation/notes mode, and Markdown journal destination. Every field is optional, so older config files decode unchanged and nil
 continues to mean "use the built-in default."
 
 JSON rather than the TOML originally sketched: `Codable` gives it to us for free, and a TOML
@@ -455,7 +467,8 @@ Models are not bundled. New downloads live in
 11. The mode captured at recording start selects precomputed prompt options; in notes mode,
     `NoteFormatter` then applies explicit Markdown structure commands.
 12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies.
-13. `TextInjector` posts the string at the cursor and `TranscriptHistory` saves it locally.
+13. `TextInjector` posts the string at the cursor, or `MarkdownJournal` durably appends it when
+    journal delivery is selected. `TranscriptHistory` independently saves the recovery copy.
 14. Overlay hides. Status: `listening`. Loop.
 15. User hits `^C`. Process exits cleanly.
 

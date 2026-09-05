@@ -24,6 +24,9 @@ struct Config: Codable, Equatable {
     var mode: DictationMode?
     /// Explicit local mappings from application bundle ids to text mode.
     var appRules: [AppModeRule]?
+    /// Optional Markdown destination. When set, finished dictations append
+    /// here instead of being injected at the cursor.
+    var journalPath: String?
 
     static var directory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -105,6 +108,7 @@ struct RuntimeDefaults: Equatable {
     let hotkey: String
     let model: String
     let mode: DictationMode
+    let journalPath: String?
 
     static func resolve(
         config: Config,
@@ -112,10 +116,15 @@ struct RuntimeDefaults: Equatable {
         modelOverride: String?,
         notes: Bool,
         dictation: Bool,
+        journalOverride: String? = nil,
+        paste: Bool = false,
         recommendedModel: String
     ) throws -> RuntimeDefaults {
         guard !(notes && dictation) else {
             throw RuntimeDefaultsError.conflictingModes
+        }
+        guard !(journalOverride != nil && paste) else {
+            throw RuntimeDefaultsError.conflictingDestinations
         }
         let resolvedMode: DictationMode
         if notes {
@@ -128,18 +137,22 @@ struct RuntimeDefaults: Equatable {
         return RuntimeDefaults(
             hotkey: hotkeyOverride ?? config.hotkey ?? Hotkey.default.name,
             model: modelOverride ?? config.model ?? recommendedModel,
-            mode: resolvedMode
+            mode: resolvedMode,
+            journalPath: paste ? nil : journalOverride ?? config.journalPath
         )
     }
 }
 
 enum RuntimeDefaultsError: LocalizedError {
     case conflictingModes
+    case conflictingDestinations
 
     var errorDescription: String? {
         switch self {
         case .conflictingModes:
             return "pass at most one of --notes or --dictation"
+        case .conflictingDestinations:
+            return "pass at most one of --journal or --paste"
         }
     }
 }

@@ -54,8 +54,8 @@ switcher, or Apple Dictation from racing Parrot. Your previous setting is restor
 normal quit. Other hotkeys do not change this system preference.
 
 For hands-free dictation, quickly double-tap the push-to-talk key. Recording stays on after
-the second release; press Return, any other ordinary key, or the push-to-talk key again to
-stop. The exit key is consumed, so it will not type or submit before the transcript arrives.
+the second release; tap the selected push-to-talk key once more to stop and transcribe.
+Ordinary keys, including Return, remain usable and do not stop the recording.
 Press **Escape** at any point while recording to cancel and discard the audio without
 transcribing, saving history, or injecting text. Escape is consumed as part of cancellation.
 
@@ -132,6 +132,32 @@ transcript history, run:
 
 ```sh
 parrot --no-history
+```
+
+### Direct Markdown journal
+
+For focused note-taking, route every finished dictation directly into one Markdown file instead
+of typing into the frontmost app:
+
+```sh
+parrot settings set --mode notes --journal ~/Documents/Notes/inbox.md
+parrot daemon restart
+```
+
+Each capture becomes a timestamped section while preserving note-mode headings, lists, tasks,
+paragraphs, and snippets. The destination is validated before the microphone or model starts;
+new journals and parent directories are private (`0600`/`0700`), appends are locked and synced,
+and existing journal permissions are left unchanged. This is a native file output—no shell,
+plugin, account, or network service receives the transcript.
+
+Journal delivery does not duplicate text at the cursor. Parrot's private searchable history
+continues independently as a recovery log; use `--no-history` when the journal should be the
+only saved copy. A write failure falls back to typing at the cursor so a finished thought is
+not silently lost. Override a saved destination for one run, or switch back permanently:
+
+```sh
+parrot --paste
+parrot settings set --paste
 ```
 
 ### Transcribe voice memos and recordings
@@ -334,7 +360,9 @@ note/dictation mode can be saved explicitly:
 parrot settings
 parrot settings set --hotkey right-option
 parrot settings set --model whisper-small.en --mode notes
-parrot settings reset               # resets hotkey/model/mode only
+parrot settings set --journal ~/Documents/Notes/inbox.md
+parrot settings set --paste         # restore paste-at-cursor delivery
+parrot settings reset               # resets hotkey/model/mode/delivery
 parrot daemon restart               # apply to a running LaunchAgent
 ```
 
@@ -426,6 +454,8 @@ parrot history copy                    # recover the latest transcript to clipbo
 parrot stats                            # private usage/timing insights from history
 parrot settings                         # show effective saved daemon defaults
 parrot settings set --hotkey end --mode notes
+parrot --journal ~/Documents/Notes/inbox.md # append there; don't type at cursor
+parrot --paste                         # override a saved journal for one run
 parrot --notes                         # explicit spoken commands → local Markdown
 parrot --dictation                     # override a saved notes mode for one run
 parrot --input-device brio             # pick a specific mic

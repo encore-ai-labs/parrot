@@ -9,7 +9,6 @@ struct HotkeyGesture {
     enum Input: Equatable {
         case hotkeyPressed
         case hotkeyReleased
-        case otherKeyPressed
         case cancelKeyPressed
         case timeout
     }
@@ -80,8 +79,7 @@ struct HotkeyGesture {
             state = .latched
             effects.append(.setLatched(true))
 
-        case (.secondPress, .otherKeyPressed), (.latched, .otherKeyPressed),
-             (.latched, .hotkeyPressed):
+        case (.latched, .hotkeyPressed):
             state = .idle
             effects.append(contentsOf: [.setLatched(false), .stopRecording])
 

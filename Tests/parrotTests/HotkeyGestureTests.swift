@@ -26,7 +26,7 @@ final class HotkeyGestureTests: XCTestCase {
         )
     }
 
-    func testDoubleTapLatchesUntilAnotherKeyIsPressed() {
+    func testDoubleTapLatchesUntilSelectedHotkeyIsPressed() {
         var gesture = HotkeyGesture(doubleTapInterval: 0.4)
 
         XCTAssertEqual(gesture.handle(.hotkeyPressed, at: 1.0), [.startRecording])
@@ -37,7 +37,7 @@ final class HotkeyGestureTests: XCTestCase {
         )
         XCTAssertEqual(gesture.handle(.hotkeyReleased, at: 1.3), [.setLatched(true)])
         XCTAssertEqual(
-            gesture.handle(.otherKeyPressed, at: 3.0),
+            gesture.handle(.hotkeyPressed, at: 3.0),
             [.setLatched(false), .stopRecording]
         )
     }
@@ -51,7 +51,7 @@ final class HotkeyGestureTests: XCTestCase {
         XCTAssertEqual(gesture.handle(.hotkeyPressed, at: 1.42), [.cancelTimeout])
         XCTAssertEqual(gesture.handle(.hotkeyReleased, at: 1.48), [.setLatched(true)])
         XCTAssertEqual(
-            gesture.handle(.otherKeyPressed, at: 3.0),
+            gesture.handle(.hotkeyPressed, at: 3.0),
             [.setLatched(false), .stopRecording]
         )
     }

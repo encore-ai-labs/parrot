@@ -67,6 +67,9 @@ struct Transcribe: ParsableCommand {
     @Flag(name: .long, help: "Ignore saved voice snippets.")
     var noSnippets = false
 
+    @Flag(name: .long, help: "Do not remove saved personal filler phrases from output.")
+    var noFillers = false
+
     @Option(name: .long, help: "Output format: markdown, text, or json.")
     var format: TranscriptOutputFormat = .markdown
 
@@ -181,7 +184,9 @@ struct Transcribe: ParsableCommand {
 
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
         let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
+        let fillers = try noFillers ? PersonalFillerLibrary() : PersonalFillerLibrary.load()
         let snippetExpander = SnippetExpander(entries: snippets.entries)
+        let fillerRemover = PersonalFillerRemover(entries: fillers.entries)
         let transcriber = TranscriberFactory.make(
             model: selectedModel,
             language: canonicalLanguage,
@@ -218,6 +223,7 @@ struct Transcribe: ParsableCommand {
                     mode: mode,
                     lowercase: lowercaseOutput,
                     cleanup: applyCleanup,
+                    fillers: fillerRemover,
                     automaticParagraphs: automaticParagraphsOutput,
                     segments: transcription.segments,
                     snippets: snippetExpander
@@ -233,7 +239,8 @@ struct Transcribe: ParsableCommand {
                 )
                 let segments = TranscriptProcessing.processSegments(
                     transcription.segments,
-                    cleanup: applyCleanup
+                    cleanup: applyCleanup,
+                    fillers: fillerRemover
                 )
                 let report = FileTranscriptReport(
                     source: job.input.path,
@@ -434,6 +441,7 @@ enum TranscriptProcessing {
         mode: DictationMode,
         lowercase: Bool,
         cleanup: Bool = false,
+        fillers: PersonalFillerRemover = PersonalFillerRemover(entries: []),
         automaticParagraphs: Bool = false,
         segments: [TimedTranscriptSegment] = [],
         snippets: SnippetExpander
@@ -443,6 +451,7 @@ enum TranscriptProcessing {
             mode: mode,
             lowercase: lowercase,
             cleanup: cleanup,
+            fillers: fillers,
             automaticParagraphs: automaticParagraphs,
             segments: segments,
             snippets: snippets,
@@ -457,6 +466,7 @@ enum TranscriptProcessing {
         fallbackMode: DictationMode,
         lowercase: Bool,
         cleanup: Bool = false,
+        fillers: PersonalFillerRemover = PersonalFillerRemover(entries: []),
         automaticParagraphs: Bool = false,
         segments: [TimedTranscriptSegment] = [],
         snippets: SnippetExpander
@@ -466,6 +476,7 @@ enum TranscriptProcessing {
             mode: fallbackMode,
             lowercase: lowercase,
             cleanup: cleanup,
+            fillers: fillers,
             automaticParagraphs: automaticParagraphs,
             segments: segments,
             snippets: snippets,
@@ -478,6 +489,7 @@ enum TranscriptProcessing {
         mode fallbackMode: DictationMode,
         lowercase: Bool,
         cleanup: Bool,
+        fillers: PersonalFillerRemover,
         automaticParagraphs: Bool,
         segments: [TimedTranscriptSegment],
         snippets: SnippetExpander,
@@ -499,7 +511,8 @@ enum TranscriptProcessing {
         let selectedText = spokenModeTrigger
             ? SpokenModeTrigger.resolve(structured, fallbackMode: fallbackMode).text
             : structured
-        let cleaned = cleanup ? SpeechCleanup.clean(selectedText) : selectedText
+        let personalized = fillers.applying(to: selectedText)
+        let cleaned = cleanup ? SpeechCleanup.clean(personalized) : personalized
         let formatted = selection.mode == .notes ? NoteFormatter.format(cleaned) : cleaned
         let edited = selection.mode == .notes ? SpokenEditProcessor.apply(formatted) : formatted
         let cased = lowercase ? edited.lowercased() : edited
@@ -513,11 +526,13 @@ enum TranscriptProcessing {
 
     static func processSegments(
         _ segments: [TimedTranscriptSegment],
-        cleanup: Bool
+        cleanup: Bool,
+        fillers: PersonalFillerRemover = PersonalFillerRemover(entries: [])
     ) -> [TimedTranscriptSegment] {
-        guard cleanup else { return segments }
+        guard cleanup || fillers.count > 0 else { return segments }
         return segments.compactMap { segment in
-            let text = SpeechCleanup.clean(segment.text)
+            let personalized = fillers.applying(to: segment.text)
+            let text = cleanup ? SpeechCleanup.clean(personalized) : personalized
             guard !text.isEmpty else { return nil }
             return TimedTranscriptSegment(
                 startSeconds: segment.startSeconds,

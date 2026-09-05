@@ -57,6 +57,9 @@ struct ModelBenchmark: ParsableCommand {
     @Flag(name: .long, help: "Ignore saved voice snippets during this benchmark.")
     var noSnippets = false
 
+    @Flag(name: .long, help: "Do not remove saved personal filler phrases during this benchmark.")
+    var noFillers = false
+
     @Flag(name: .long, help: "Print a machine-readable JSON report.")
     var json = false
 
@@ -102,7 +105,9 @@ struct ModelBenchmark: ParsableCommand {
         let expected = try loadReference()
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
         let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
+        let fillers = try noFillers ? PersonalFillerLibrary() : PersonalFillerLibrary.load()
         let snippetExpander = SnippetExpander(entries: snippets.entries)
+        let fillerRemover = PersonalFillerRemover(entries: fillers.entries)
         let paragraphPreference = (
             automaticParagraphs || noAutomaticParagraphs
                 ? automaticParagraphs
@@ -168,6 +173,7 @@ struct ModelBenchmark: ParsableCommand {
                     result.text,
                     fallbackMode: mode,
                     lowercase: false,
+                    fillers: fillerRemover,
                     automaticParagraphs: paragraphPreference,
                     segments: segments,
                     snippets: snippetExpander
@@ -179,6 +185,7 @@ struct ModelBenchmark: ParsableCommand {
                     result.text,
                     mode: mode,
                     lowercase: false,
+                    fillers: fillerRemover,
                     automaticParagraphs: transcriberAutomaticParagraphs,
                     segments: result.segments,
                     snippets: snippetExpander
@@ -208,6 +215,7 @@ struct ModelBenchmark: ParsableCommand {
             automaticParagraphs: effectiveMode == .notes && paragraphPreference,
             vocabularyTerms: vocabulary.entries.count,
             snippets: snippets.entries.count,
+            fillers: fillers.entries.count,
             audioPath: audioURL.path,
             audioSeconds: audioSeconds,
             loadSeconds: loadSeconds,
@@ -283,6 +291,7 @@ struct ModelBenchmarkReport: Codable {
     let automaticParagraphs: Bool
     let vocabularyTerms: Int
     let snippets: Int
+    let fillers: Int
     let audioPath: String
     let audioSeconds: Double
     let loadSeconds: Double

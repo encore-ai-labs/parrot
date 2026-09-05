@@ -11,7 +11,7 @@ struct Parrot: ParsableCommand {
         version: AppVersion.current,
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
-            Hotkeys.self, Devices.self, Apps.self, Vocabulary.self, Snippets.self,
+            Hotkeys.self, Devices.self, Apps.self, Vocabulary.self, Snippets.self, Fillers.self,
             History.self, Stats.self, Transcribe.self, Settings.self, Languages.self,
             Install.self, Daemon.self, Update.self,
         ],
@@ -474,9 +474,19 @@ struct Run: ParsableCommand {
             ))
             snippets = SnippetLibrary()
         }
+        let fillers: PersonalFillerLibrary
+        do {
+            fillers = try PersonalFillerLibrary.load()
+        } catch {
+            FileHandle.standardError.write(Data(
+                "warning: couldn't load personal fillers: \(error.localizedDescription)\n".utf8
+            ))
+            fillers = PersonalFillerLibrary()
+        }
         let personalizationController = PersonalizationController(
             vocabulary: vocabulary,
-            snippets: snippets
+            snippets: snippets,
+            fillers: fillers
         )
         let journalWriter: MarkdownJournal?
         if let journalPath = defaults.journalPath {
@@ -621,10 +631,14 @@ struct Run: ParsableCommand {
                     let snippetNoun = refresh.snapshot.snippetCount == 1
                         ? "snippet"
                         : "snippets"
+                    let fillerNoun = refresh.snapshot.fillerCount == 1
+                        ? "filler"
+                        : "fillers"
                     FileHandle.standardError.write(Data(
                         "↻ personalization reloaded · \(refresh.snapshot.vocabularyCount) "
                             .appending("\(vocabularyNoun) · ")
-                            .appending("\(refresh.snapshot.snippetCount) \(snippetNoun)\n").utf8
+                            .appending("\(refresh.snapshot.snippetCount) \(snippetNoun) · ")
+                            .appending("\(refresh.snapshot.fillerCount) \(fillerNoun)\n").utf8
                     ))
                 }
                 return refresh
@@ -689,6 +703,7 @@ struct Run: ParsableCommand {
                         fallbackMode: modeForCapture,
                         lowercase: lowercaseMode,
                         cleanup: applyCleanup,
+                        fillers: personalization.fillers,
                         automaticParagraphs: defaults.automaticParagraphs,
                         segments: processingSegments,
                         snippets: personalization.snippets
@@ -1046,6 +1061,7 @@ struct Run: ParsableCommand {
             mode: defaults.mode.rawValue,
             vocabularyCount: vocabulary.entries.count,
             snippetCount: snippets.entries.count,
+            fillerCount: fillers.entries.count,
             historyPath: historyPath,
             historyRetentionDays: defaults.historyRetentionDays,
             delivery: journalWriter.map {

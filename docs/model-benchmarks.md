@@ -79,11 +79,20 @@ pass; its focused long-input test exits in well under a millisecond.
 ## Personalization hot-reload cost
 
 The daemon's unchanged-file path was measured in the debug test harness with 1,000 vocabulary
-entries and 1,000 snippets. One thousand complete checks averaged 86 ms, or about **0.086 ms per
-recording**. Library size does not affect that steady-state path because Parrot reads only two file
-signatures. JSON decoding, matcher compilation, and bounded Whisper prompt tokenization happen only
-after an atomic file change; prompt rebuilding starts at hotkey-down so normal speech time hides it.
+entries, 1,000 snippets, and the maximum 128 personal fillers. One thousand complete checks
+averaged 130 ms, or about **0.130 ms per recording**. Library size does not affect that steady-state
+path because Parrot reads only three file signatures. JSON decoding, matcher compilation, and
+bounded Whisper prompt tokenization happen only after an atomic file change; prompt rebuilding
+starts at hotkey-down so normal speech time hides it.
 The loaded Core ML model is never replaced or warmed again.
+
+## Personal filler cleanup cost
+
+With three configured phrases, 1,000 complete cleanup passes over a typical project-note sentence
+averaged 13 ms in the debug test harness, or about **0.013 ms per dictation**. A worst-case test with
+all 128 allowed phrases removed matches throughout a 40-sentence note 100 times in 219 ms, or about
+**2.19 ms per long note**. The matcher is compiled only when `fillers.json` changes and contributes
+no acoustic prompt, model inference, or network work.
 
 ## Reproduce it
 
@@ -95,15 +104,15 @@ parrot models download parakeet-unified.en
 
 parrot models benchmark whisper-base.en \
   --audio sample.aiff --reference "Exact spoken words" \
-  --runs 3 --notes --no-vocabulary --no-snippets
+  --runs 3 --notes --no-vocabulary --no-fillers --no-snippets
 
 parrot models benchmark parakeet-tdt-ctc-110m.en \
   --audio sample.aiff --reference "Exact spoken words" \
-  --runs 3 --notes --no-vocabulary --no-snippets
+  --runs 3 --notes --no-vocabulary --no-fillers --no-snippets
 
 parrot models benchmark parakeet-unified.en \
   --audio sample.aiff --reference "Exact spoken words" \
-  --runs 3 --notes --no-vocabulary --no-snippets
+  --runs 3 --notes --no-vocabulary --no-fillers --no-snippets
 ```
 
 Use `--json` for machine-readable results. Model download time is deliberately excluded from

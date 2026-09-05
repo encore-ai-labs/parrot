@@ -18,7 +18,7 @@ final class FileTranscriptionTests: XCTestCase {
                 "--model", "whisper-small.en",
                 "--language", "en",
                 "--notes", "--lowercase", "--cleanup", "--auto-paragraphs",
-                "--no-vocabulary", "--no-snippets",
+                "--no-vocabulary", "--no-fillers", "--no-snippets",
                 "--format", "json", "--output-directory", "/tmp/transcripts",
                 "--no-timestamps", "--force",
             ]) as? Transcribe
@@ -31,6 +31,7 @@ final class FileTranscriptionTests: XCTestCase {
         XCTAssertTrue(command.cleanup)
         XCTAssertTrue(command.automaticParagraphs)
         XCTAssertTrue(command.noVocabulary)
+        XCTAssertTrue(command.noFillers)
         XCTAssertTrue(command.noSnippets)
         XCTAssertEqual(command.format, .json)
         XCTAssertEqual(command.outputDirectory, "/tmp/transcripts")

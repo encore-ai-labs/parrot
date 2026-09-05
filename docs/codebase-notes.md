@@ -355,6 +355,13 @@ replacer, and snippet expander while recording is in progress. Transcription awa
 recognition and deterministic output cannot mix revisions. Invalid manual JSON keeps the last good
 state and logs once rather than taking dictation down.
 
+**3.24 — Filler cleanup cannot reflect an individual speaker's habits.** ✅ **FIXED**
+
+`parrot fillers` now manages an explicit private list of whole words and short phrases. One
+precompiled, bounded regex removes those phrases before note formatting, repairs local punctuation,
+supports `literal` escaping, and cannot rewrite saved snippet bodies. The list hot-reloads as part
+of the daemon's coherent personalization revision and never enters model context or a network call.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

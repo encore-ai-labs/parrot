@@ -161,6 +161,31 @@ Cleanup is off by default so upgrades never rewrite established dictation unexpe
 `parrot settings set --no-cleanup` to turn it off persistently. The same flags work with
 `parrot transcribe` for local audio and video files.
 
+### Personal filler phrases
+
+Teach Parrot the verbal habits you personally want removed without asking a language model to
+rewrite the rest of your thought:
+
+```sh
+parrot fillers add basically
+parrot fillers add "you know"
+parrot fillers add "to be honest"
+parrot fillers
+parrot fillers remove basically
+```
+
+Configured phrases are removed case-insensitively at whole-word boundaries in every live
+dictation, even when general cleanup is off. They run before note commands and snippet expansion,
+repair adjacent clause punctuation, and never alter a configured phrase inside a saved snippet
+body. Say **“literal you know”** when you need to keep a phrase for one occurrence. File
+transcription uses the same list; pass `--no-fillers` to preserve the source verbatim.
+
+This list is deliberately explicit because conversational words can carry meaning. Parrot never
+learns or guesses fillers from transcript history. Up to 128 phrases of six words each are stored
+only in `~/.config/parrot/fillers.json` with user-only permissions (`0600`) and hot-reload on the
+next recording. Matching is one precompiled local regex pass with no prompt tokens, model call,
+account, telemetry, or network request.
+
 ### Reusable voice snippets
 
 Save text or Markdown you type repeatedly, then insert it during either normal dictation or
@@ -291,7 +316,7 @@ it adds timestamps, locks and syncs each append, and does not execute a shell.
 ### Transcribe voice memos and recordings
 
 Turn an existing audio or video file into a private local Markdown note with the same saved
-model, mode, casing, vocabulary, and snippets used by live dictation:
+model, mode, casing, vocabulary, fillers, and snippets used by live dictation:
 
 ```sh
 parrot transcribe voice-memo.m4a
@@ -508,10 +533,10 @@ parrot models benchmark whisper-base.en \
 
 Parrot reports model-load time, every inference time, median latency, and real-time factor
 (RTF; lower is faster). With a reference it also reports word-error rate (WER; lower is more
-accurate). The benchmark uses your saved vocabulary and snippets by default; pass
-`--no-vocabulary` and `--no-snippets` for a clean model comparison, or `--notes` to benchmark
-the complete local note-formatting path. Add `--spoken-mode-trigger` to benchmark the live
-leading mode-selection path; JSON records both the requested and effective mode.
+accurate). The benchmark uses your saved vocabulary, fillers, and snippets by default; pass
+`--no-vocabulary`, `--no-fillers`, and `--no-snippets` for a clean model comparison, or
+`--notes` to benchmark the complete local note-formatting path. Add `--spoken-mode-trigger` to
+benchmark the live leading mode-selection path; JSON records both the requested and effective mode.
 Use `--json` to save comparable machine-readable reports. Download each candidate first with
 `parrot models download <id>` so network time is not included in model-load time.
 For reproducible tests or managed deployments, `PARROT_MODELS_DIRECTORY` overrides only the
@@ -622,6 +647,8 @@ parrot apps add Notes --mode notes     # local automatic mode rule
 parrot apps list                       # show saved app-mode rules
 parrot vocabulary                      # list personal recognition hints/replacements
 parrot vocabulary add "rust pond" --as RustPond
+parrot fillers                         # list personal phrases removed locally
+parrot fillers add "you know"          # hot-reloads on the next recording
 parrot snippets                        # list reusable local voice snippets
 parrot snippets add meeting --file template.md
 parrot history                         # list recent local transcripts

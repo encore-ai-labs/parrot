@@ -8,11 +8,14 @@ final class PersonalizationControllerTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let vocabularyURL = root.appendingPathComponent("vocabulary.json")
         let snippetsURL = root.appendingPathComponent("snippets.json")
+        let fillersURL = root.appendingPathComponent("fillers.json")
         let controller = PersonalizationController(
             vocabulary: PersonalVocabulary(),
             snippets: SnippetLibrary(),
+            fillers: PersonalFillerLibrary(),
             vocabularyURL: vocabularyURL,
-            snippetsURL: snippetsURL
+            snippetsURL: snippetsURL,
+            fillersURL: fillersURL
         )
 
         var vocabulary = PersonalVocabulary()
@@ -21,6 +24,9 @@ final class PersonalizationControllerTests: XCTestCase {
         var snippets = SnippetLibrary()
         try snippets.set(trigger: "meeting close", content: "Thanks,\nParth")
         try snippets.save(to: snippetsURL)
+        var fillers = PersonalFillerLibrary()
+        try fillers.set("you know")
+        try fillers.save(to: fillersURL)
 
         let refresh = await controller.refreshIfNeeded()
 
@@ -28,6 +34,7 @@ final class PersonalizationControllerTests: XCTestCase {
         XCTAssertEqual(refresh.snapshot.revision, 1)
         XCTAssertEqual(refresh.snapshot.vocabularyCount, 1)
         XCTAssertEqual(refresh.snapshot.snippetCount, 1)
+        XCTAssertEqual(refresh.snapshot.fillerCount, 1)
         XCTAssertEqual(
             refresh.snapshot.transcriber.promptTerms,
             ["insert snippet meeting close", "RustPond"]
@@ -39,6 +46,10 @@ final class PersonalizationControllerTests: XCTestCase {
         XCTAssertEqual(
             refresh.snapshot.snippets.applying(to: "insert snippet meeting close"),
             "Thanks,\nParth"
+        )
+        XCTAssertEqual(
+            refresh.snapshot.fillers.applying(to: "We should, you know, ship."),
+            "We should ship."
         )
 
         let unchanged = await controller.refreshIfNeeded()
@@ -52,14 +63,17 @@ final class PersonalizationControllerTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let vocabularyURL = root.appendingPathComponent("vocabulary.json")
         let snippetsURL = root.appendingPathComponent("snippets.json")
+        let fillersURL = root.appendingPathComponent("fillers.json")
         var vocabulary = PersonalVocabulary()
         try vocabulary.set(spoken: "jay son", written: "JSON")
         try vocabulary.save(to: vocabularyURL)
         let controller = PersonalizationController(
             vocabulary: vocabulary,
             snippets: SnippetLibrary(),
+            fillers: PersonalFillerLibrary(),
             vocabularyURL: vocabularyURL,
-            snippetsURL: snippetsURL
+            snippetsURL: snippetsURL,
+            fillersURL: fillersURL
         )
 
         try "{not valid json".write(to: vocabularyURL, atomically: true, encoding: .utf8)
@@ -96,24 +110,83 @@ final class PersonalizationControllerTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let vocabularyURL = root.appendingPathComponent("vocabulary.json")
         let snippetsURL = root.appendingPathComponent("snippets.json")
+        let fillersURL = root.appendingPathComponent("fillers.json")
         var snippets = SnippetLibrary()
         try snippets.set(trigger: "signature", content: "Regards, Parth")
         try snippets.save(to: snippetsURL)
+        var fillers = PersonalFillerLibrary()
+        try fillers.set("basically")
+        try fillers.save(to: fillersURL)
         let controller = PersonalizationController(
             vocabulary: PersonalVocabulary(),
             snippets: snippets,
+            fillers: fillers,
             vocabularyURL: vocabularyURL,
-            snippetsURL: snippetsURL
+            snippetsURL: snippetsURL,
+            fillersURL: fillersURL
         )
 
         try FileManager.default.removeItem(at: snippetsURL)
+        try FileManager.default.removeItem(at: fillersURL)
         let refresh = await controller.refreshIfNeeded()
 
         XCTAssertTrue(refresh.didReload)
         XCTAssertEqual(refresh.snapshot.snippetCount, 0)
+        XCTAssertEqual(refresh.snapshot.fillerCount, 0)
         XCTAssertEqual(
             refresh.snapshot.snippets.applying(to: "insert snippet signature"),
             "insert snippet signature"
+        )
+        XCTAssertEqual(
+            refresh.snapshot.fillers.applying(to: "Basically, ship."),
+            "Basically, ship."
+        )
+    }
+
+    func testMalformedFillerEditWarnsOnceAndKeepsLastGoodSnapshot() async throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vocabularyURL = root.appendingPathComponent("vocabulary.json")
+        let snippetsURL = root.appendingPathComponent("snippets.json")
+        let fillersURL = root.appendingPathComponent("fillers.json")
+        var fillers = PersonalFillerLibrary()
+        try fillers.set("basically")
+        try fillers.save(to: fillersURL)
+        let controller = PersonalizationController(
+            vocabulary: PersonalVocabulary(),
+            snippets: SnippetLibrary(),
+            fillers: fillers,
+            vocabularyURL: vocabularyURL,
+            snippetsURL: snippetsURL,
+            fillersURL: fillersURL
+        )
+
+        try "{not valid json".write(to: fillersURL, atomically: true, encoding: .utf8)
+        let malformed = await controller.refreshIfNeeded()
+        XCTAssertFalse(malformed.didReload)
+        XCTAssertEqual(malformed.warnings.count, 1)
+        XCTAssertEqual(
+            malformed.snapshot.fillers.applying(to: "Basically, ship it."),
+            "Ship it."
+        )
+
+        let unchangedMalformedFile = await controller.refreshIfNeeded()
+        XCTAssertFalse(unchangedMalformedFile.didReload)
+        XCTAssertTrue(unchangedMalformedFile.warnings.isEmpty)
+
+        var repaired = PersonalFillerLibrary()
+        try repaired.set("you know")
+        try repaired.save(to: fillersURL)
+        let repairedRefresh = await controller.refreshIfNeeded()
+        XCTAssertTrue(repairedRefresh.didReload)
+        XCTAssertEqual(repairedRefresh.snapshot.fillerCount, 1)
+        XCTAssertEqual(
+            repairedRefresh.snapshot.fillers.applying(to: "You know, ship it."),
+            "Ship it."
+        )
+        XCTAssertEqual(
+            repairedRefresh.snapshot.fillers.applying(to: "Basically, ship it."),
+            "Basically, ship it."
         )
     }
 
@@ -122,19 +195,27 @@ final class PersonalizationControllerTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let vocabularyURL = root.appendingPathComponent("vocabulary.json")
         let snippetsURL = root.appendingPathComponent("snippets.json")
+        let fillersURL = root.appendingPathComponent("fillers.json")
         var vocabulary = PersonalVocabulary()
         var snippets = SnippetLibrary()
         for index in 0..<1_000 {
             try vocabulary.set(spoken: "term \(index)", written: "Term\(index)")
             try snippets.set(trigger: "template \(index)", content: "body \(index)")
         }
+        var fillers = PersonalFillerLibrary()
+        for index in 0..<PersonalFillerLibrary.maximumEntries {
+            try fillers.set("filler \(index)")
+        }
         try vocabulary.save(to: vocabularyURL)
         try snippets.save(to: snippetsURL)
+        try fillers.save(to: fillersURL)
         let controller = PersonalizationController(
             vocabulary: vocabulary,
             snippets: snippets,
+            fillers: fillers,
             vocabularyURL: vocabularyURL,
-            snippetsURL: snippetsURL
+            snippetsURL: snippetsURL,
+            fillersURL: fillersURL
         )
 
         var allChecksWereUnchanged = false

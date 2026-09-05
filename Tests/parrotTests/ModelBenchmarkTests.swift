@@ -36,7 +36,8 @@ final class ModelBenchmarkTests: XCTestCase {
                 "whisper-base.en", "--audio", "/tmp/sample.wav",
                 "--language", "en",
                 "--reference", "hello world", "--runs", "5", "--notes",
-                "--spoken-mode-trigger", "--auto-paragraphs", "--no-snippets", "--json",
+                "--spoken-mode-trigger", "--auto-paragraphs",
+                "--no-fillers", "--no-snippets", "--json",
             ]) as? ModelBenchmark
         )
         XCTAssertEqual(command.id, "whisper-base.en")
@@ -47,6 +48,7 @@ final class ModelBenchmarkTests: XCTestCase {
         XCTAssertTrue(command.notes)
         XCTAssertTrue(command.spokenModeTrigger)
         XCTAssertTrue(command.automaticParagraphs)
+        XCTAssertTrue(command.noFillers)
         XCTAssertTrue(command.noSnippets)
         XCTAssertTrue(command.json)
     }

@@ -10,6 +10,7 @@ enum StartupTUI {
         let mode: String
         let vocabularyCount: Int
         let snippetCount: Int
+        let fillerCount: Int
         let historyPath: String?
         let historyRetentionDays: Int?
         let delivery: String
@@ -45,6 +46,7 @@ enum StartupTUI {
                 " · language: \(details.language)" +
                 " · vocabulary: \(details.vocabularyCount)" +
                 " · snippets: \(details.snippetCount)" +
+                " · fillers: \(details.fillerCount)" +
                 " · delivery: \(details.delivery)" +
                 " · cleanup: \(details.cleanup ? "on (English speech)" : "off")" +
                 " · paragraphs: \(details.automaticParagraphs ? "on in notes" : "off")" +
@@ -85,6 +87,10 @@ enum StartupTUI {
             ? "1 snippet  ·  live reload"
             : "\(details.snippetCount) snippets  ·  live reload  (parrot snippets)"
         write(row("snippets", snippets))
+        let fillers = details.fillerCount == 1
+            ? "1 personal phrase  ·  live reload"
+            : "\(details.fillerCount) personal phrases  ·  live reload  (parrot fillers)"
+        write(row("fillers", fillers))
         write(row("cleanup", details.cleanup ? "on  ·  local deterministic · English speech" : "off"))
         write(row(
             "paragraphs",

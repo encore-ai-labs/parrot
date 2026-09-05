@@ -251,11 +251,12 @@ After transcription and annotation cleanup, a single deterministic replacement p
 against the original transcript, so replacements cannot cascade. This gives exact results for
 recurring names and jargon without an LLM, network request, or variable post-processing latency.
 
-For the daemon, `PersonalizationController` checks the inode, size, and modification time of both
-private personalization files at recording start. Unchanged files require only two metadata reads.
+For the daemon, `PersonalizationController` checks the inode, size, and modification time of all
+three private personalization files at recording start. Unchanged files require three metadata reads.
 An atomic replacement builds one immutable revision containing the vocabulary replacer, bounded
-Whisper prompt terms, and snippet expander. Whisper retokenizes that small prompt on its already
-loaded tokenizer while audio is being captured; Parakeet swaps only the deterministic replacer.
+Whisper prompt terms, personal filler remover, and snippet expander. Whisper retokenizes that small
+prompt on its already loaded tokenizer while audio is being captured; Parakeet swaps only the
+deterministic replacer.
 The transcription task awaits that update before decoding, so prompt hints and post-processing
 always use the same revision. A malformed hand edit warns once and preserves the last good state.
 
@@ -272,6 +273,21 @@ no additional model, allocates no transcript-sized token graph, and makes no net
 Cleanup runs before `NoteFormatter` so spoken structure still works, and before
 `SnippetExpander` so saved snippet bodies remain byte-for-byte unchanged. File transcription
 uses the same pass for both primary text and timestamped segment text.
+
+### `PersonalFillerLibrary` / `PersonalFillerRemover`
+
+User-selected words and phrases live in owner-readable `~/.config/parrot/fillers.json`. Unlike
+the conservative cleanup toggle, a saved personal filler is always active because adding it is an
+explicit removal decision. Entries are limited to 128 phrases of at most six words and 80
+characters, bounding compile time and matcher size even for a hand-edited file.
+
+One case-insensitive regular expression matches only complete words or phrases. The remover
+repairs surrounding horizontal whitespace and paired clause separators, preserves URL/path,
+hyphenated, underscore, email, and hashtag occurrences, and restores capitalization when a
+sentence-leading filler disappears. `literal <phrase>` removes only the escape word and preserves
+that occurrence. Processing precedes note formatting and snippet expansion, so spoken commands
+still work and snippet bodies remain exact. The list contributes no Whisper prompt tokens and
+requires no model or network request.
 
 ### `AudioPauseDetector` / `AutomaticParagraphFormatter`
 
@@ -343,8 +359,9 @@ Only the four newest command phrases—not their bodies—are eligible for Whisp
 budget. Every saved trigger remains available to the deterministic expander. This keeps startup
 and per-dictation costs bounded even when the local library grows large.
 
-Vocabulary and snippet CLI writes are atomic, so a running daemon observes a complete old or new
-library on the next recording. It never needs to reload the Core ML model or restart the process.
+Vocabulary, filler, and snippet CLI writes are atomic, so a running daemon observes a complete old
+or new library on the next recording. It never needs to reload the Core ML model or restart the
+process.
 
 ### `TranscriptHistory`
 
@@ -393,8 +410,8 @@ there is no telemetry store or network call.
 
 `parrot transcribe` accepts AVFoundation-readable audio and video without starting AppKit,
 the microphone, Accessibility APIs, or the daemon. It resolves saved model/mode/casing defaults,
-then loads vocabulary and snippets once. One registry-selected `Transcriber` is warmed for the
-batch and files are processed sequentially, so model memory is not multiplied.
+then loads vocabulary, personal fillers, and snippets once. One registry-selected `Transcriber` is
+warmed for the batch and files are processed sequentially, so model memory is not multiplied.
 
 WhisperKit uses its incremental loader with 120-second staging and one buffered chunk.
 FluidAudio's compact Parakeet path streams from disk; Unified uses overlapping 15-second model
@@ -599,8 +616,9 @@ Models are not bundled. New downloads live in
 9. `AudioCapture` stops and `LastRecordingRecovery` atomically stages one private safety WAV.
 10. The active `Transcriber` runs CoreML inference and returns text plus its language code.
 11. In note mode, `AudioPauseDetector` and `AutomaticParagraphFormatter` conservatively insert
-    blank lines at deliberate pauses. `SpeechCleanup` optionally removes conservative English
-    disfluencies and is skipped for every other detected language; then `NoteFormatter` applies
+    blank lines at deliberate pauses. `PersonalFillerRemover` applies explicit user-selected
+    phrases in any language. `SpeechCleanup` optionally removes conservative English disfluencies
+    and is skipped for every other detected language; then `NoteFormatter` applies
     explicit Markdown structure commands.
 12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies, which
     are never passed through cleanup or note formatting.

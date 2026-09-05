@@ -76,6 +76,15 @@ The 3.8 ms difference favored the trigger run and is ordinary inference variance
 shows no measurable trigger overhead. The static matcher adds no decoder prompt or second model
 pass; its focused long-input test exits in well under a millisecond.
 
+## Personalization hot-reload cost
+
+The daemon's unchanged-file path was measured in the debug test harness with 1,000 vocabulary
+entries and 1,000 snippets. One thousand complete checks averaged 86 ms, or about **0.086 ms per
+recording**. Library size does not affect that steady-state path because Parrot reads only two file
+signatures. JSON decoding, matcher compilation, and bounded Whisper prompt tokenization happen only
+after an atomic file change; prompt rebuilding starts at hotkey-down so normal speech time hides it.
+The loaded Core ML model is never replaced or warmed again.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

@@ -2,7 +2,7 @@ import Foundation
 
 /// A compiled, deterministic one-pass expander. Only explicit commands match,
 /// and inserted content is never scanned again, so snippets cannot cascade.
-struct SnippetExpander {
+struct SnippetExpander: @unchecked Sendable {
     private let replacements: [String: String]
     private let commandRegex: NSRegularExpression?
     private let literalRegex: NSRegularExpression?

@@ -1,6 +1,6 @@
 import Foundation
 
-struct SnippetEntry: Codable, Equatable {
+struct SnippetEntry: Codable, Equatable, Sendable {
     let trigger: String
     let content: String
 }
@@ -8,7 +8,7 @@ struct SnippetEntry: Codable, Equatable {
 /// User-owned, reusable text blocks invoked with “insert snippet <trigger>”.
 /// Stored independently from vocabulary because snippet bodies may be large,
 /// multiline Markdown and must never be used as Whisper prompt context.
-struct SnippetLibrary: Codable, Equatable {
+struct SnippetLibrary: Codable, Equatable, Sendable {
     enum SnippetError: LocalizedError {
         case emptyTrigger
         case triggerTooLong

@@ -78,12 +78,12 @@ enum StartupTUI {
                 : "cold  ·  opens on press · capture starts may clip"
         ))
         let vocabulary = details.vocabularyCount == 1
-            ? "1 term"
-            : "\(details.vocabularyCount) terms  (parrot vocabulary)"
+            ? "1 term  ·  live reload"
+            : "\(details.vocabularyCount) terms  ·  live reload  (parrot vocabulary)"
         write(row("vocabulary", vocabulary))
         let snippets = details.snippetCount == 1
-            ? "1 snippet"
-            : "\(details.snippetCount) snippets  (parrot snippets)"
+            ? "1 snippet  ·  live reload"
+            : "\(details.snippetCount) snippets  ·  live reload  (parrot snippets)"
         write(row("snippets", snippets))
         write(row("cleanup", details.cleanup ? "on  ·  local deterministic · English speech" : "off"))
         write(row(

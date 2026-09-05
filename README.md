@@ -181,8 +181,8 @@ and a command inside a body cannot trigger another snippet.
 
 Snippets stay in `~/.config/parrot/snippets.json` with user-only permissions (`0600`). Only
 the four most recently added trigger phrases may enter Whisper's fixed prompt budget; snippet
-bodies never enter model context and nothing is sent over the network. Restart a running
-daemon after changing snippets.
+bodies never enter model context and nothing is sent over the network. Changes become active on
+the next recording, even when the daemon is already running.
 
 ### Transcript history
 
@@ -446,8 +446,12 @@ a deterministic, case-insensitive replacement pass. Replacements match whole wor
 never substrings, and do not cascade into one another.
 
 The vocabulary is stored only at `~/.config/parrot/vocabulary.json` with user-only permissions
-(`0600`). Restart a running daemon after changing it. No vocabulary, transcript, or audio is
-sent to a server; the bounded recording recovery slot described above also stays local.
+(`0600`). Additions, corrections, removals, and snippet changes hot-reload on the next hotkey
+press—no daemon or model restart. Parrot checks only private file metadata on an unchanged capture;
+when a file changes, it rebuilds the bounded Whisper prompt and deterministic matchers while you
+speak. A malformed manual edit keeps the last known-good personalization instead of breaking
+dictation. No vocabulary, transcript, or audio is sent to a server; the bounded recording recovery
+slot described above also stays local.
 
 ### Benchmark local models
 

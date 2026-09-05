@@ -56,7 +56,7 @@ struct Snippets: ParsableCommand {
             try library.save()
             print("✓ \(updated ? "updated" : "added") snippet \(trigger)")
             print("say: insert snippet \(trigger)")
-            print("restart a running Parrot daemon to load the change")
+            print("active on the next recording — no daemon restart needed")
         }
     }
 
@@ -84,7 +84,7 @@ struct Snippets: ParsableCommand {
             }
             try library.save()
             print("✓ removed snippet \(trigger)")
-            print("restart a running Parrot daemon to load the change")
+            print("active on the next recording — no daemon restart needed")
         }
     }
 

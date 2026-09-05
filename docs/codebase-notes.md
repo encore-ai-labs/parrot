@@ -347,6 +347,14 @@ bypass prevent surprising content loss. The path is a static local regex; it nei
 tokens nor reruns inference. Triggered note captures retain pause-aware paragraph refinement using
 the already captured PCM.
 
+**3.23 — Personalization changes require restarting a warmed daemon.** ✅ **FIXED**
+
+Vocabulary and snippets now hot-reload as one immutable capture revision. The unchanged path reads
+only two file signatures; changed data rebuilds the bounded Whisper prompt, compiled vocabulary
+replacer, and snippet expander while recording is in progress. Transcription awaits the update so
+recognition and deterministic output cannot mix revisions. Invalid manual JSON keeps the last good
+state and logs once rather than taking dictation down.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

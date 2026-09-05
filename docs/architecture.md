@@ -251,6 +251,14 @@ After transcription and annotation cleanup, a single deterministic replacement p
 against the original transcript, so replacements cannot cascade. This gives exact results for
 recurring names and jargon without an LLM, network request, or variable post-processing latency.
 
+For the daemon, `PersonalizationController` checks the inode, size, and modification time of both
+private personalization files at recording start. Unchanged files require only two metadata reads.
+An atomic replacement builds one immutable revision containing the vocabulary replacer, bounded
+Whisper prompt terms, and snippet expander. Whisper retokenizes that small prompt on its already
+loaded tokenizer while audio is being captured; Parakeet swaps only the deterministic replacer.
+The transcription task awaits that update before decoding, so prompt hints and post-processing
+always use the same revision. A malformed hand edit warns once and preserves the last good state.
+
 ### `SpeechCleanup`
 
 `--cleanup` enables an opt-in, deterministic pass between transcription/vocabulary replacement
@@ -334,6 +342,9 @@ applies replacements back-to-front, so inserted bodies cannot cascade into other
 Only the four newest command phrases—not their bodies—are eligible for Whisper's fixed prompt
 budget. Every saved trigger remains available to the deterministic expander. This keeps startup
 and per-dictation costs bounded even when the local library grows large.
+
+Vocabulary and snippet CLI writes are atomic, so a running daemon observes a complete old or new
+library on the next recording. It never needs to reload the Core ML model or restart the process.
 
 ### `TranscriptHistory`
 

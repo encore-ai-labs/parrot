@@ -69,7 +69,8 @@ actor ParakeetTranscriber: Transcriber {
 
     private let variant: Variant
     private let automaticParagraphs: Bool
-    private let vocabularyReplacer: VocabularyReplacer
+    private var vocabularyReplacer: VocabularyReplacer
+    private var personalizationRevision: UInt64 = 0
     private let storage: ModelStorage
     private let downloadProgress: ModelDownloadProgress
     private var backend: Backend?
@@ -143,6 +144,14 @@ actor ParakeetTranscriber: Transcriber {
         }
         downloadProgress.finish()
         FileHandle.standardError.write(Data("✓ \(modelID) ready\n".utf8))
+    }
+
+    /// Parakeet does not accept prompt hints, but deterministic replacements
+    /// can still become active without reloading its Core ML models.
+    func updatePersonalization(_ personalization: TranscriberPersonalization) async {
+        guard personalization.revision != personalizationRevision else { return }
+        personalizationRevision = personalization.revision
+        vocabularyReplacer = personalization.vocabularyReplacer
     }
 
     func transcribe(_ audio: [Float], mode: DictationMode) async throws -> LiveTranscription {

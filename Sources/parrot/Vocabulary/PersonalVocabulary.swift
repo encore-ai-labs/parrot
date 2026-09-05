@@ -1,6 +1,6 @@
 import Foundation
 
-struct VocabularyEntry: Codable, Equatable {
+struct VocabularyEntry: Codable, Equatable, Sendable {
     let spoken: String
     let written: String
 }
@@ -11,7 +11,7 @@ struct VocabularyEntry: Codable, Equatable {
 /// prioritized when Whisper's finite prompt budget is built. Applying the
 /// replacements is deliberately one pass over the original transcript: a
 /// replacement can never trigger a second entry by accident.
-struct PersonalVocabulary: Codable, Equatable {
+struct PersonalVocabulary: Codable, Equatable, Sendable {
     enum VocabularyError: LocalizedError {
         case emptySpokenForm
         case emptyWrittenForm
@@ -121,9 +121,9 @@ struct PersonalVocabulary: Codable, Equatable {
     }
 }
 
-/// Compiled once when the daemon starts, keeping the per-dictation path to one
-/// regex scan plus only the string edits that actually matched.
-struct VocabularyReplacer {
+/// Compiled once per immutable personalization revision, keeping each
+/// dictation to one regex scan plus only the string edits that matched.
+struct VocabularyReplacer: @unchecked Sendable {
     private let replacements: [String: String]
     private let regex: NSRegularExpression?
 

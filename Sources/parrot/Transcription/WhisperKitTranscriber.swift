@@ -4,7 +4,7 @@ import WhisperKit
 actor WhisperKitTranscriber: Transcriber {
     let modelID: String
     private let model: TranscriptionModel
-    private let vocabularyReplacer: VocabularyReplacer
+    private var vocabularyReplacer: VocabularyReplacer
     private let storage: ModelStorage
     private let downloadProgress: ModelDownloadProgress
     /// Nil requests per-recording language detection from a multilingual model.
@@ -35,8 +35,9 @@ actor WhisperKitTranscriber: Transcriber {
         self.notePromptTerms = notePromptTerms
     }
 
-    private let promptTerms: [String]
+    private var promptTerms: [String]
     private let notePromptTerms: [String]
+    private var personalizationRevision: UInt64 = 0
 
     /// Loads the model into memory; downloads first if not already on disk.
     /// Call once at startup so the first hotkey press isn't blocked on model
@@ -71,19 +72,20 @@ actor WhisperKitTranscriber: Transcriber {
         )
         let loadedPipeline = try await WhisperKit(config)
         pipeline = loadedPipeline
-        decodingOptions = Self.decodingOptions(
-            promptTerms: promptTerms,
-            tokenizer: loadedPipeline.tokenizer,
-            language: language
-        )
-        noteDecodingOptions = notePromptTerms.isEmpty
-            ? decodingOptions
-            : Self.decodingOptions(
-                promptTerms: notePromptTerms + promptTerms,
-                tokenizer: loadedPipeline.tokenizer,
-                language: language
-            )
+        rebuildDecodingOptions(tokenizer: loadedPipeline.tokenizer)
         FileHandle.standardError.write(Data("✓ \(model.id) ready\n".utf8))
+    }
+
+    /// Rebuilds only the bounded prompt tokens and deterministic replacer.
+    /// The loaded Core ML pipeline stays resident and untouched.
+    func updatePersonalization(_ personalization: TranscriberPersonalization) async {
+        guard personalization.revision != personalizationRevision else { return }
+        personalizationRevision = personalization.revision
+        vocabularyReplacer = personalization.vocabularyReplacer
+        promptTerms = personalization.promptTerms
+        if let tokenizer = pipeline?.tokenizer {
+            rebuildDecodingOptions(tokenizer: tokenizer)
+        }
     }
 
     func transcribe(_ audio: [Float]) async throws -> LiveTranscription {
@@ -169,6 +171,21 @@ actor WhisperKitTranscriber: Transcriber {
     private func processedText(from results: [TranscriptionResult]) -> String {
         let raw = results.map(\.text).joined(separator: " ")
         return vocabularyReplacer.applying(to: TranscriptSanitizer.sanitize(raw))
+    }
+
+    private func rebuildDecodingOptions(tokenizer: WhisperTokenizer?) {
+        decodingOptions = Self.decodingOptions(
+            promptTerms: promptTerms,
+            tokenizer: tokenizer,
+            language: language
+        )
+        noteDecodingOptions = notePromptTerms.isEmpty
+            ? decodingOptions
+            : Self.decodingOptions(
+                promptTerms: notePromptTerms + promptTerms,
+                tokenizer: tokenizer,
+                language: language
+            )
     }
 
     /// Prompt prefill improves recognition of names and jargon, but an

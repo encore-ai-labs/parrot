@@ -474,7 +474,10 @@ struct Run: ParsableCommand {
             ))
             snippets = SnippetLibrary()
         }
-        let snippetExpander = SnippetExpander(entries: snippets.entries)
+        let personalizationController = PersonalizationController(
+            vocabulary: vocabulary,
+            snippets: snippets
+        )
         let journalWriter: MarkdownJournal?
         if let journalPath = defaults.journalPath {
             do {
@@ -600,13 +603,41 @@ struct Run: ParsableCommand {
             ))
         }
         var recordingMode = defaults.mode
+        var recordingPersonalizationUpdate: Task<PersonalizationRefresh, Never>?
+
+        func preparePersonalization() -> Task<PersonalizationRefresh, Never> {
+            Task {
+                let refresh = await personalizationController.refreshIfNeeded()
+                // Always offer the current revision. This also applies a
+                // refresh completed for a capture the user later cancelled.
+                await transcriber.updatePersonalization(refresh.snapshot.transcriber)
+                for warning in refresh.warnings {
+                    FileHandle.standardError.write(Data("warning: \(warning)\n".utf8))
+                }
+                if refresh.didReload {
+                    let vocabularyNoun = refresh.snapshot.vocabularyCount == 1
+                        ? "term"
+                        : "terms"
+                    let snippetNoun = refresh.snapshot.snippetCount == 1
+                        ? "snippet"
+                        : "snippets"
+                    FileHandle.standardError.write(Data(
+                        "↻ personalization reloaded · \(refresh.snapshot.vocabularyCount) "
+                            .appending("\(vocabularyNoun) · ")
+                            .appending("\(refresh.snapshot.snippetCount) \(snippetNoun)\n").utf8
+                    ))
+                }
+                return refresh
+            }
+        }
 
         func transcribeAndDeliver(
             _ samples: [Float],
             sampleRate: Int,
             mode modeForCapture: DictationMode,
             sessionID: Int,
-            audioDuration seconds: TimeInterval
+            audioDuration seconds: TimeInterval,
+            personalizationUpdate: Task<PersonalizationRefresh, Never>
         ) {
             Task { [modeForCapture, samples] in
                 do {
@@ -622,6 +653,10 @@ struct Run: ParsableCommand {
 
                 let started = Date()
                 do {
+                    // File I/O and prompt rebuilding normally finish while
+                    // the user is speaking. Awaiting here guarantees that the
+                    // decoder and post-processing use one coherent revision.
+                    let personalization = await personalizationUpdate.value.snapshot
                     let transcription = try await transcriber.transcribe(
                         samples,
                         mode: modeForCapture
@@ -656,7 +691,7 @@ struct Run: ParsableCommand {
                         cleanup: applyCleanup,
                         automaticParagraphs: defaults.automaticParagraphs,
                         segments: processingSegments,
-                        snippets: snippetExpander
+                        snippets: personalization.snippets
                     )
                     let text = processed.text
                     if processed.usedSpokenModeTrigger {
@@ -756,6 +791,7 @@ struct Run: ParsableCommand {
 
         let startRecording = {
             guard let sessionID = lifecycle.start() else { return }
+            recordingPersonalizationUpdate = preparePersonalization()
             let selection = modeController.selection(
                 frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             )
@@ -788,6 +824,8 @@ struct Run: ParsableCommand {
         let stopRecording = {
             guard let sessionID = lifecycle.beginTranscription() else { return }
             let modeForCapture = recordingMode
+            let personalizationUpdateForCapture = recordingPersonalizationUpdate
+                ?? preparePersonalization()
             monitor.stopExitKeyMonitoring()
             let samples = capture.stop()
             MainActor.assumeIsolated {
@@ -836,7 +874,8 @@ struct Run: ParsableCommand {
                 sampleRate: Int(AudioCapture.targetSampleRate),
                 mode: modeForCapture,
                 sessionID: sessionID,
-                audioDuration: seconds
+                audioDuration: seconds,
+                personalizationUpdate: personalizationUpdateForCapture
             )
         }
 
@@ -859,6 +898,7 @@ struct Run: ParsableCommand {
             let selection = modeController.selection(
                 frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             )
+            let personalizationUpdate = preparePersonalization()
             let seconds = Double(audio.samples.count) / Double(audio.sampleRate)
             FileHandle.standardError.write(Data(
                 "↻ retrying last recording · \(selection.mode.rawValue)\n".utf8
@@ -877,7 +917,8 @@ struct Run: ParsableCommand {
                 sampleRate: audio.sampleRate,
                 mode: selection.mode,
                 sessionID: sessionID,
-                audioDuration: seconds
+                audioDuration: seconds,
+                personalizationUpdate: personalizationUpdate
             )
         }
 
@@ -1159,7 +1200,7 @@ struct Vocabulary: ParsableCommand {
             } else {
                 print("✓ \(verb) \(spoken) → \(output)")
             }
-            print("restart a running Parrot daemon to load the change")
+            print("active on the next recording — no daemon restart needed")
         }
     }
 
@@ -1174,7 +1215,7 @@ struct Vocabulary: ParsableCommand {
             }
             try vocabulary.save()
             print("✓ forgot \(spoken)")
-            print("restart a running Parrot daemon to load the change")
+            print("active on the next recording — no daemon restart needed")
         }
     }
 }

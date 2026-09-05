@@ -42,6 +42,12 @@ focused field. Very short and near-silent captures are discarded before inferenc
 accidental Whisper hallucinations; `--no-audio-gate` disables that safety check for debugging
 an unusually quiet input.
 
+The microphone session recovers automatically after sleep, AVFoundation interruptions, and
+media-service resets. If a selected USB/interface mic disconnects, Parrot discards any partial
+recording and temporarily uses a safe built-in or wired input—never a virtual or Bluetooth mic—
+then switches back when the preferred device returns. Recovery is serialized and uses bounded
+backoff, so failures cannot create a busy loop.
+
 When Fn/Globe is selected, Parrot temporarily changes macOS's bare Fn action to
 **Do Nothing** while the daemon is running. That prevents the emoji picker, input-source
 switcher, or Apple Dictation from racing Parrot. Your previous setting is restored on a

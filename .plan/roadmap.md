@@ -70,16 +70,17 @@ blocks on device startup.
 
 Still open:
 
-**2.2 Device changes** — the session is configured once. Swapping the USB mic mid-session
-isn't handled; needs `AVCaptureSessionRuntimeError` / device-disconnect notifications and a
-reconfigure.
+**2.2 Device changes** — ✅ **done.** Active-device disconnects cancel discontinuous captures,
+rebuild the session on a safe non-virtual/non-Bluetooth fallback, and restore the selected mic
+when it reconnects.
 
-**2.3 Sleep/wake** — `AVCaptureSession` may stop across sleep. Needs
-`AVCaptureSessionWasInterrupted` / `didStartRunning` handling, or a watchdog.
+**2.3 Sleep/wake** — ✅ **done.** Workspace sleep stops the capture session and clears pre-roll;
+wake rebuilds and restarts it. AVFoundation interruption-end and runtime-error notifications
+share the same serialized, bounded-backoff recovery path.
 
-**2.4 Allocation on the audio callback** — the delegate still allocates an `Array` per buffer
-and takes an `NSLock`. It runs continuously now rather than only while recording, so this is
-worth tightening.
+**2.4 Allocation on the audio callback** — ✅ **done.** The delegate consumes the CoreMedia
+`UnsafeBufferPointer` directly for capture, pre-roll, and RMS instead of materializing an
+`Array` for every buffer. The short lock remains to synchronize hotkey stop/start handoff.
 
 **2.7 Live mic switching** — now that the device is a session input rather than a global
 default, a menu-bar "Microphone" submenu could switch without restarting.

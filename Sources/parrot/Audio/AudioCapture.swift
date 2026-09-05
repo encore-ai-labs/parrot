@@ -1,6 +1,97 @@
+import AppKit
 import AVFoundation
 import CoreAudio
 import Foundation
+
+/// Pure state transitions for capture-loss events. Keeping this separate from
+/// AVFoundation makes the cancellation/recovery contract deterministic and
+/// testable without opening a microphone.
+struct AudioRecoveryState: Equatable {
+    enum Event: Equatable {
+        case sessionInterrupted(String)
+        case interruptionEnded
+        case runtimeError(String)
+        case activeDeviceDisconnected(String)
+        case preferredDeviceConnected(String)
+        case willSleep
+        case didWake
+    }
+
+    enum Action: Equatable {
+        case cancelCapture(String)
+        case stopSession
+        case recover(reconfigure: Bool, reason: String)
+    }
+
+    let keepsSessionWarm: Bool
+    private(set) var isCapturing = false
+    private(set) var isSleeping = false
+    private(set) var isInterrupted = false
+
+    var wantsSessionRunning: Bool {
+        !isSleeping && !isInterrupted && (keepsSessionWarm || isCapturing)
+    }
+
+    @discardableResult
+    mutating func beginCapture() -> Bool {
+        guard !isSleeping, !isInterrupted else { return false }
+        isCapturing = true
+        return true
+    }
+
+    @discardableResult
+    mutating func endCapture() -> Bool {
+        let wasCapturing = isCapturing
+        isCapturing = false
+        return wasCapturing
+    }
+
+    mutating func handle(_ event: Event) -> [Action] {
+        var actions: [Action] = []
+        switch event {
+        case .sessionInterrupted(let reason):
+            isInterrupted = true
+            cancelIfNeeded(reason, into: &actions)
+
+        case .interruptionEnded:
+            isInterrupted = false
+            if wantsSessionRunning {
+                actions.append(.recover(reconfigure: false, reason: "capture interruption ended"))
+            }
+
+        case .runtimeError(let reason):
+            cancelIfNeeded(reason, into: &actions)
+            actions.append(.recover(reconfigure: true, reason: reason))
+
+        case .activeDeviceDisconnected(let reason):
+            cancelIfNeeded(reason, into: &actions)
+            actions.append(.recover(reconfigure: true, reason: reason))
+
+        case .preferredDeviceConnected(let name):
+            cancelIfNeeded("preferred microphone reconnected", into: &actions)
+            actions.append(.recover(
+                reconfigure: true,
+                reason: "preferred microphone reconnected: \(name)"
+            ))
+
+        case .willSleep:
+            cancelIfNeeded("Mac went to sleep", into: &actions)
+            isSleeping = true
+            actions.append(.stopSession)
+
+        case .didWake:
+            isSleeping = false
+            actions.append(.recover(reconfigure: true, reason: "Mac woke from sleep"))
+        }
+        return actions
+    }
+
+    private mutating func cancelIfNeeded(_ reason: String, into actions: inout [Action]) {
+        if endCapture() {
+            actions.append(.cancelCapture(reason))
+        }
+    }
+}
 
 /// Captures microphone audio and returns 16 kHz mono Float32 when stopped.
 ///
@@ -24,11 +115,27 @@ import Foundation
 /// pre-roll ring buffer means a capture begins *before* the key went down. The
 /// cost is that macOS shows the mic-in-use indicator the whole time parrot runs.
 final class AudioCapture: NSObject {
-    enum CaptureError: Error {
+    enum CaptureError: LocalizedError {
         case deviceNotFound(String)
         case inputCreationFailed(Error)
         case cannotAddInput
         case cannotAddOutput
+        case temporarilyUnavailable
+
+        var errorDescription: String? {
+            switch self {
+            case .deviceNotFound(let identifier):
+                return "microphone is unavailable: \(identifier)"
+            case .inputCreationFailed(let error):
+                return "couldn't open microphone input: \(error.localizedDescription)"
+            case .cannotAddInput:
+                return "capture session rejected the microphone input"
+            case .cannotAddOutput:
+                return "capture session rejected the audio output"
+            case .temporarilyUnavailable:
+                return "microphone is temporarily unavailable while the session recovers"
+            }
+        }
     }
 
     static let targetSampleRate: Double = 16_000
@@ -40,10 +147,11 @@ final class AudioCapture: NSObject {
     private let session = AVCaptureSession()
     private let output = AVCaptureAudioDataOutput()
     private let sampleQueue = DispatchQueue(label: "ai.encore.parrot.audio")
+    private let sessionQueue = DispatchQueue(label: "ai.encore.parrot.audio-session")
 
     private let lock = NSLock()
     private var captured: [Float] = []
-    private var capturing = false
+    private var recoveryState: AudioRecoveryState
 
     /// Fixed-size circular pre-roll. Always written, even mid-capture, so the
     /// next capture is seeded correctly too.
@@ -53,10 +161,29 @@ final class AudioCapture: NSObject {
 
     private let deviceUID: String?
     private let usePreRoll: Bool
+    /// Accessed only on `sessionQueue`.
     private var configured = false
+    private var activeDeviceUID: String?
+    private var activeDeviceName: String?
+    private var recoveryGeneration = 0
+    private var recoveryScheduled = false
+    private var recoveryFailures = 0
+    /// Protected by `lock`; consumed synchronously before a new capture.
+    private var reconfigurationRequired = false
+    /// Protected by `lock`; avoids scheduling work for every healthy buffer.
+    private var needsAudioFlowConfirmation = false
+    private var sessionObservers: [NSObjectProtocol] = []
+    private var workspaceObservers: [NSObjectProtocol] = []
 
     /// Called for every buffer with its RMS level (0…~1). Arbitrary thread.
     var onLevel: ((Float) -> Void)?
+
+    /// Operational messages such as disconnect/recovery. Arbitrary thread.
+    var onStatus: ((String) -> Void)?
+
+    /// A partial recording was discarded because its audio stream became
+    /// discontinuous. Arbitrary thread; callers should hop to their UI queue.
+    var onCaptureInterrupted: ((String) -> Void)?
 
     /// - Parameter usePreRoll: when false, the session only runs while the
     ///   hotkey is held (no mic indicator at idle, but the front of each
@@ -64,29 +191,41 @@ final class AudioCapture: NSObject {
     init(device: AudioInputDevice?, usePreRoll: Bool = true) {
         self.deviceUID = device?.uid
         self.usePreRoll = usePreRoll
+        self.recoveryState = AudioRecoveryState(keepsSessionWarm: usePreRoll)
         super.init()
+        installObservers()
+    }
+
+    deinit {
+        for observer in sessionObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        for observer in workspaceObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
     }
 
     /// Open the device and (when pre-rolling) begin streaming. Call once at
     /// startup, off the main thread — this is the slow part.
     func startSession() throws {
-        try configureIfNeeded()
-        if usePreRoll, !session.isRunning {
-            session.startRunning()
+        try sessionQueue.sync {
+            try configureIfNeeded()
+            if usePreRoll, !session.isRunning {
+                session.startRunning()
+            }
         }
     }
 
     func stopSession() {
-        if session.isRunning { session.stopRunning() }
+        sessionQueue.sync {
+            recoveryGeneration += 1
+            recoveryScheduled = false
+            if session.isRunning { session.stopRunning() }
+        }
     }
 
     /// Begin recording. Idempotent.
     func start() throws {
-        try configureIfNeeded()
-        if !session.isRunning {
-            session.startRunning()
-        }
-
         lock.lock()
         captured.removeAll(keepingCapacity: true)
         if usePreRoll, ringCount > 0 {
@@ -98,23 +237,54 @@ final class AudioCapture: NSObject {
                 captured.append(ring[(start + i) % ring.count])
             }
         }
-        capturing = true
+        guard recoveryState.beginCapture() else {
+            lock.unlock()
+            throw CaptureError.temporarilyUnavailable
+        }
         lock.unlock()
+
+        do {
+            try sessionQueue.sync {
+                // A user-initiated capture takes precedence over a delayed
+                // retry. Resolve any stale session before accepting samples so
+                // recovery can never switch devices in the middle of a note.
+                recoveryGeneration += 1
+                recoveryScheduled = false
+                recoveryFailures = 0
+                if isReconfigurationRequired() {
+                    resetConfiguration()
+                }
+                try configureIfNeeded()
+                if !session.isRunning {
+                    session.startRunning()
+                }
+                clearReconfigurationRequirement()
+            }
+        } catch {
+            lock.lock()
+            _ = recoveryState.endCapture()
+            captured.removeAll(keepingCapacity: true)
+            lock.unlock()
+            throw error
+        }
     }
 
     /// Stop recording and return everything captured, pre-roll included.
     @discardableResult
     func stop() -> [Float] {
         lock.lock()
-        let wasCapturing = capturing
-        capturing = false
+        let wasCapturing = recoveryState.endCapture()
         let out = captured
         captured.removeAll(keepingCapacity: true)
         lock.unlock()
 
         // Without pre-roll there's no reason to hold the device open at idle.
-        if !usePreRoll, session.isRunning {
-            session.stopRunning()
+        if !usePreRoll {
+            sessionQueue.sync {
+                recoveryGeneration += 1
+                recoveryScheduled = false
+                if session.isRunning { session.stopRunning() }
+            }
         }
         return wasCapturing ? out : []
     }
@@ -148,10 +318,31 @@ final class AudioCapture: NSObject {
             AVLinearPCMIsBigEndianKey: false,
         ]
         output.setSampleBufferDelegate(self, queue: sampleQueue)
-        guard session.canAddOutput(output) else { throw CaptureError.cannotAddOutput }
-        session.addOutput(output)
+        if !session.outputs.contains(where: { $0 === output }) {
+            guard session.canAddOutput(output) else {
+                session.removeInput(input)
+                throw CaptureError.cannotAddOutput
+            }
+            session.addOutput(output)
+        }
 
+        activeDeviceUID = device.uniqueID
+        activeDeviceName = device.localizedName
         configured = true
+    }
+
+    /// Tear down stale input objects after wake, media-service reset, or a
+    /// device change. The output and delegate can be reused safely.
+    private func resetConfiguration() {
+        if session.isRunning { session.stopRunning() }
+        session.beginConfiguration()
+        for input in session.inputs {
+            session.removeInput(input)
+        }
+        session.commitConfiguration()
+        configured = false
+        activeDeviceUID = nil
+        activeDeviceName = nil
     }
 
     /// Map our CoreAudio device onto an `AVCaptureDevice`. UIDs line up between
@@ -159,16 +350,216 @@ final class AudioCapture: NSObject {
     /// discovery path (which currently emits a false Continuity Camera warning).
     private func resolveDevice() throws -> AVCaptureDevice {
         if let uid = deviceUID {
-            guard let device = AVCaptureDevice(uniqueID: uid), device.hasMediaType(.audio) else {
-                throw CaptureError.deviceNotFound(uid)
+            if let device = AVCaptureDevice(uniqueID: uid), device.hasMediaType(.audio) {
+                return device
             }
-            return device
+            // Keep dictation available when a selected USB/interface mic is
+            // unplugged. Never prefer Bluetooth for this fallback because that
+            // would silently degrade headphone playback to call quality.
+            if let fallbackUID = AudioDevices.recoveryFallback(excluding: uid)?.uid,
+               let fallback = AVCaptureDevice(uniqueID: fallbackUID),
+               fallback.hasMediaType(.audio)
+            {
+                return fallback
+            }
+            throw CaptureError.deviceNotFound(uid)
         }
         guard let fallback = AVCaptureDevice.default(for: .audio) else {
             throw CaptureError.deviceNotFound("default")
         }
         return fallback
     }
+
+    private func installObservers() {
+        let center = NotificationCenter.default
+        sessionObservers.append(center.addObserver(
+            forName: AVCaptureSession.wasInterruptedNotification,
+            object: session,
+            queue: nil
+        ) { [weak self] _ in
+            self?.handleRecoveryEvent(.sessionInterrupted("microphone session was interrupted"))
+        })
+        sessionObservers.append(center.addObserver(
+            forName: AVCaptureSession.interruptionEndedNotification,
+            object: session,
+            queue: nil
+        ) { [weak self] _ in
+            self?.handleRecoveryEvent(.interruptionEnded)
+        })
+        sessionObservers.append(center.addObserver(
+            forName: AVCaptureSession.runtimeErrorNotification,
+            object: session,
+            queue: nil
+        ) { [weak self] notification in
+            let error = notification.userInfo?[AVCaptureSessionErrorKey] as? Error
+            let reason = error.map { "microphone runtime error: \($0.localizedDescription)" }
+                ?? "microphone runtime error"
+            self?.handleRecoveryEvent(.runtimeError(reason))
+        })
+        sessionObservers.append(center.addObserver(
+            forName: AVCaptureDevice.wasDisconnectedNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] notification in
+            guard let device = notification.object as? AVCaptureDevice else { return }
+            self?.sessionQueue.async { [weak self] in
+                guard let self, device.uniqueID == self.activeDeviceUID else { return }
+                self.handleRecoveryEvent(
+                    .activeDeviceDisconnected("microphone disconnected: \(device.localizedName)")
+                )
+            }
+        })
+        sessionObservers.append(center.addObserver(
+            forName: AVCaptureDevice.wasConnectedNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] notification in
+            guard let self,
+                  let preferredUID = self.deviceUID,
+                  let device = notification.object as? AVCaptureDevice,
+                  device.uniqueID == preferredUID
+            else { return }
+            self.sessionQueue.async { [weak self] in
+                guard let self, self.activeDeviceUID != preferredUID else { return }
+                self.handleRecoveryEvent(.preferredDeviceConnected(device.localizedName))
+            }
+        })
+
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        workspaceObservers.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.handleRecoveryEvent(.willSleep)
+        })
+        workspaceObservers.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.handleRecoveryEvent(.didWake)
+        })
+    }
+
+    private func handleRecoveryEvent(_ event: AudioRecoveryState.Event) {
+        lock.lock()
+        let actions = recoveryState.handle(event)
+        // Pre-roll must never bridge a device, interruption, or sleep boundary;
+        // otherwise an immediate post-recovery capture can contain stale audio.
+        ringWrite = 0
+        ringCount = 0
+        if actions.contains(where: {
+            if case .cancelCapture = $0 { return true }
+            return false
+        }) {
+            captured.removeAll(keepingCapacity: true)
+        }
+        if actions.contains(where: {
+            if case .recover(reconfigure: true, reason: _) = $0 { return true }
+            return false
+        }) {
+            reconfigurationRequired = true
+        }
+        lock.unlock()
+
+        for action in actions {
+            switch action {
+            case .cancelCapture(let reason):
+                onCaptureInterrupted?(reason)
+            case .stopSession:
+                sessionQueue.async { [weak self] in
+                    guard let self else { return }
+                    self.recoveryGeneration += 1
+                    self.recoveryScheduled = false
+                    if self.session.isRunning { self.session.stopRunning() }
+                }
+            case .recover(let reconfigure, let reason):
+                requestRecovery(reconfigure: reconfigure, reason: reason)
+            }
+        }
+    }
+
+    private func requestRecovery(reconfigure: Bool, reason: String) {
+        sessionQueue.async { [weak self] in
+            guard let self, !self.recoveryScheduled else { return }
+            guard self.wantsSessionRunning() else {
+                if reconfigure || self.isReconfigurationRequired() {
+                    self.resetConfiguration()
+                    self.clearReconfigurationRequirement()
+                }
+                return
+            }
+            let delay = Self.recoveryDelays[min(self.recoveryFailures, Self.recoveryDelays.count - 1)]
+            self.recoveryFailures += 1
+            self.recoveryGeneration += 1
+            let generation = self.recoveryGeneration
+            self.recoveryScheduled = true
+            self.lock.lock()
+            self.needsAudioFlowConfirmation = true
+            self.lock.unlock()
+            self.onStatus?(String(
+                format: "microphone recovery scheduled in %.2fs · %@",
+                delay,
+                reason
+            ))
+            self.sessionQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.recoveryGeneration == generation else { return }
+                guard self.wantsSessionRunning() else {
+                    self.recoveryScheduled = false
+                    if reconfigure || self.isReconfigurationRequired() {
+                        self.resetConfiguration()
+                        self.clearReconfigurationRequirement()
+                    }
+                    return
+                }
+                self.recoveryScheduled = false
+                do {
+                    if reconfigure || self.isReconfigurationRequired() {
+                        self.resetConfiguration()
+                    }
+                    try self.configureIfNeeded()
+                    if !self.session.isRunning { self.session.startRunning() }
+                    self.clearReconfigurationRequirement()
+                    let name = self.activeDeviceName ?? "system default"
+                    let fallback = self.deviceUID != nil && self.activeDeviceUID != self.deviceUID
+                    self.onStatus?(
+                        "✓ microphone recovered · \(name)\(fallback ? " · temporary fallback" : "")"
+                    )
+                } catch {
+                    self.onStatus?("microphone recovery failed: \(error.localizedDescription)")
+                    self.requestRecovery(reconfigure: true, reason: reason)
+                }
+            }
+        }
+    }
+
+    private func wantsSessionRunning() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return recoveryState.wantsSessionRunning
+    }
+
+    private func markAudioFlowing() {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.recoveryFailures = 0
+        }
+    }
+
+    private func isReconfigurationRequired() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return reconfigurationRequired
+    }
+
+    private func clearReconfigurationRequirement() {
+        lock.lock()
+        reconfigurationRequired = false
+        lock.unlock()
+    }
+
+    static let recoveryDelays: [TimeInterval] = [0, 0.25, 1, 3, 10]
 }
 
 extension AudioCapture: AVCaptureAudioDataOutputSampleBufferDelegate {
@@ -195,23 +586,30 @@ extension AudioCapture: AVCaptureAudioDataOutputSampleBufferDelegate {
         guard let data = buffers[0].mData else { return }
         let count = Int(buffers[0].mDataByteSize) / MemoryLayout<Float>.size
         guard count > 0 else { return }
-        let chunk = Array(UnsafeBufferPointer(start: data.assumingMemoryBound(to: Float.self), count: count))
+        let samples = UnsafeBufferPointer(
+            start: data.assumingMemoryBound(to: Float.self),
+            count: count
+        )
 
         lock.lock()
-        if capturing {
-            captured.append(contentsOf: chunk)
+        if recoveryState.isCapturing {
+            captured.append(contentsOf: samples)
         }
         if usePreRoll {
-            for s in chunk {
+            for s in samples {
                 ring[ringWrite] = s
                 ringWrite = (ringWrite + 1) % ring.count
                 if ringCount < ring.count { ringCount += 1 }
             }
         }
+        let confirmsRecovery = needsAudioFlowConfirmation
+        needsAudioFlowConfirmation = false
         lock.unlock()
 
+        if confirmsRecovery { markAudioFlowing() }
+
         if let onLevel {
-            onLevel(computeRMS(chunk))
+            onLevel(computeRMS(samples))
         }
     }
 }
@@ -258,7 +656,7 @@ enum WAVWriter {
     }
 }
 
-func computeRMS(_ samples: [Float]) -> Float {
+func computeRMS<S: Collection>(_ samples: S) -> Float where S.Element == Float {
     guard !samples.isEmpty else { return 0 }
     var sum: Double = 0
     for s in samples { sum += Double(s * s) }

@@ -340,10 +340,10 @@ it. It'll need `warmUp()` before a second engine can slot in.
 after a semaphore (`Parrot.swift:66-78`; same pattern at `Parrot.swift:221-227`). The
 semaphore does establish ordering, but this won't survive Swift 6 strict concurrency.
 
-**3.15** — `AudioCapture.process` takes an `NSLock` and allocates (`AVAudioPCMBuffer`, an
-`Array` copy, and an amortized `append` realloc) on the audio tap thread. Low risk in
-practice since this isn't a render callback, but it's the classic audio-thread anti-pattern
-and will bite under load.
+**3.15** ✅ **FIXED** — `AudioCapture` consumes CoreMedia's `UnsafeBufferPointer` directly;
+the always-hot path no longer materializes an `Array` per buffer. The short `NSLock` remains
+to synchronize buffer ownership with hotkey start/stop, and capture growth is amortized only
+while a user is actively recording.
 
 **3.16** — `pushLevel` spawns a `Task { @MainActor }` per audio buffer (~12/s at 4096 frames
 @ 48 kHz) with no coalescing.

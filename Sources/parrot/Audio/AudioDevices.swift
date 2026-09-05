@@ -117,6 +117,33 @@ enum AudioDevices {
         return candidates.first(where: \.isBuiltIn) ?? candidates.first ?? systemDefault
     }
 
+    /// Safe temporary input after the active device disappears. Recovery must
+    /// not silently choose Bluetooth (which degrades playback) or a virtual
+    /// device (which may carry no microphone audio at all).
+    static func recoveryFallback(excluding excludedUID: String) -> AudioInputDevice? {
+        recoveryFallback(
+            from: inputs(),
+            defaultDeviceID: defaultInput()?.id,
+            excluding: excludedUID
+        )
+    }
+
+    static func recoveryFallback(
+        from devices: [AudioInputDevice],
+        defaultDeviceID: AudioDeviceID?,
+        excluding excludedUID: String
+    ) -> AudioInputDevice? {
+        let safe = devices.filter {
+            $0.uid != excludedUID && !$0.isBluetooth && !$0.isVirtual
+        }
+        if let defaultDeviceID,
+           let systemDefault = safe.first(where: { $0.id == defaultDeviceID })
+        {
+            return systemDefault
+        }
+        return safe.first(where: \.isBuiltIn) ?? safe.first
+    }
+
     /// Warn when the mic parrot will actually record from is Bluetooth.
     ///
     /// Note this keys off the *selected* device, not the system default. That

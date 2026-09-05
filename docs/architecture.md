@@ -155,6 +155,14 @@ AVCaptureSession   full session cycle -> 44100 Hz throughout
 `AVCaptureSession` opens only the device it is handed, so a Bluetooth device sitting as the
 system default is harmless. parrot warns only when the *selected* mic is Bluetooth.
 
+All session configuration, start, stop, and recovery work runs on one serial queue. Parrot
+observes AVFoundation interruption/runtime/device notifications plus `NSWorkspace` sleep and
+wake notifications. A stream boundary clears pre-roll and cancels any partial recording rather
+than transcribing discontinuous audio. Recovery rebuilds stale inputs with bounded backoff; if
+the preferred mic is absent, only a non-virtual, non-Bluetooth fallback is eligible, and the
+preferred device is restored when it reconnects. The audio delegate consumes the
+`UnsafeBufferPointer` in place, avoiding the former per-buffer `Array` allocation.
+
 ### `AudioDevices`
 
 CoreAudio enumeration and selection: `parrot devices` lists inputs with transport type,

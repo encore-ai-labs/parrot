@@ -398,11 +398,8 @@ struct Run: ParsableCommand {
 
         let monitor = HotkeyMonitor(hotkey: chosenHotkey, debug: debugHotkey)
         let capture = AudioCapture(device: chosenDevice, usePreRoll: !coldMic)
-        do {
-            try capture.startSession()
-        } catch {
-            FileHandle.standardError.write(Data("failed to open microphone: \(error)\n".utf8))
-            throw ExitCode(1)
+        capture.onStatus = { message in
+            FileHandle.standardError.write(Data("\(message)\n".utf8))
         }
         let dumpWav = self.dumpWav
         let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
@@ -575,6 +572,27 @@ struct Run: ParsableCommand {
                 break
             }
         }
+
+        capture.onCaptureInterrupted = { reason in
+            DispatchQueue.main.async {
+                FileHandle.standardError.write(Data(
+                    "× \(reason) — partial recording discarded\n".utf8
+                ))
+                gesture.handle(.cancelKeyPressed)
+            }
+        }
+
+        // Configure only after all recovery callbacks are wired, so even an
+        // interruption during startup cannot strand the dictation lifecycle.
+        do {
+            try capture.startSession()
+        } catch {
+            FileHandle.standardError.write(Data(
+                "failed to open microphone: \(error.localizedDescription)\n".utf8
+            ))
+            throw ExitCode(1)
+        }
+        defer { capture.stopSession() }
 
         do {
             try monitor.start { event in

@@ -54,11 +54,12 @@ transcribing, saving history, or injecting text. Escape is consumed as part of c
 
 ### Local note mode
 
-Start Parrot with `--notes` (or `--note-mode`) to turn explicit spoken structure into
-Markdown without an LLM or network request:
+Save note mode as your default, or use `--notes` (or `--note-mode`) for one run, to turn
+explicit spoken structure into Markdown without an LLM or network request:
 
 ```sh
-parrot --notes
+parrot settings set --mode notes
+parrot --notes                       # one-run override
 ```
 
 | Say | Markdown result |
@@ -74,8 +75,9 @@ parrot --notes
 
 Note mode changes only these exact commands; it does not summarize, invent, or rewrite your
 words. To speak a command literally, prefix it with `literal`—for example, `literal new
-paragraph`. Normal dictation stays unchanged unless `--notes` is present. Formatted Markdown
-is what gets pasted and saved to local history.
+paragraph`. Normal dictation stays unchanged unless note mode is active. Use `--dictation`
+for a one-run override when notes are saved as your default. Formatted Markdown is what gets
+pasted and saved to local history.
 
 ### Reusable voice snippets
 
@@ -271,9 +273,22 @@ Use `--json` to save comparable machine-readable reports. Download each candidat
 
 ### Settings
 
-Answers are saved to `~/.config/parrot/config.json` — the chosen mic and whether lowercase
-mode is on. Delete the file or run `parrot --reconfigure` to start over. Command-line flags
-always win over what's saved.
+Parrot stores settings only at `~/.config/parrot/config.json`, with user-only permissions.
+The chosen microphone and lowercase choice are remembered during setup. Hotkey, model, and
+note/dictation mode can be saved explicitly:
+
+```sh
+parrot settings
+parrot settings set --hotkey right-option
+parrot settings set --model whisper-small.en --mode notes
+parrot settings reset               # resets hotkey/model/mode only
+parrot daemon restart               # apply to a running LaunchAgent
+```
+
+Saved defaults are what a LaunchAgent uses, so launch-at-login no longer falls back to Fn or
+plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--model`,
+`--notes`, and `--dictation` take priority without changing the file. `--reconfigure` resets
+the complete first-run configuration.
 
 ### Using a different key
 
@@ -328,7 +343,10 @@ parrot history                         # list recent local transcripts
 parrot history search project roadmap # search private Markdown history
 parrot history copy                    # recover the latest transcript to clipboard
 parrot stats                            # private usage/timing insights from history
+parrot settings                         # show effective saved daemon defaults
+parrot settings set --hotkey end --mode notes
 parrot --notes                         # explicit spoken commands → local Markdown
+parrot --dictation                     # override a saved notes mode for one run
 parrot --input-device brio             # pick a specific mic
 parrot --no-pick-mic                   # skip the mic prompt
 parrot --lowercase                     # lowercase all transcribed text

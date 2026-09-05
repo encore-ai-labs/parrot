@@ -155,8 +155,8 @@ under launchd, surface a user-visible notification, and exit in a way that doesn
 push to master and on PRs. Note the fork gate still applies to `push` events, so PR runs are
 the reliable trigger until workflows are enabled in the Actions tab.
 
-**6.2 `--version`** — doesn't exist. Wire it to a generated version string stamped at build
-time so bug reports are actionable.
+**6.2 `--version`** — ✅ **done.** Release builds are stamped from their `v*` tag; local
+source builds report `development`.
 
 **6.3 Implement `--hotkey` (3.14)** — ✅ **done.** Modifiers with left/right disambiguation,
 plain keys (F13–F20, End, Home, Page Up/Down, Forward Delete) swallowed via `.defaultTap`,
@@ -178,10 +178,14 @@ those are wrong and two shipped anyway.
 **6.7 Config file** — ✅ **done**, as `~/.config/parrot/config.json` (JSON, not TOML — no
 dependency needed). Stores the chosen mic and lowercase mode, written on first run.
 
-**6.8 Suppress the Continuity Camera deprecation log** — AVFoundation logs
-`AVCaptureDeviceTypeExternal is deprecated…` at every launch when an iPhone Continuity mic is
-present. It's emitted regardless of the `deviceTypes` we request; silencing it needs
-`NSCameraUseContinuityCameraDeviceType` in an `Info.plist`, so it's blocked behind 5.1.
+**6.8 Suppress the Continuity Camera deprecation log** — ✅ **done.** The single executable
+embeds `NSCameraUseContinuityCameraDeviceType` and its microphone usage description in the
+Mach-O `__TEXT,__info_plist` section.
+
+**6.9 Persist daemon workflow defaults** — ✅ **done.** `parrot settings show|set|reset`
+stores hotkey, model, and dictation/notes mode in the private JSON config. Foreground and
+LaunchAgent startup share CLI > saved > built-in precedence; `--dictation` provides a one-run
+escape from a saved notes mode.
 
 ---
 

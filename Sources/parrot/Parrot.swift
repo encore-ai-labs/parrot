@@ -12,7 +12,7 @@ struct Parrot: ParsableCommand {
         subcommands: [
             Run.self, Setup.self, Doctor.self, Models.self,
             Hotkeys.self, Devices.self, Vocabulary.self, Snippets.self,
-            History.self, Stats.self, Install.self, Daemon.self, Update.self,
+            History.self, Stats.self, Settings.self, Install.self, Daemon.self, Update.self,
         ],
         defaultSubcommand: Run.self
     )
@@ -102,12 +102,12 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Disable the on-screen recording overlay.")
     var noOverlay: Bool = false
 
-    @Option(name: .long, help: "Model id to use. Defaults to the recommended model.")
+    @Option(name: .long, help: "Model id for this run. Overrides the saved default.")
     var model: String?
 
     @Option(
         name: .long,
-        help: "Push-to-talk key. Default: fn. Run `parrot hotkeys` for the list."
+        help: "Push-to-talk key for this run. Overrides the saved default."
     )
     var hotkey: String?
 
@@ -149,9 +149,15 @@ struct Run: ParsableCommand {
 
     @Flag(
         name: [.customLong("notes"), .customLong("note-mode")],
-        help: "Format explicit spoken commands into Markdown notes, entirely on-device."
+        help: "Use local Markdown note mode for this run, overriding the saved mode."
     )
     var noteMode: Bool = false
+
+    @Flag(
+        name: .customLong("dictation"),
+        help: "Use plain dictation for this run, overriding a saved notes mode."
+    )
+    var dictationMode: Bool = false
 
     @Flag(name: .long, help: "Re-run first-time setup and overwrite saved preferences.")
     var reconfigure: Bool = false
@@ -178,17 +184,41 @@ struct Run: ParsableCommand {
         }
         StartupTUI.showLogo()
 
-        let chosenHotkey: Hotkey
-        if let raw = hotkey {
-            guard let parsed = Hotkey.parse(raw) else {
-                FileHandle.standardError.write(Data("unknown hotkey: \(raw)\n".utf8))
-                FileHandle.standardError.write(Data("run `parrot hotkeys` to see the options.\n".utf8))
-                throw ExitCode(1)
-            }
-            chosenHotkey = parsed
-        } else {
-            chosenHotkey = .default
+        var config = Config.load()
+        if reconfigure {
+            config = Config()
         }
+        var configDirty = reconfigure
+        guard let recommendedModel = ModelRegistry.recommended()?.id else {
+            FileHandle.standardError.write(Data("no models registered\n".utf8))
+            throw ExitCode(1)
+        }
+        let defaults: RuntimeDefaults
+        do {
+            defaults = try RuntimeDefaults.resolve(
+                config: config,
+                hotkeyOverride: hotkey,
+                modelOverride: model,
+                notes: noteMode,
+                dictation: dictationMode,
+                recommendedModel: recommendedModel
+            )
+        } catch {
+            FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+            throw ExitCode(64)
+        }
+        let activeNoteMode = defaults.mode == .notes
+
+        let chosenHotkey: Hotkey
+        guard let parsedHotkey = Hotkey.parse(defaults.hotkey) else {
+            let kind = hotkey == nil ? "saved hotkey" : "hotkey"
+            FileHandle.standardError.write(Data("unknown \(kind): \(defaults.hotkey)\n".utf8))
+            FileHandle.standardError.write(Data(
+                "run `parrot settings set --hotkey fn` to repair it.\n".utf8
+            ))
+            throw ExitCode(1)
+        }
+        chosenHotkey = parsedHotkey
 
         let fnSystemAction: FnSystemActionOverride?
         if chosenHotkey.needsSystemActionDisabled {
@@ -227,27 +257,14 @@ struct Run: ParsableCommand {
             }
         }
 
-        let chosenModel: TranscriptionModel
-        if let id = model {
-            guard let m = ModelRegistry.find(id) else {
-                FileHandle.standardError.write(Data("unknown model: \(id)\n".utf8))
-                FileHandle.standardError.write(Data("run `parrot models list` to see options.\n".utf8))
-                throw ExitCode(1)
-            }
-            chosenModel = m
-        } else {
-            guard let m = ModelRegistry.recommended() else {
-                FileHandle.standardError.write(Data("no models registered\n".utf8))
-                throw ExitCode(1)
-            }
-            chosenModel = m
+        guard let chosenModel = ModelRegistry.find(defaults.model) else {
+            let kind = model == nil ? "saved model" : "model"
+            FileHandle.standardError.write(Data("unknown \(kind): \(defaults.model)\n".utf8))
+            FileHandle.standardError.write(Data(
+                "run `parrot settings set --model \(recommendedModel)` to repair it.\n".utf8
+            ))
+            throw ExitCode(1)
         }
-
-        var config = Config.load()
-        if reconfigure {
-            config = Config()
-        }
-        var configDirty = reconfigure
 
         // Pick the mic before anything slow happens, so a bad --input-device
         // fails immediately rather than after a model download.
@@ -343,7 +360,7 @@ struct Run: ParsableCommand {
             snippets = SnippetLibrary()
         }
         let snippetExpander = SnippetExpander(entries: snippets.entries)
-        let additionalPromptTerms = (noteMode ? NoteFormatter.promptTerms : [])
+        let additionalPromptTerms = (activeNoteMode ? NoteFormatter.promptTerms : [])
             + snippets.promptTerms
         let transcriber = WhisperKitTranscriber(
             model: chosenModel,
@@ -463,7 +480,7 @@ struct Run: ParsableCommand {
                 let started = Date()
                 do {
                     let raw = try await transcriber.transcribe(samples)
-                    let formatted = noteMode ? NoteFormatter.format(raw) : raw
+                    let formatted = activeNoteMode ? NoteFormatter.format(raw) : raw
                     let cased = lowercaseMode ? formatted.lowercased() : formatted
                     let text = snippetExpander.applying(to: cased)
                     let elapsed = Date().timeIntervalSince(started)
@@ -590,7 +607,7 @@ struct Run: ParsableCommand {
             hotkey: chosenHotkey.name,
             model: chosenModel.id,
             microphone: micName,
-            mode: noteMode ? "notes" : "dictation",
+            mode: activeNoteMode ? "notes" : "dictation",
             vocabularyCount: vocabulary.entries.count,
             snippetCount: snippets.entries.count,
             historyPath: historyPath,

@@ -62,17 +62,21 @@ than described — see the banner below. Everything else still stands.
 | `models list\|download` | `Parrot.swift:191` | Registry listing / prefetch |
 | `hotkeys` | `Parrot.swift` → `Hotkey.swift` | List push-to-talk keys |
 | `devices` | `Parrot.swift` → `AudioDevices.swift` | List microphones |
+| `settings show\|set\|reset` | `Settings.swift` → `Config.swift` | Persistent local daemon defaults |
 | `install` | `Install.swift` | LaunchAgent write/remove |
 
 Because `Run` is the `defaultSubcommand`, `parrot --model X`, `--no-overlay`, `--hotkey`, and
-`--input-device` all route to it correctly — verified.
+`--input-device` all route to it correctly. Model, hotkey, and dictation/notes mode resolve as
+one-run CLI override > saved config > built-in default. The LaunchAgent supplies no workflow
+arguments and therefore uses the exact same persisted defaults.
 
 ### Startup sequence (`Run.run()`, `Parrot.swift:37`)
 
 1. **Doctor gate** — unless `--skip-doctor`. Blocks only on `.fail`, not `.warn`
    (`DoctorReport.allOK`, `Doctor.swift:158`). So "microphone not yet requested" passes.
-2. **Model resolution** — `--model` id looked up in `ModelRegistry.shared`, else
-   `recommended()` → `whisper-base.en`.
+2. **Runtime-default resolution** — CLI overrides are merged with the private JSON config;
+   hotkey and model ids are validated before permissions or model warmup. The recommended
+   model remains the final fallback.
 3. **Synchronous warmup** — `Parrot.swift:65-79`. A `Task.detached` calls
    `transcriber.warmUp()` while the main thread parks on a `DispatchSemaphore`. This is where
    the model downloads (145 MB – 1.6 GB) and CoreML specialization happens. Blocking here is
@@ -294,6 +298,12 @@ WhisperKit's progress callback now produces visible percentage progress. Interac
 repaints at 1% increments; noninteractive output uses bounded 10% newline increments so
 LaunchAgent logs remain readable. Both first-run warmup and `parrot models download` end with
 an explicit ready message.
+
+**3.18 — LaunchAgent loses selected hotkey/model/note mode.** ✅ **FIXED**
+
+Those choices now have explicit `parrot settings show|set|reset` commands and are stored in
+the existing user-only JSON config. Foreground and LaunchAgent runs share one resolver;
+`--hotkey`, `--model`, `--notes`, and `--dictation` remain non-persistent one-run overrides.
 
 ### P3 — docs/code drift
 

@@ -70,9 +70,11 @@ final class NoteFormatterTests: XCTestCase {
     func testNotesFlagIsExplicitAndHasAlias() throws {
         let notes = try XCTUnwrap(try Run.parseAsRoot(["--notes"]) as? Run)
         let alias = try XCTUnwrap(try Run.parseAsRoot(["--note-mode"]) as? Run)
+        let dictation = try XCTUnwrap(try Run.parseAsRoot(["--dictation"]) as? Run)
 
         XCTAssertTrue(notes.noteMode)
         XCTAssertTrue(alias.noteMode)
+        XCTAssertTrue(dictation.dictationMode)
         XCTAssertFalse(try XCTUnwrap(try Run.parseAsRoot([]) as? Run).noteMode)
     }
 

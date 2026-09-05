@@ -320,15 +320,20 @@ flooding LaunchAgent logs.
 ### `Config`
 
 A `Codable` struct at `~/.config/parrot/config.json`, holding the chosen microphone UID,
-whether lowercase mode is on, and a flag marking first-run setup complete. Every field is
-optional, and nil means "not yet decided" — that's what separates a first run (ask) from a
-later one (respect the earlier answer, including a "no").
+lowercase preference, first-run completion flag, and optional defaults for hotkey, model, and
+dictation/notes mode. Every field is optional, so older config files decode unchanged and nil
+continues to mean "use the built-in default."
 
 JSON rather than the TOML originally sketched: `Codable` gives it to us for free, and a TOML
-parser would have been a new dependency for three keys.
+parser would have been a new dependency for a handful of keys. The directory and file are
+forced to `0700` and `0600` respectively; the first read upgrades permissions left by older
+releases without rewriting the file.
 
 Precedence is CLI flags > saved config > interactive prompt > built-in default. Missing or
-corrupt config is treated as a first run, never an error.
+corrupt config is treated as a first run, never an error. `parrot settings show|set|reset`
+manages the daemon defaults. Because the LaunchAgent intentionally supplies no workflow
+arguments beyond `--skip-doctor`, it follows the same saved values as a foreground launch;
+one-run CLI overrides never become accidental persistent state.
 
 ### `TerminalSelect`
 
@@ -385,7 +390,8 @@ Models are not bundled. New downloads live in
 8. `HotkeyMonitor` fires `.released`. Overlay switches to spinner. Status: `transcribing`.
 9. `AudioCapture` stops, hands buffer to active `Transcriber`.
 10. `Transcriber` runs CoreML inference. Returns string.
-11. If `--notes` is active, `NoteFormatter` applies explicit Markdown structure commands.
+11. If saved or one-run note mode is active, `NoteFormatter` applies explicit Markdown
+    structure commands.
 12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies.
 13. `TextInjector` posts the string at the cursor and `TranscriptHistory` saves it locally.
 14. Overlay hides. Status: `listening`. Loop.

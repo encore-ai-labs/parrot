@@ -46,6 +46,10 @@ struct Settings: ParsableCommand {
                     + "\(config.automaticParagraphs == nil ? "  (default)" : "")"
             )
             print(
+                "pause trim   \(defaults.compactLockedPauses ? "on for locked recordings" : "off")"
+                    + "\(config.compactLockedPauses == nil ? "  (default)" : "")"
+            )
+            print(
                 "paste space  \(defaults.spaceAfterPaste ? "on" : "off")"
                     + "\(config.spaceAfterPaste == nil ? "  (default)" : "")"
             )
@@ -178,6 +182,18 @@ struct Settings: ParsableCommand {
         var noAutomaticParagraphs: Bool = false
 
         @Flag(
+            name: .customLong("compact-pauses"),
+            help: "Shorten long quiet pauses in locked recordings before local inference."
+        )
+        var compactPauses: Bool = false
+
+        @Flag(
+            name: .customLong("no-compact-pauses"),
+            help: "Preserve the full audio timeline for locked recordings."
+        )
+        var noCompactPauses: Bool = false
+
+        @Flag(
             name: .customLong("space-after-paste"),
             help: "Add a boundary space after cursor-injected text."
         )
@@ -250,6 +266,7 @@ struct Settings: ParsableCommand {
                     || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
+                    || compactPauses || noCompactPauses
                     || spaceAfterPaste || noSpaceAfterPaste
                     || clipboardPaste || keystrokePaste
                     || clipboardRestoreDelayMilliseconds != nil
@@ -269,6 +286,11 @@ struct Settings: ParsableCommand {
             guard !(automaticParagraphs && noAutomaticParagraphs) else {
                 throw ValidationError(
                     "pass at most one of --auto-paragraphs or --no-auto-paragraphs"
+                )
+            }
+            guard !(compactPauses && noCompactPauses) else {
+                throw ValidationError(
+                    "pass at most one of --compact-pauses or --no-compact-pauses"
                 )
             }
             guard !(spaceAfterPaste && noSpaceAfterPaste) else {
@@ -369,6 +391,7 @@ struct Settings: ParsableCommand {
                     || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
+                    || compactPauses || noCompactPauses
                     || spaceAfterPaste || noSpaceAfterPaste
                     || clipboardPaste || keystrokePaste
                     || clipboardRestoreDelayMilliseconds != nil
@@ -468,6 +491,9 @@ struct Settings: ParsableCommand {
             }
             if automaticParagraphs || noAutomaticParagraphs {
                 config.automaticParagraphs = automaticParagraphs
+            }
+            if compactPauses || noCompactPauses {
+                config.compactLockedPauses = compactPauses
             }
             if spaceAfterPaste || noSpaceAfterPaste {
                 config.spaceAfterPaste = spaceAfterPaste

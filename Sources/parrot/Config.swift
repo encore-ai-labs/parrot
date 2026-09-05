@@ -49,6 +49,10 @@ struct Config: Codable, Equatable {
     /// Insert paragraphs at deliberate pauses while note mode is active.
     /// Nil preserves the built-in on default for notes.
     var automaticParagraphs: Bool?
+    /// Shorten only confidently quiet pauses longer than five seconds in the
+    /// inference copy of double-tap locked recordings. Recovery audio stays exact.
+    /// Nil preserves the built-in off default until learned VAD backs the feature.
+    var compactLockedPauses: Bool?
     /// Add one boundary space after cursor-injected text. This never changes
     /// history, journal, command, or stored-file output.
     var spaceAfterPaste: Bool?
@@ -162,6 +166,7 @@ struct RuntimeDefaults: Equatable {
     let deliveryCommand: String?
     let cleanup: Bool
     let automaticParagraphs: Bool
+    let compactLockedPauses: Bool
     let spaceAfterPaste: Bool
     let insertionMethod: TextInsertionMethod
     let clipboardRestoreDelayMilliseconds: Int
@@ -188,6 +193,7 @@ struct RuntimeDefaults: Equatable {
         paste: Bool = false,
         cleanupOverride: Bool? = nil,
         automaticParagraphsOverride: Bool? = nil,
+        compactLockedPausesOverride: Bool? = nil,
         spaceAfterPasteOverride: Bool? = nil,
         insertionMethodOverride: TextInsertionMethod? = nil,
         clipboardRestoreDelayMillisecondsOverride: Int? = nil,
@@ -301,6 +307,9 @@ struct RuntimeDefaults: Equatable {
             automaticParagraphs: automaticParagraphsOverride
                 ?? config.automaticParagraphs
                 ?? true,
+            compactLockedPauses: compactLockedPausesOverride
+                ?? config.compactLockedPauses
+                ?? false,
             spaceAfterPaste: spaceAfterPasteOverride ?? config.spaceAfterPaste ?? true,
             insertionMethod: insertionMethodOverride ?? config.insertionMethod ?? .keystrokes,
             clipboardRestoreDelayMilliseconds: clipboardRestoreDelayMilliseconds,

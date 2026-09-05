@@ -247,9 +247,15 @@ final class LastRecordingRecovery: @unchecked Sendable {
             at: directory,
             includingPropertiesForKeys: nil
         ) else { return }
-        for url in contents where url.lastPathComponent.hasPrefix(".last-recording-")
-            && url.pathExtension == "tmp" {
-            try? FileManager.default.removeItem(at: url)
+        for url in contents {
+            let name = url.lastPathComponent
+            let isInterruptedStage = name.hasPrefix(".last-recording-")
+                && url.pathExtension == "tmp"
+            let isInterruptedInference = name.hasPrefix(".parrot-inference-")
+                && url.pathExtension == "wav"
+            if isInterruptedStage || isInterruptedInference {
+                try? FileManager.default.removeItem(at: url)
+            }
         }
     }
 

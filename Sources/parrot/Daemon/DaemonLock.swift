@@ -84,6 +84,21 @@ final class DaemonLock {
         return DaemonLock(url: url, descriptor: descriptor)
     }
 
+    /// Returns the PID written by the process that currently holds the lock.
+    /// A stale lock file is deliberately reported as idle: ownership comes
+    /// from `flock`, not from trusting an old PID on disk.
+    static func ownerPID(at url: URL = defaultURL) -> Int32? {
+        let descriptor = open(url.path, O_RDWR | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+        if flock(descriptor, LOCK_EX | LOCK_NB) == 0 {
+            flock(descriptor, LOCK_UN)
+            return nil
+        }
+        guard errno == EWOULDBLOCK else { return nil }
+        return readPID(from: descriptor)
+    }
+
     func release() {
         guard descriptor >= 0 else { return }
         flock(descriptor, LOCK_UN)
@@ -104,6 +119,7 @@ final class DaemonLock {
         guard count > 0 else { return nil }
         let value = String(decoding: buffer.prefix(count), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return Int32(value)
+        guard let pid = Int32(value), pid > 1 else { return nil }
+        return pid
     }
 }

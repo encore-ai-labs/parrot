@@ -1,4 +1,5 @@
 import ArgumentParser
+import Darwin
 import Foundation
 
 /// Backwards-compatible install surface. The `parrot daemon` command exposes
@@ -49,10 +50,17 @@ struct Daemon: ParsableCommand {
         func run() {
             let manager = LaunchAgentManager()
             let status = manager.status()
+            let presentation = DaemonStatusPresentation.resolve(
+                launchAgent: status,
+                runtimePID: DaemonLock.ownerPID()
+            )
             print("installed: \(status.installed ? "yes" : "no")")
             print("loaded:    \(status.loaded ? "yes" : "no")")
-            print("state:     \(status.state ?? "stopped")")
-            if let pid = status.pid { print("pid:       \(pid)") }
+            print("state:     \(presentation.state)")
+            if let pid = presentation.pid { print("pid:       \(pid)") }
+            if let lifecycle = presentation.lifecycle {
+                print("lifecycle: \(lifecycle)")
+            }
             if let code = status.lastExitCode { print("last exit: \(code)") }
             print("logs:      \(manager.logDirectory.path)")
         }
@@ -71,7 +79,22 @@ struct Daemon: ParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Stop the daemon.")
 
         func run() throws {
-            if try LaunchAgentManager().stop() {
+            var stopped = try LaunchAgentManager().stop()
+            if let pid = DaemonLock.ownerPID() {
+                guard kill(pid, SIGTERM) == 0 || errno == ESRCH else {
+                    throw ValidationError(
+                        "couldn't stop running Parrot pid \(pid): \(String(cString: strerror(errno)))"
+                    )
+                }
+                for _ in 0..<60 where DaemonLock.ownerPID() != nil {
+                    usleep(50_000)
+                }
+                guard DaemonLock.ownerPID() == nil else {
+                    throw ValidationError("Parrot pid \(pid) did not stop within 3 seconds")
+                }
+                stopped = true
+            }
+            if stopped {
                 print("✓ daemon stopped")
             } else {
                 print("daemon is already stopped")
@@ -114,5 +137,31 @@ struct Daemon: ParsableCommand {
                 print(log.1)
             }
         }
+    }
+}
+
+struct DaemonStatusPresentation: Equatable {
+    let state: String
+    let pid: Int32?
+    let lifecycle: String?
+
+    static func resolve(
+        launchAgent: LaunchAgentStatus,
+        runtimePID: Int32?
+    ) -> Self {
+        if let runtimePID {
+            return Self(
+                state: "running",
+                pid: runtimePID,
+                lifecycle: launchAgent.pid == runtimePID
+                    ? "launchd"
+                    : "foreground/update restart"
+            )
+        }
+        return Self(
+            state: launchAgent.state ?? "stopped",
+            pid: launchAgent.pid,
+            lifecycle: launchAgent.pid == nil ? nil : "launchd"
+        )
     }
 }

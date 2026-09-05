@@ -38,6 +38,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.deliveryCommand)
         XCTAssertNil(config.cleanup)
         XCTAssertNil(config.automaticParagraphs)
+        XCTAssertNil(config.compactLockedPauses)
         XCTAssertNil(config.spaceAfterPaste)
         XCTAssertNil(config.insertionMethod)
         XCTAssertNil(config.clipboardRestoreDelayMilliseconds)
@@ -64,6 +65,7 @@ final class ConfigTests: XCTestCase {
         config.journalPath = "/tmp/notes.md"
         config.cleanup = true
         config.automaticParagraphs = false
+        config.compactLockedPauses = false
         config.spaceAfterPaste = false
         config.insertionMethod = .clipboard
         config.clipboardRestoreDelayMilliseconds = 1_500
@@ -127,6 +129,7 @@ final class ConfigTests: XCTestCase {
                 deliveryCommand: nil,
                 cleanup: false,
                 automaticParagraphs: true,
+                compactLockedPauses: false,
                 spaceAfterPaste: true,
                 insertionMethod: .keystrokes,
                 clipboardRestoreDelayMilliseconds: 1_000,
@@ -157,6 +160,7 @@ final class ConfigTests: XCTestCase {
                 deliveryCommand: nil,
                 cleanup: false,
                 automaticParagraphs: true,
+                compactLockedPauses: false,
                 spaceAfterPaste: true,
                 insertionMethod: .keystrokes,
                 clipboardRestoreDelayMilliseconds: 1_000,
@@ -383,6 +387,41 @@ final class ConfigTests: XCTestCase {
             recommendedModel: "whisper-base.en"
         )
         XCTAssertTrue(overridden.automaticParagraphs)
+    }
+
+    func testRuntimeDefaultsKeepLockedPauseCompactionOffAndAllowOverrides() throws {
+        let builtIn = try RuntimeDefaults.resolve(
+            config: Config(),
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertFalse(builtIn.compactLockedPauses)
+
+        var config = Config()
+        config.compactLockedPauses = true
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertTrue(saved.compactLockedPauses)
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            compactLockedPausesOverride: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertFalse(overridden.compactLockedPauses)
     }
 
     func testRuntimeDefaultsAddPasteSpaceByDefaultAndAllowOverrides() throws {
@@ -700,6 +739,7 @@ final class ConfigTests: XCTestCase {
                 "--context", "selection",
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
+                "--compact-pauses",
                 "--no-space-after-paste", "--clipboard-paste",
                 "--clipboard-restore-delay-ms", "1500", "--cold-mic",
                 "--history-retention-days", "30", "--audio-history-days", "7",
@@ -715,6 +755,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(set.journal, "/tmp/inbox.md")
         XCTAssertTrue(set.cleanup)
         XCTAssertTrue(set.automaticParagraphs)
+        XCTAssertTrue(set.compactPauses)
         XCTAssertTrue(set.noSpaceAfterPaste)
         XCTAssertTrue(set.clipboardPaste)
         XCTAssertEqual(set.clipboardRestoreDelayMilliseconds, 1_500)
@@ -784,6 +825,9 @@ final class ConfigTests: XCTestCase {
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--warm-mic", "--cold-mic",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--compact-pauses", "--no-compact-pauses",
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--history-retention-days", "0",

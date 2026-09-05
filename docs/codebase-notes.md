@@ -471,6 +471,15 @@ the transcript. Bodies never enter recognition context; only four recent short n
 existing prompt budget. The library hot-reloads atomically without model reload or daemon restart,
 while saved-default changes retain the normal explicit restart behavior.
 
+**3.37 — Updater-relaunched daemons are alive but lifecycle status says stopped.** ✅ **FIXED**
+
+The in-app updater starts the replacement binary with `--wait-for-pid`, outside launchd, so the
+LaunchAgent-only status surface previously contradicted the single-instance lock. Runtime status
+now probes the advisory lock, reports its verified owner and lifecycle, and duplicate foreground
+launches exit successfully with controls. `daemon stop` handles either launchd or that verified
+runtime PID and waits for lock release. The same release adds explicit, bounded pause compaction for
+locked notes; it always transcribes a disposable private inference copy and never edits recovery.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

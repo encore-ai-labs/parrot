@@ -440,6 +440,18 @@ struct Run: ParsableCommand {
     )
     var noAutomaticParagraphs: Bool = false
 
+    @Flag(
+        name: .customLong("compact-pauses"),
+        help: "Shorten long quiet pauses locally in locked recordings before inference."
+    )
+    var compactPauses: Bool = false
+
+    @Flag(
+        name: .customLong("no-compact-pauses"),
+        help: "Keep the full locked-recording timeline for this run."
+    )
+    var noCompactPauses: Bool = false
+
     @Flag(name: .long, help: "Don't save successful transcripts to local Markdown history.")
     var noHistory: Bool = false
 
@@ -536,6 +548,11 @@ struct Run: ParsableCommand {
                 "pass at most one of --auto-paragraphs or --no-auto-paragraphs"
             )
         }
+        guard !(compactPauses && noCompactPauses) else {
+            throw ValidationError(
+                "pass at most one of --compact-pauses or --no-compact-pauses"
+            )
+        }
         guard !(spaceAfterPaste && noSpaceAfterPaste) else {
             throw ValidationError(
                 "pass at most one of --space-after-paste or --no-space-after-paste"
@@ -589,6 +606,14 @@ struct Run: ParsableCommand {
         let daemonLock: DaemonLock
         do {
             daemonLock = try DaemonLock.acquire()
+        } catch DaemonLock.LockError.alreadyRunning(let pid) {
+            let owner = pid.map { " (pid \($0))" } ?? ""
+            FileHandle.standardError.write(Data(
+                "✓ Parrot is ready\(owner) and listening for its hotkey.\n"
+                    .appending("  Run `parrot daemon status`; quit from the menu bar or use ")
+                    .appending("`parrot daemon stop`.\n").utf8
+            ))
+            return
         } catch {
             FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
             throw ExitCode(1)
@@ -626,6 +651,9 @@ struct Run: ParsableCommand {
                 cleanupOverride: cleanup || noCleanup ? cleanup : nil,
                 automaticParagraphsOverride: automaticParagraphs || noAutomaticParagraphs
                     ? automaticParagraphs
+                    : nil,
+                compactLockedPausesOverride: compactPauses || noCompactPauses
+                    ? compactPauses
                     : nil,
                 spaceAfterPasteOverride: spaceAfterPaste || noSpaceAfterPaste
                     ? spaceAfterPaste
@@ -1181,6 +1209,8 @@ struct Run: ParsableCommand {
         var recordingPersonalizationUpdate: Task<PersonalizationRefresh, Never>?
         var recordingContext: Task<String?, Never>?
         var retryContext: Task<String?, Never>?
+        var recordingWasLatched = false
+        var retryCompactPauses = false
 
         func preparePersonalization() -> Task<PersonalizationRefresh, Never> {
             Task {
@@ -1223,10 +1253,40 @@ struct Run: ParsableCommand {
             recognitionContext: Task<String?, Never>?,
             sessionID: Int,
             audioDuration seconds: TimeInterval,
+            compactLongPauses: Bool,
             personalizationUpdate: Task<PersonalizationRefresh, Never>
         ) {
-            Task { [modeForCapture, deliveryRoute, recognitionContext, recording] in
+            Task {
+                [modeForCapture, deliveryRoute, recognitionContext, recording, compactLongPauses] in
                 let started = Date()
+                let inferenceRecording: PreparedInferenceRecording
+                if compactLongPauses {
+                    let compactionStarted = Date()
+                    do {
+                        inferenceRecording = try LockedPauseCompactor.prepare(recording)
+                        if inferenceRecording.didCompact {
+                            let inferenceSeconds = TimeInterval(
+                                inferenceRecording.inferenceSampleCount
+                            ) / TimeInterval(inferenceRecording.sampleRate)
+                            FileHandle.standardError.write(Data(String(
+                                format: "↯ inference audio %.2fs → %.2fs · %.2fs quiet pause skipped · %.3fs prep\n",
+                                seconds,
+                                inferenceSeconds,
+                                inferenceRecording.removedDuration,
+                                Date().timeIntervalSince(compactionStarted)
+                            ).utf8))
+                        }
+                    } catch {
+                        inferenceRecording = .unchanged(recording)
+                        FileHandle.standardError.write(Data(
+                            "pause compaction unavailable: \(error.localizedDescription)"
+                                .appending(" · using original audio\n").utf8
+                        ))
+                    }
+                } else {
+                    inferenceRecording = .unchanged(recording)
+                }
+                defer { inferenceRecording.removeTemporaryFile() }
                 do {
                     // File I/O and prompt rebuilding normally finish while
                     // the user is speaking. Awaiting here guarantees that the
@@ -1234,7 +1294,7 @@ struct Run: ParsableCommand {
                     let personalization = await personalizationUpdate.value.snapshot
                     let context = await recognitionContext?.value
                     let transcription: LiveTranscription
-                    switch recording {
+                    switch inferenceRecording.recording {
                     case .memory(let samples, _, _):
                         transcription = try await transcriber.transcribe(
                             samples,
@@ -1274,7 +1334,7 @@ struct Run: ParsableCommand {
                     if defaults.automaticParagraphs,
                        (spokenTemplateSelection.wasTriggered || spokenSelection.mode == .notes),
                        modeForCapture != .notes {
-                        switch recording {
+                        switch inferenceRecording.recording {
                         case .memory(let samples, let sampleRate, _):
                             processingSegments = AudioPauseDetector.refining(
                                 transcription.segments,
@@ -1442,6 +1502,7 @@ struct Run: ParsableCommand {
 
         let startRecording = { (source: String) in
             guard let sessionID = lifecycle.start() else { return }
+            recordingWasLatched = false
             recordingPersonalizationUpdate = preparePersonalization()
             recordingContext = MainActor.assumeIsolated {
                 RecognitionContextCapture.start(source: effectiveRecognitionContext)
@@ -1501,6 +1562,11 @@ struct Run: ParsableCommand {
 
         let stopRecording = {
             guard let sessionID = lifecycle.beginTranscription() else { return }
+            let compactPausesForCapture = LockedPausePolicy.shouldCompact(
+                wasLatched: recordingWasLatched,
+                settingEnabled: defaults.compactLockedPauses
+            )
+            recordingWasLatched = false
             let modeForCapture = recordingMode
             let deliveryRouteForCapture = recordingDeliveryRoute
             let contextForCapture = recordingContext
@@ -1585,6 +1651,7 @@ struct Run: ParsableCommand {
             retryMode = modeForCapture
             retryDeliveryRoute = deliveryRouteForCapture
             retryContext = contextForCapture
+            retryCompactPauses = compactPausesForCapture
             transcribeAndDeliver(
                 recording,
                 mode: modeForCapture,
@@ -1592,6 +1659,7 @@ struct Run: ParsableCommand {
                 recognitionContext: contextForCapture,
                 sessionID: sessionID,
                 audioDuration: seconds,
+                compactLongPauses: compactPausesForCapture,
                 personalizationUpdate: personalizationUpdateForCapture
             )
         }
@@ -1600,6 +1668,7 @@ struct Run: ParsableCommand {
             guard lifecycle.cancelRecording() else { return }
             recordingContext?.cancel()
             recordingContext = nil
+            recordingWasLatched = false
             monitor.stopExitKeyMonitoring()
             capture.cancel()
             try? recordingRecovery.forget()
@@ -1645,6 +1714,7 @@ struct Run: ParsableCommand {
                 recognitionContext: retryContext,
                 sessionID: sessionID,
                 audioDuration: seconds,
+                compactLongPauses: retryCompactPauses,
                 personalizationUpdate: personalizationUpdate
             )
         }
@@ -1681,6 +1751,7 @@ struct Run: ParsableCommand {
             case .cancelRecording:
                 cancelRecording()
             case .setLatched(true, let source):
+                recordingWasLatched = true
                 if monitor.startExitKeyMonitoring() {
                     FileHandle.standardError.write(Data(
                         "↔ recording locked · tap \(source) to transcribe · esc cancels\n".utf8
@@ -1801,6 +1872,7 @@ struct Run: ParsableCommand {
                 : "local command ← transcript on stdin"),
             cleanup: defaults.cleanup,
             automaticParagraphs: defaults.automaticParagraphs,
+            compactLockedPauses: defaults.compactLockedPauses,
             warmMicrophone: defaults.warmMicrophone,
             systemHotkeyAction: systemHotkeyAction
         ))

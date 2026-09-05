@@ -156,6 +156,21 @@ segments reproduce the recognized text exactly, so vocabulary replacements and m
 remain authoritative. Use `--no-auto-paragraphs` for one run or save the preference with
 `parrot settings set --no-auto-paragraphs`.
 
+For notes with long thinking breaks, optional pause compaction can shorten confidently
+near-silent regions of at least five seconds before local inference:
+
+```sh
+parrot settings set --compact-pauses
+parrot --compact-pauses                 # one run only
+```
+
+This applies only after a double-tap locks a live recording. Hold-to-talk and `parrot transcribe`
+keep their exact timelines. Parrot retains 1.5 seconds inside each shortened pause (one second at
+the recording edges), leaves uncertain/noisy audio untouched, and transcribes a private temporary
+copy; the original recovery/history WAV is never rewritten. The setting defaults off because a
+deterministic energy gate is intentionally conservative and is not a learned voice detector. Use
+`parrot settings set --no-compact-pauses` to disable it again.
+
 | Say | Markdown result |
 |---|---|
 | `new paragraph`, `new line` | Paragraph or line break |
@@ -587,6 +602,9 @@ from claiming the mic and global hotkey at the same time. Operational logs are s
 omitted by default.
 Use `parrot daemon status`, `parrot daemon restart`, and `parrot daemon logs` to diagnose it;
 pass `--log-transcripts` only when you intentionally want dictated text in stderr or those logs.
+An in-app update can relaunch a foreground daemon outside launchd. Status still reports that live
+PID and labels it `foreground/update restart`; starting `parrot` again simply confirms that the
+existing process is listening. Quit it from the menu bar or run `parrot daemon stop`.
 
 ### Choosing a microphone
 
@@ -759,6 +777,8 @@ accurate). The benchmark uses your saved vocabulary, fillers, and snippets by de
 `--no-vocabulary`, `--no-fillers`, and `--no-snippets` for a clean model comparison, or
 `--notes` to benchmark the complete local note-formatting path. Add `--spoken-mode-trigger` to
 benchmark the live leading mode-selection path; JSON records both the requested and effective mode.
+Add `--compact-pauses` to compare the locked-recording optimization on the same source; the report
+records original duration, inference duration, removed pause time, and preparation cost.
 Use `--json` to save comparable machine-readable reports. Download each candidate first with
 `parrot models download <id>` so network time is not included in model-load time.
 For reproducible tests or managed deployments, `PARROT_MODELS_DIRECTORY` overrides only the
@@ -768,8 +788,8 @@ managed model cache location; transcript, config, and legacy-model paths stay un
 
 Parrot stores settings only at `~/.config/parrot/config.json`, with user-only permissions.
 The chosen microphone and lowercase choice are remembered during setup. Hotkey, model,
-language, note/dictation mode, pause-aware paragraphs, cleanup, capture policy, and delivery
-can be saved explicitly:
+language, note/dictation mode, pause-aware paragraphs, locked-pause compaction, cleanup, capture
+policy, and delivery can be saved explicitly:
 
 ```sh
 parrot settings
@@ -780,6 +800,7 @@ parrot settings set --template daily # saved shape whenever note mode is active
 parrot settings set --context selected-text # opt-in bounded local Whisper hint
 parrot settings set --model whisper-small.en --mode notes
 parrot settings set --no-auto-paragraphs # disable the note-mode default
+parrot settings set --compact-pauses # opt-in: shorten long quiet breaks in locked notes
 parrot settings set --cleanup
 parrot settings set --cold-mic     # no idle mic; capture starts may clip
 parrot settings set --warm-mic     # default: fast 300ms pre-roll
@@ -798,7 +819,7 @@ plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--not
 `--no-note-hotkey`, `--note-journal`, `--no-note-journal`, `--template`, `--no-template`,
 `--context`, `--model`,
 `--notes`, `--dictation`, `--auto-paragraphs`, `--no-auto-paragraphs`, `--cleanup`,
-`--no-cleanup`, `--clipboard-paste`, `--keystroke-paste`,
+`--no-cleanup`, `--compact-pauses`, `--no-compact-pauses`, `--clipboard-paste`, `--keystroke-paste`,
 `--clipboard-restore-delay-ms`, `--warm-mic`, and `--cold-mic` take priority without changing
 the file.
 `--journal`, `--command`, and `--paste` similarly select one delivery destination without
@@ -862,7 +883,7 @@ parrot update                          # install the latest stable release
 parrot setup                           # one-time setup: permissions + model download
 parrot install --launch-at-login       # register a LaunchAgent (background daemon)
 parrot install --uninstall             # remove the LaunchAgent
-parrot daemon status                   # installed/loaded/running state and pid
+parrot daemon status                   # launchd and foreground/update runtime state + pid
 parrot daemon start                    # start an installed LaunchAgent
 parrot daemon stop                     # stop it without uninstalling it
 parrot daemon restart                  # restart it after configuration changes
@@ -874,6 +895,7 @@ parrot models download <id>            # pre-download a model
 parrot models path                     # show managed and legacy model locations
 parrot models migrate                  # safely move known legacy model bundles
 parrot models benchmark <id> --audio sample.wav
+parrot models benchmark <id> --audio sample.wav --compact-pauses
 parrot transcribe voice-memo.m4a       # adjacent timestamped Markdown
 parrot transcribe *.m4a --output-directory ./notes
 parrot hotkeys                         # list push-to-talk keys
@@ -915,6 +937,8 @@ parrot settings set --audio-history-days 7      # opt-in replay/reprocess window
 parrot settings set --no-audio-history          # stop retaining new audio
 parrot settings set --keep-history-forever      # default: never auto-delete history
 parrot settings set --no-space-after-paste # exact cursor text; default adds one boundary space
+parrot settings set --compact-pauses    # locked notes: shorten long near-silent breaks
+parrot settings set --no-compact-pauses # default: preserve the full inference timeline
 parrot settings set --clipboard-paste       # compatibility insertion + clipboard restore
 parrot settings set --keystroke-paste       # default: never touch the clipboard
 parrot --clipboard-restore-delay-ms 1500     # one-run timing for slow paste targets
@@ -926,6 +950,7 @@ parrot --notes                         # explicit spoken commands → local Mark
 parrot --template meeting              # named shape + note mode for this run
 parrot --no-template                   # ignore a saved shape for this run
 parrot --notes --no-auto-paragraphs    # keep a long note continuous
+parrot --compact-pauses                # one-run locked-note pause optimization
 parrot --dictation                     # override a saved notes mode for one run
 parrot --cleanup                       # conservative local filler/false-start cleanup
 parrot --no-cleanup                    # preserve disfluencies for this run

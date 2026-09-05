@@ -61,6 +61,29 @@ Adaptive pause detection added 5.8 ms (1.6%) to the median while preserving ever
 word. The formatter-only performance test processes a 200-segment note 100 times in roughly
 25 ms total on this Mac, or about 0.25 ms per long note. Plain dictation bypasses both passes.
 
+## Locked-note long-pause compaction
+
+The opt-in inference-copy path was measured on the same Mac and optimized binary with a
+194.12-second controlled note. Four unique `say` sentences and three eight-second digital pauses
+were repeated five times. Both variants used English Base, five warmed runs, and the same exact
+265-word reference.
+
+| Inference audio | Median | Mean | WER |
+|---|---:|---:|---:|
+| Original 194.12 s | 2.893 s | 3.050 s | 0.0% |
+| Compacted 96.32 s | 2.300 s | 2.279 s | 0.0% |
+
+Compaction removed 97.80 seconds while preserving every normalized word. Median model time fell
+593 ms (20.5%); mean time fell 771 ms (25.3%). A separate optimized regression exercised the
+actual file-backed path used after two capture minutes: scanning and privately rewriting 198
+seconds took 9 ms, so the measured end-to-end median gain remains about 584 ms on this sample.
+
+The 38.82-second version preserved 0% WER but moved only from 0.472 to 0.466 seconds, within normal
+run variance. Parrot therefore does not claim a short-recording speedup, applies this only to
+locked captures, and keeps it off by default until a production-proven learned VAD can better
+protect very low-volume speech. `parrot models benchmark ... --compact-pauses` records original,
+inference, skipped, and preparation durations for validation on the user's own voice and Mac.
+
 ## Spoken one-capture mode cost
 
 A 3.63-second `say` clip beginning “note mode, bullet point...” was measured for 20 warmed

@@ -22,6 +22,7 @@ enum StartupTUI {
         let delivery: String
         let cleanup: Bool
         let automaticParagraphs: Bool
+        let compactLockedPauses: Bool
         let warmMicrophone: Bool
         let systemHotkeyAction: String?
     }
@@ -67,6 +68,7 @@ enum StartupTUI {
                 " · delivery: \(details.delivery)" +
                 " · cleanup: \(details.cleanup ? "on (English speech)" : "off")" +
                 " · paragraphs: \(details.automaticParagraphs ? "on in notes" : "off")" +
+                " · pause trim: \(details.compactLockedPauses ? "on when locked" : "off")" +
                 " · capture: \(details.warmMicrophone ? "warm/pre-roll" : "cold/on press")" +
                 "\(history)\(audioHistory)\(noteHotkey)\(noteJournal)\(context)\(systemAction) · ^C to quit\n"
             )
@@ -133,6 +135,12 @@ enum StartupTUI {
         write(row(
             "paragraphs",
             details.automaticParagraphs ? "on  ·  note pauses ≥1.2s" : "off"
+        ))
+        write(row(
+            "pause trim",
+            details.compactLockedPauses
+                ? "on  ·  locked pauses ≥5s · original recovery audio preserved"
+                : "off"
         ))
         write(row("delivery", details.delivery))
         write(row("history", history))

@@ -243,6 +243,13 @@ adds reusable Markdown structures, starter presets, saved and one-run selection,
 spoken switching. Exact placeholders render after the existing local note pipeline; template bodies
 never enter model context, and atomic library edits hot-reload on the next capture.
 
+**6.20 Observable daemon ownership and conservative locked-note pause compaction** — ✅ **complete.**
+The advisory lock now powers runtime status for LaunchAgent, foreground, and updater-relaunched
+processes; duplicate launches succeed with actionable controls, and daemon stop verifies the live
+owner exits. An opt-in, bounded local pass shortens only long near-silent regions in double-tap
+recordings, preserves context plus the original recovery WAV, and exposes same-audio latency/WER
+measurement through the model benchmark command.
+
 ---
 
 ## Suggested release cadence

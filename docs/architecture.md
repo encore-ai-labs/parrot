@@ -386,6 +386,25 @@ text; otherwise it returns the original bytes. Explicit existing line structure 
 no model, prompt, semantic rewrite, or network access, and plain dictation never enters the pass.
 Users can persistently or temporarily disable it.
 
+### `LockedPauseCompactor`
+
+An explicit `--compact-pauses` policy shortens only confidently near-silent runs of at least five
+seconds before inference, and only when the live gesture actually entered double-tap locked mode.
+The hold-to-talk path and stored-media transcription never enter this pass, preserving their exact
+timelines and public timestamps. The built-in default remains off until a production-proven learned
+VAD can guard low-volume speech.
+
+The detector scans 20 ms RMS frames, requires strong recording-wide speech/noise contrast, and
+caps the quiet threshold at RMS 0.0015. It leaves 1.5 seconds in an interior pause and one second
+beside speech at either recording edge, preserving context and note paragraph boundaries. Flat,
+noisy, short, or ambiguous signals return the original sample array unchanged.
+
+Short captures compact an in-memory inference array. Long captures are scanned and copied in
+32,768-sample chunks to a random `0600` WAV inside the private recovery directory, capped at 256
+MiB of input; no duration-sized sample array is created. The original recovery WAV remains the
+authoritative crash/retry/audio-history source, and the temporary inference WAV is removed after
+success or failure. Startup prunes only namespaced remnants from an interrupted process.
+
 ### `NoteFormatter`
 
 `--notes` enables an explicit spoken-command layer after transcription and vocabulary
@@ -576,6 +595,11 @@ opened read-only and never added to normal dictation history.
 
 An advisory lock at `~/.config/parrot/daemon.lock` is held for the process lifetime, preventing
 a foreground invocation and LaunchAgent from both owning the global hotkey and microphone.
+Status tests the advisory lock itself rather than trusting a stale PID file, so it also reports a
+live foreground process or the detached process used to finish an in-app update. A second plain
+`parrot` launch confirms Parrot is ready and shows the owner PID and controls instead of presenting
+the single-instance guard as a startup failure. `parrot daemon stop` sends SIGTERM to either lifecycle
+and verifies that the lock is released within three seconds.
 The LaunchAgent keeps operational stdout/stderr under `~/Library/Logs/Parrot/` with directory
 mode `0700` and file mode `0600`; normal completion logs include latency and character count,
 not transcript text. Oversized inherited logs are capped at 5 MiB on launch. `--log-transcripts`
@@ -664,8 +688,8 @@ flooding LaunchAgent logs.
 A `Codable` struct at `~/.config/parrot/config.json`, holding an optional ordered microphone UID
 list (plus the legacy singular UID for backward compatibility),
 lowercase preference, first-run completion flag, and optional defaults for hotkey, model,
-dictation/notes mode, pause-aware paragraphs, speech cleanup, warm/cold microphone policy,
-cursor spacing, opt-in recognition context, and delivery destination.
+dictation/notes mode, pause-aware paragraphs, opt-in locked-pause compaction, speech cleanup,
+warm/cold microphone policy, cursor spacing, opt-in recognition context, and delivery destination.
 Every field is optional,
 so older config files decode unchanged and nil continues to mean "use the built-in default."
 

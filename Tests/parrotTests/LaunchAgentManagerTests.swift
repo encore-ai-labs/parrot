@@ -67,6 +67,36 @@ final class LaunchAgentManagerTests: XCTestCase {
         )
     }
 
+    func testRuntimeLockIsAuthoritativeForForegroundAndLaunchdPresentation() {
+        let waitingAgent = LaunchAgentStatus(
+            installed: true,
+            loaded: true,
+            state: "waiting",
+            pid: nil,
+            lastExitCode: 1
+        )
+        XCTAssertEqual(
+            DaemonStatusPresentation.resolve(launchAgent: waitingAgent, runtimePID: 42),
+            DaemonStatusPresentation(
+                state: "running",
+                pid: 42,
+                lifecycle: "foreground/update restart"
+            )
+        )
+
+        let runningAgent = LaunchAgentStatus(
+            installed: true,
+            loaded: true,
+            state: "running",
+            pid: 84,
+            lastExitCode: nil
+        )
+        XCTAssertEqual(
+            DaemonStatusPresentation.resolve(launchAgent: runningAgent, runtimePID: 84),
+            DaemonStatusPresentation(state: "running", pid: 84, lifecycle: "launchd")
+        )
+    }
+
     func testStartBootstrapsUnloadedAgentAndKickstartsLoadedAgent() throws {
         let home = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: home) }

@@ -51,6 +51,12 @@ struct ModelBenchmark: ParsableCommand {
     )
     var noAutomaticParagraphs = false
 
+    @Flag(
+        name: .customLong("compact-pauses"),
+        help: "Benchmark conservative long-pause compaction used by locked live recordings."
+    )
+    var compactPauses = false
+
     @Flag(name: .long, help: "Ignore the saved personal vocabulary during this benchmark.")
     var noVocabulary = false
 
@@ -97,11 +103,27 @@ struct ModelBenchmark: ParsableCommand {
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
             throw ValidationError("audio file does not exist: \(audioURL.path)")
         }
-        let samples = try AudioProcessor.loadAudioAsFloatArray(fromPath: audioURL.path)
-        guard !samples.isEmpty else {
+        let originalSamples = try AudioProcessor.loadAudioAsFloatArray(fromPath: audioURL.path)
+        guard !originalSamples.isEmpty else {
             throw ValidationError("audio file contains no samples")
         }
-        let audioSeconds = Double(samples.count) / AudioCapture.targetSampleRate
+        let compactionStarted = ContinuousClock.now
+        let compactionPlan = compactPauses
+            ? LockedPauseCompactor.plan(
+                samples: originalSamples,
+                sampleRate: Int(AudioCapture.targetSampleRate)
+            )
+            : LockedPauseCompactionPlan(
+                sampleRate: Int(AudioCapture.targetSampleRate),
+                originalSampleCount: originalSamples.count,
+                removedRanges: []
+            )
+        let samples = compactionPlan.applying(to: originalSamples)
+        let compactionSeconds = compactPauses
+            ? elapsedSeconds(since: compactionStarted)
+            : 0
+        let audioSeconds = Double(originalSamples.count) / AudioCapture.targetSampleRate
+        let inferenceAudioSeconds = Double(samples.count) / AudioCapture.targetSampleRate
         let expected = try loadReference()
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
         let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
@@ -131,7 +153,17 @@ struct ModelBenchmark: ParsableCommand {
                 : "off"
             print("paragraphs \(paragraphs)")
             print("audio    \(audioURL.path)")
-            print(String(format: "duration %.2fs", audioSeconds))
+            if compactionPlan.didCompact {
+                print(String(
+                    format: "duration %.2fs original · %.2fs inference · %.2fs skipped · %.3fs prep",
+                    audioSeconds,
+                    inferenceAudioSeconds,
+                    compactionPlan.removedDuration,
+                    compactionSeconds
+                ))
+            } else {
+                print(String(format: "duration %.2fs", audioSeconds))
+            }
         }
 
         let loadStarted = ContinuousClock.now
@@ -213,11 +245,15 @@ struct ModelBenchmark: ParsableCommand {
             spokenModeTrigger: spokenModeTrigger,
             effectiveMode: effectiveMode.rawValue,
             automaticParagraphs: effectiveMode == .notes && paragraphPreference,
+            compactPauses: compactPauses,
             vocabularyTerms: vocabulary.entries.count,
             snippets: snippets.entries.count,
             fillers: fillers.entries.count,
             audioPath: audioURL.path,
             audioSeconds: audioSeconds,
+            inferenceAudioSeconds: inferenceAudioSeconds,
+            skippedPauseSeconds: compactionPlan.removedDuration,
+            compactionSeconds: compactionSeconds,
             loadSeconds: loadSeconds,
             runSeconds: timings,
             medianSeconds: median,
@@ -289,11 +325,15 @@ struct ModelBenchmarkReport: Codable {
     let spokenModeTrigger: Bool
     let effectiveMode: String
     let automaticParagraphs: Bool
+    let compactPauses: Bool
     let vocabularyTerms: Int
     let snippets: Int
     let fillers: Int
     let audioPath: String
     let audioSeconds: Double
+    let inferenceAudioSeconds: Double
+    let skippedPauseSeconds: Double
+    let compactionSeconds: Double
     let loadSeconds: Double
     let runSeconds: [Double]
     let medianSeconds: Double

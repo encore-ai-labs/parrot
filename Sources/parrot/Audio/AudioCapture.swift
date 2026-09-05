@@ -159,7 +159,10 @@ final class AudioCapture: NSObject {
     private var ringWrite = 0
     private var ringCount = 0
 
-    private let deviceUID: String?
+    private let preferredDeviceUIDs: [String]
+    /// Startup's already-resolved automatic fallback (including an explicitly
+    /// allowed Bluetooth default) when no ranked device is currently present.
+    private let startupFallbackDeviceUID: String?
     private let usePreRoll: Bool
     /// Accessed only on `sessionQueue`.
     private var configured = false
@@ -172,6 +175,9 @@ final class AudioCapture: NSObject {
     private var reconfigurationRequired = false
     /// Protected by `lock`; avoids scheduling work for every healthy buffer.
     private var needsAudioFlowConfirmation = false
+    /// Protected by `lock`. A better mic that appears mid-dictation is
+    /// promoted only after that capture ends, preserving one continuous source.
+    private var pendingPreferredDevice: (uid: String, name: String)?
     private var sessionObservers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
 
@@ -188,8 +194,14 @@ final class AudioCapture: NSObject {
     /// - Parameter usePreRoll: when false, the session only runs while the
     ///   hotkey is held (no mic indicator at idle, but the front of each
     ///   utterance is clipped).
-    init(device: AudioInputDevice?, usePreRoll: Bool = true) {
-        self.deviceUID = device?.uid
+    init(
+        device: AudioInputDevice?,
+        preferredDeviceUIDs: [String]? = nil,
+        usePreRoll: Bool = true
+    ) {
+        let requested = preferredDeviceUIDs ?? device.map { [$0.uid] } ?? []
+        self.preferredDeviceUIDs = AudioDevices.normalizedPriorityUIDs(requested)
+        self.startupFallbackDeviceUID = device?.uid
         self.usePreRoll = usePreRoll
         self.recoveryState = AudioRecoveryState(keepsSessionWarm: usePreRoll)
         super.init()
@@ -276,6 +288,8 @@ final class AudioCapture: NSObject {
         let wasCapturing = recoveryState.endCapture()
         let out = captured
         captured.removeAll(keepingCapacity: true)
+        let pendingPromotion = pendingPreferredDevice
+        pendingPreferredDevice = nil
         lock.unlock()
 
         // Without pre-roll there's no reason to hold the device open at idle.
@@ -284,6 +298,14 @@ final class AudioCapture: NSObject {
                 recoveryGeneration += 1
                 recoveryScheduled = false
                 if session.isRunning { session.stopRunning() }
+            }
+        }
+        if let pendingPromotion {
+            sessionQueue.async { [weak self] in
+                self?.handlePreferredDeviceConnected(
+                    uid: pendingPromotion.uid,
+                    name: pendingPromotion.name
+                )
             }
         }
         return wasCapturing ? out : []
@@ -349,20 +371,36 @@ final class AudioCapture: NSObject {
     /// the two APIs, and direct lookup avoids AVFoundation's noisy microphone
     /// discovery path (which currently emits a false Continuity Camera warning).
     private func resolveDevice() throws -> AVCaptureDevice {
-        if let uid = deviceUID {
-            if let device = AVCaptureDevice(uniqueID: uid), device.hasMediaType(.audio) {
+        for uid in preferredDeviceUIDs {
+            if let device = AVCaptureDevice(uniqueID: uid),
+               device.isConnected,
+               device.hasMediaType(.audio) {
                 return device
             }
-            // Keep dictation available when a selected USB/interface mic is
+        }
+        if !preferredDeviceUIDs.isEmpty {
+            if let uid = startupFallbackDeviceUID,
+               !preferredDeviceUIDs.contains(uid),
+               let device = AVCaptureDevice(uniqueID: uid),
+               device.isConnected,
+               device.hasMediaType(.audio) {
+                return device
+            }
+            // Keep dictation available when every ranked USB/interface mic is
             // unplugged. Never prefer Bluetooth for this fallback because that
             // would silently degrade headphone playback to call quality.
-            if let fallbackUID = AudioDevices.recoveryFallback(excluding: uid)?.uid,
+            if let fallbackUID = AudioDevices.recoveryFallback(
+                from: AudioDevices.inputs(),
+                defaultDeviceID: AudioDevices.defaultInput()?.id,
+                excluding: Set(preferredDeviceUIDs)
+            )?.uid,
                let fallback = AVCaptureDevice(uniqueID: fallbackUID),
+               fallback.isConnected,
                fallback.hasMediaType(.audio)
             {
                 return fallback
             }
-            throw CaptureError.deviceNotFound(uid)
+            throw CaptureError.deviceNotFound(preferredDeviceUIDs.joined(separator: ", "))
         }
         guard let fallback = AVCaptureDevice.default(for: .audio) else {
             throw CaptureError.deviceNotFound("default")
@@ -415,13 +453,12 @@ final class AudioCapture: NSObject {
             queue: nil
         ) { [weak self] notification in
             guard let self,
-                  let preferredUID = self.deviceUID,
-                  let device = notification.object as? AVCaptureDevice,
-                  device.uniqueID == preferredUID
+                  let device = notification.object as? AVCaptureDevice
             else { return }
+            let uid = device.uniqueID
+            let name = device.localizedName
             self.sessionQueue.async { [weak self] in
-                guard let self, self.activeDeviceUID != preferredUID else { return }
-                self.handleRecoveryEvent(.preferredDeviceConnected(device.localizedName))
+                self?.handlePreferredDeviceConnected(uid: uid, name: name)
             }
         })
 
@@ -463,6 +500,40 @@ final class AudioCapture: NSObject {
         }
         lock.unlock()
 
+        applyRecoveryActions(actions)
+    }
+
+    /// Evaluate rank and capture state atomically. This closes the boundary
+    /// where a new recording could begin between a connection check and the
+    /// reconfiguration event, causing the old single-mic behavior to cancel it.
+    private func handlePreferredDeviceConnected(uid: String, name: String) {
+        lock.lock()
+        let promotion = AudioDevices.promotion(
+            connectedUID: uid,
+            over: activeDeviceUID,
+            priorityUIDs: preferredDeviceUIDs,
+            isCapturing: recoveryState.isCapturing
+        )
+        switch promotion {
+        case .none:
+            lock.unlock()
+            return
+        case .afterCapture:
+            pendingPreferredDevice = (uid, name)
+            lock.unlock()
+            onStatus?("higher-priority microphone connected · switching after this dictation")
+            return
+        case .immediately:
+            let actions = recoveryState.handle(.preferredDeviceConnected(name))
+            ringWrite = 0
+            ringCount = 0
+            reconfigurationRequired = true
+            lock.unlock()
+            applyRecoveryActions(actions)
+        }
+    }
+
+    private func applyRecoveryActions(_ actions: [AudioRecoveryState.Action]) {
         for action in actions {
             switch action {
             case .cancelCapture(let reason):
@@ -522,7 +593,9 @@ final class AudioCapture: NSObject {
                     if !self.session.isRunning { self.session.startRunning() }
                     self.clearReconfigurationRequirement()
                     let name = self.activeDeviceName ?? "system default"
-                    let fallback = self.deviceUID != nil && self.activeDeviceUID != self.deviceUID
+                    let fallback = self.preferredDeviceUIDs.first.map {
+                        self.activeDeviceUID != $0
+                    } ?? false
                     self.onStatus?(
                         "✓ microphone recovered · \(name)\(fallback ? " · temporary fallback" : "")"
                     )

@@ -55,6 +55,16 @@ struct AudioInputDevice {
 }
 
 enum AudioDevices {
+    enum Promotion: Equatable {
+        case none
+        case immediately
+        case afterCapture
+    }
+
+    /// Keep configuration and connection-event comparisons bounded. Eight is
+    /// already more physical microphones than a typical Mac setup exposes.
+    static let maximumPriorityCount = 8
+
     /// Every device with at least one input channel.
     static func inputs() -> [AudioInputDevice] {
         var address = AudioObjectPropertyAddress(
@@ -100,11 +110,73 @@ enum AudioDevices {
     /// Resolve `--input-device`. Matches a UID exactly, or a name
     /// case-insensitively by prefix/substring so `--input-device brio` works.
     static func find(_ query: String) -> AudioInputDevice? {
-        let devices = inputs()
-        let q = query.lowercased()
+        find(query, in: inputs())
+    }
+
+    static func find(_ query: String, in devices: [AudioInputDevice]) -> AudioInputDevice? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return nil }
         if let exact = devices.first(where: { $0.uid.lowercased() == q }) { return exact }
         if let exact = devices.first(where: { $0.name.lowercased() == q }) { return exact }
         return devices.first { $0.name.lowercased().contains(q) }
+    }
+
+    /// De-duplicate user-edited config without changing its explicit order.
+    static func normalizedPriorityUIDs(_ rawUIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        result.reserveCapacity(min(rawUIDs.count, maximumPriorityCount))
+        for rawUID in rawUIDs {
+            let uid = rawUID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !uid.isEmpty, seen.insert(uid).inserted else { continue }
+            result.append(uid)
+            if result.count == maximumPriorityCount { break }
+        }
+        return result
+    }
+
+    /// Select the first currently connected device in the user's saved order.
+    static func highestPriority(
+        from devices: [AudioInputDevice],
+        priorityUIDs: [String]
+    ) -> AudioInputDevice? {
+        for uid in normalizedPriorityUIDs(priorityUIDs) {
+            if let device = devices.first(where: { $0.uid == uid }) { return device }
+        }
+        return nil
+    }
+
+    /// A connection deserves promotion only when it outranks the active mic.
+    /// An unranked active mic is a temporary fallback and loses to any ranked
+    /// device; a lower-ranked connection never disrupts a better active mic.
+    static func shouldPromote(
+        connectedUID: String,
+        over activeUID: String?,
+        priorityUIDs: [String]
+    ) -> Bool {
+        guard let activeUID else { return false }
+        // Capture stores a normalized list already. A slice retains the hard
+        // bound for callers without allocating on a connection notification.
+        let priorities = priorityUIDs.prefix(maximumPriorityCount)
+        guard let connectedRank = priorities.firstIndex(of: connectedUID),
+              connectedUID != activeUID
+        else { return false }
+        guard let activeRank = priorities.firstIndex(of: activeUID) else { return true }
+        return connectedRank < activeRank
+    }
+
+    static func promotion(
+        connectedUID: String,
+        over activeUID: String?,
+        priorityUIDs: [String],
+        isCapturing: Bool
+    ) -> Promotion {
+        guard shouldPromote(
+            connectedUID: connectedUID,
+            over: activeUID,
+            priorityUIDs: priorityUIDs
+        ) else { return .none }
+        return isCapturing ? .afterCapture : .immediately
     }
 
     /// The device parrot should record from — the system default, or the best
@@ -124,7 +196,7 @@ enum AudioDevices {
         recoveryFallback(
             from: inputs(),
             defaultDeviceID: defaultInput()?.id,
-            excluding: excludedUID
+            excluding: [excludedUID]
         )
     }
 
@@ -133,8 +205,20 @@ enum AudioDevices {
         defaultDeviceID: AudioDeviceID?,
         excluding excludedUID: String
     ) -> AudioInputDevice? {
+        recoveryFallback(
+            from: devices,
+            defaultDeviceID: defaultDeviceID,
+            excluding: [excludedUID]
+        )
+    }
+
+    static func recoveryFallback(
+        from devices: [AudioInputDevice],
+        defaultDeviceID: AudioDeviceID?,
+        excluding excludedUIDs: Set<String>
+    ) -> AudioInputDevice? {
         let safe = devices.filter {
-            $0.uid != excludedUID && !$0.isBluetooth && !$0.isVirtual
+            !excludedUIDs.contains($0.uid) && !$0.isBluetooth && !$0.isVirtual
         }
         if let defaultDeviceID,
            let systemDefault = safe.first(where: { $0.id == defaultDeviceID })

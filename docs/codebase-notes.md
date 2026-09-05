@@ -407,6 +407,15 @@ version. Unchanged and older entries fall back to final text. Malformed metadata
 visible transcript, and original text follows the same private permissions, retention, locking,
 and `--no-history` policy instead of creating another database or network path.
 
+**3.30 — One remembered microphone is not enough for docked/mobile workflows.** ✅ **FIXED**
+
+Users can now save up to eight connected microphones in highest-first order. Startup and recovery
+pick the best available ranked UID before a safe non-Bluetooth, non-virtual fallback, and device
+notifications promote only a better rank. Promotion during dictation is deferred until capture
+ends, preventing both mixed-source audio and reconnect-triggered note loss; the decision is atomic
+with capture state, closing the former reconnect/start race. Legacy singular-UID configs decode
+unchanged. Ranking runs only on startup/recovery/connection events, never per audio buffer.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

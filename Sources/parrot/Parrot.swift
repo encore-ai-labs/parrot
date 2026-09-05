@@ -21,32 +21,126 @@ struct Parrot: ParsableCommand {
 
 struct Devices: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "List microphones you can pass to --input-device."
+        abstract: "List microphones and set automatic priority order.",
+        subcommands: [List.self, Prioritize.self, Automatic.self],
+        defaultSubcommand: List.self
     )
 
-    func run() throws {
-        let devices = AudioDevices.inputs()
-        guard !devices.isEmpty else {
-            print("no input devices found")
-            return
+    struct List: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "List connected microphones and saved priorities."
+        )
+
+        func run() throws {
+            let devices = AudioDevices.inputs()
+            guard !devices.isEmpty else {
+                print("no input devices found")
+                return
+            }
+
+            let systemDefault = AudioDevices.defaultInput()
+            let automatic = AudioDevices.preferred(allowBluetooth: false)
+            let priorities = Config.load().savedInputDeviceUIDs
+            let selected = AudioDevices.highestPriority(
+                from: devices,
+                priorityUIDs: priorities
+            ) ?? automatic
+
+            for device in devices {
+                var marks: [String] = []
+                if let rank = priorities.firstIndex(of: device.uid) {
+                    marks.append("priority \(rank + 1)")
+                } else if priorities.isEmpty, device.id == automatic?.id {
+                    marks.append("★ parrot")
+                } else if !priorities.isEmpty, device.id == selected?.id {
+                    marks.append("temporary fallback")
+                }
+                if device.id == systemDefault?.id { marks.append("system default") }
+                let suffix = marks.isEmpty ? "" : "  (\(marks.joined(separator: ", ")))"
+                let name = device.name.padding(toLength: 30, withPad: " ", startingAt: 0)
+                let transport = device.transportName.padding(
+                    toLength: 13,
+                    withPad: " ",
+                    startingAt: 0
+                )
+                print("  \(name) \(transport) \(device.inputChannels)ch\(suffix)")
+            }
+
+            if !priorities.isEmpty {
+                let connected = Set(devices.map(\.uid))
+                let missing = priorities.filter { !connected.contains($0) }
+                if !missing.isEmpty {
+                    print("\n  saved but disconnected: \(missing.joined(separator: ", "))")
+                }
+            }
+
+            if let warning = AudioDevices.bluetoothWarning(for: selected) {
+                print()
+                print(warning)
+            }
+        }
+    }
+
+    struct Prioritize: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Save connected microphones in highest-first fallback order."
+        )
+
+        @Argument(help: "Microphone names or UIDs, highest priority first.")
+        var devices: [String]
+
+        func validate() throws {
+            guard !devices.isEmpty else {
+                throw ValidationError("provide at least one connected microphone name or UID")
+            }
+            guard devices.count <= AudioDevices.maximumPriorityCount else {
+                throw ValidationError(
+                    "microphone priority supports at most \(AudioDevices.maximumPriorityCount) devices"
+                )
+            }
         }
 
-        let systemDefault = AudioDevices.defaultInput()
-        let preferred = AudioDevices.preferred(allowBluetooth: false)
+        func run() throws {
+            let connected = AudioDevices.inputs()
+            var selected: [AudioInputDevice] = []
+            var seen = Set<String>()
+            for query in devices {
+                guard let device = AudioDevices.find(query, in: connected) else {
+                    throw ValidationError(
+                        "unknown connected microphone '\(query)'; run `parrot devices`"
+                    )
+                }
+                guard seen.insert(device.uid).inserted else {
+                    throw ValidationError("microphone '\(device.name)' appears more than once")
+                }
+                selected.append(device)
+            }
 
-        for d in devices {
-            var marks: [String] = []
-            if d.id == preferred?.id { marks.append("★ parrot") }
-            if d.id == systemDefault?.id { marks.append("system default") }
-            let suffix = marks.isEmpty ? "" : "  (\(marks.joined(separator: ", ")))"
-            let name = d.name.padding(toLength: 30, withPad: " ", startingAt: 0)
-            let transport = d.transportName.padding(toLength: 13, withPad: " ", startingAt: 0)
-            print("  \(name) \(transport) \(d.inputChannels)ch\(suffix)")
+            var config = Config.load()
+            config.inputDeviceUIDs = selected.map(\.uid)
+            // Preserve a sensible preference when an older Parrot reads this config.
+            config.inputDeviceUID = selected.first?.uid
+            try config.write()
+            print("✓ saved microphone priority")
+            for (index, device) in selected.enumerated() {
+                print("  \(index + 1). \(device.name) · \(device.transportName)")
+            }
+            print("restart a running Parrot daemon to apply the change")
         }
+    }
 
-        if let warning = AudioDevices.bluetoothWarning(for: preferred) {
-            print()
-            print(warning)
+    struct Automatic: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Clear saved priorities and return to safe automatic selection."
+        )
+
+        func run() throws {
+            var config = Config.load()
+            config.inputDeviceUIDs = nil
+            config.inputDeviceUID = nil
+            try config.write()
+            print("✓ microphone selection restored to automatic")
+            print("restart a running Parrot daemon to apply the change")
         }
     }
 }
@@ -462,6 +556,8 @@ struct Run: ParsableCommand {
         // Pick the mic before anything slow happens, so a bad --input-device
         // fails immediately rather than after a model download.
         let chosenDevice: AudioInputDevice?
+        let capturePriorityUIDs: [String]
+        var shouldRememberChosenDevice = false
         if let query = inputDevice {
             guard let found = AudioDevices.find(query) else {
                 FileHandle.standardError.write(Data("unknown input device: \(query)\n".utf8))
@@ -469,21 +565,45 @@ struct Run: ParsableCommand {
                 throw ExitCode(1)
             }
             chosenDevice = found
+            capturePriorityUIDs = [found.uid]
         } else {
             let suggested = AudioDevices.preferred(allowBluetooth: allowBluetoothInput)
+            let savedPriorities = config.savedInputDeviceUIDs
+            let hasRankedPriorities = !AudioDevices.normalizedPriorityUIDs(
+                config.inputDeviceUIDs ?? []
+            ).isEmpty
             // Prompt only when there's a terminal to prompt at — under launchd
             // there isn't, and blocking a daemon on readLine() hangs it forever.
-            if !noPickMic, AudioDevices.isInteractive {
+            if hasRankedPriorities {
+                chosenDevice = AudioDevices.highestPriority(
+                    from: AudioDevices.inputs(),
+                    priorityUIDs: savedPriorities
+                ) ?? suggested
+                capturePriorityUIDs = savedPriorities
+            } else if !noPickMic, AudioDevices.isInteractive {
                 chosenDevice = AudioDevices.prompt(
                     suggested: suggested, preselect: config.inputDeviceUID
                 )
-            } else if let saved = config.inputDeviceUID, let remembered = AudioDevices.find(saved) {
+                capturePriorityUIDs = chosenDevice.map { [$0.uid] } ?? []
+                shouldRememberChosenDevice = true
+            } else if let remembered = AudioDevices.highestPriority(
+                from: AudioDevices.inputs(),
+                priorityUIDs: savedPriorities
+            ) {
                 chosenDevice = remembered
+                capturePriorityUIDs = savedPriorities
             } else {
                 chosenDevice = suggested
+                // Preserve an unavailable legacy preference so a reconnect can
+                // promote it instead of overwriting it with a temporary fallback.
+                capturePriorityUIDs = savedPriorities.isEmpty
+                    ? (suggested.map { [$0.uid] } ?? [])
+                    : savedPriorities
             }
         }
-        if let uid = chosenDevice?.uid, uid != config.inputDeviceUID {
+        if shouldRememberChosenDevice,
+           let uid = chosenDevice?.uid,
+           uid != config.inputDeviceUID {
             config.inputDeviceUID = uid
             configDirty = true
         }
@@ -638,7 +758,11 @@ struct Run: ParsableCommand {
         defer { NotificationCenter.default.removeObserver(terminationObserver) }
 
         let monitor = HotkeyMonitor(hotkeys: configuredHotkeys, debug: debugHotkey)
-        let capture = AudioCapture(device: chosenDevice, usePreRoll: defaults.warmMicrophone)
+        let capture = AudioCapture(
+            device: chosenDevice,
+            preferredDeviceUIDs: capturePriorityUIDs,
+            usePreRoll: defaults.warmMicrophone
+        )
         capture.onStatus = { message in
             FileHandle.standardError.write(Data("\(message)\n".utf8))
         }

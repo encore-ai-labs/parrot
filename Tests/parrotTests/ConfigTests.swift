@@ -22,6 +22,8 @@ final class ConfigTests: XCTestCase {
 
         XCTAssertEqual(config.lowercase, true)
         XCTAssertEqual(config.inputDeviceUID, "mic-1")
+        XCTAssertNil(config.inputDeviceUIDs)
+        XCTAssertEqual(config.savedInputDeviceUIDs, ["mic-1"])
         XCTAssertEqual(config.setupCompleted, true)
         XCTAssertNil(config.hotkey)
         XCTAssertNil(config.noteHotkey)
@@ -62,10 +64,13 @@ final class ConfigTests: XCTestCase {
         config.warmMicrophone = false
         config.historyRetentionDays = 30
         config.audioHistoryRetentionDays = 7
+        config.inputDeviceUID = "studio"
+        config.inputDeviceUIDs = ["studio", "built-in"]
 
         try config.write(to: url)
 
         XCTAssertEqual(Config.load(from: url), config)
+        XCTAssertEqual(Config.load(from: url).savedInputDeviceUIDs, ["studio", "built-in"])
         XCTAssertEqual(permissions(at: url), 0o600)
         XCTAssertEqual(permissions(at: url.deletingLastPathComponent()), 0o700)
     }

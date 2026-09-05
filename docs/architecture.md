@@ -166,16 +166,22 @@ All session configuration, start, stop, and recovery work runs on one serial que
 observes AVFoundation interruption/runtime/device notifications plus `NSWorkspace` sleep and
 wake notifications. A stream boundary clears pre-roll and cancels any partial recording rather
 than transcribing discontinuous audio. Recovery rebuilds stale inputs with bounded backoff; if
-the preferred mic is absent, only a non-virtual, non-Bluetooth fallback is eligible, and the
-preferred device is restored when it reconnects. The audio delegate consumes the
-`UnsafeBufferPointer` in place, avoiding the former per-buffer `Array` allocation.
+ranked microphones are absent, only a non-virtual, non-Bluetooth fallback is eligible. A newly
+connected ranked device replaces the active mic only if its rank is higher. Promotion is immediate
+while idle and deferred until `stop()` during a capture, so a reconnect neither mixes sources nor
+discards an otherwise valid note. The rank/capture decision and capture transition share one lock,
+closing the old reconnect/start race. The audio delegate consumes the `UnsafeBufferPointer` in
+place, avoiding the former per-buffer `Array` allocation.
 
 ### `AudioDevices`
 
-CoreAudio enumeration and selection: `parrot devices` lists inputs with transport type,
-`--input-device <name|uid>` pins one (substring match, case-insensitive), and
-`--allow-bluetooth-input` opts back into a Bluetooth mic. When the system default is
-Bluetooth, parrot prefers the built-in mic and says so.
+CoreAudio enumeration and selection: `parrot devices` lists inputs with transport type and saved
+rank, `parrot devices prioritize <name-or-uid>...` persists up to eight connected microphones in
+highest-first order, and `parrot devices automatic` clears the order. `--input-device <name|uid>`
+is a one-run pin (substring match, case-insensitive), and `--allow-bluetooth-input` opts automatic
+selection back into a Bluetooth mic. When the system default is Bluetooth, parrot prefers the
+built-in mic and says so. Selection and connection-event routing are bounded linear scans over at
+most eight UIDs and never run in the audio-buffer callback.
 
 ### `Transcriber` (protocol)
 
@@ -576,7 +582,8 @@ flooding LaunchAgent logs.
 
 ### `Config`
 
-A `Codable` struct at `~/.config/parrot/config.json`, holding the chosen microphone UID,
+A `Codable` struct at `~/.config/parrot/config.json`, holding an optional ordered microphone UID
+list (plus the legacy singular UID for backward compatibility),
 lowercase preference, first-run completion flag, and optional defaults for hotkey, model,
 dictation/notes mode, pause-aware paragraphs, speech cleanup, warm/cold microphone policy,
 cursor spacing, opt-in recognition context, and delivery destination.
@@ -588,7 +595,7 @@ parser would have been a new dependency for a handful of keys. The directory and
 forced to `0700` and `0600` respectively; the first read upgrades permissions left by older
 releases without rewriting the file.
 
-Precedence is CLI flags > saved config > interactive prompt > built-in default. Missing or
+Precedence is one-run CLI pin > saved ranked microphones > interactive prompt > built-in default. Missing or
 corrupt config is treated as a first run, never an error. `parrot settings show|set|reset`
 manages the daemon defaults. Because the LaunchAgent intentionally supplies no workflow
 arguments beyond `--skip-doctor`, it follows the same saved values as a foreground launch;

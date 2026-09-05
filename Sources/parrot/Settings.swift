@@ -71,7 +71,11 @@ struct Settings: ParsableCommand {
             }
             print("app rules   \(config.savedAppRules.count)")
             print("lowercase   \((config.lowercase ?? false) ? "on" : "off")")
-            print("microphone  \(config.inputDeviceUID ?? "automatic")")
+            let microphones = config.savedInputDeviceUIDs
+            print(
+                "microphones "
+                    + (microphones.isEmpty ? "automatic" : microphones.joined(separator: " → "))
+            )
             print("config      \(Config.url.path)")
         }
     }

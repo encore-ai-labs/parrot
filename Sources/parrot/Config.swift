@@ -14,6 +14,9 @@ struct Config: Codable, Equatable {
     var lowercase: Bool?
     /// CoreAudio UID of the last microphone chosen, used to preselect it.
     var inputDeviceUID: String?
+    /// Explicit, highest-first microphone order. The singular field remains
+    /// readable for configs written before ranked microphones shipped.
+    var inputDeviceUIDs: [String]?
     /// Set once first-run setup completes, so we don't re-ask every launch.
     var setupCompleted: Bool?
     /// Default push-to-talk key. Command-line options remain one-run overrides.
@@ -56,6 +59,12 @@ struct Config: Codable, Equatable {
     /// Opt-in rolling retention for private recording history. Nil stores no
     /// delivered audio. A finite limit keeps disk and privacy cost bounded.
     var audioHistoryRetentionDays: Int?
+
+    var savedInputDeviceUIDs: [String] {
+        let ranked = AudioDevices.normalizedPriorityUIDs(inputDeviceUIDs ?? [])
+        if !ranked.isEmpty { return ranked }
+        return AudioDevices.normalizedPriorityUIDs(inputDeviceUID.map { [$0] } ?? [])
+    }
 
     static var directory: URL {
         FileManager.default.homeDirectoryForCurrentUser

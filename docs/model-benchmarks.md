@@ -134,6 +134,14 @@ round trips of a roughly 24 KB recognition averaged 142 ms total on this Mac, or
 per unusually long changed entry**. Normal dictations are much shorter, unchanged entries store
 nothing extra, and history work remains after successful delivery.
 
+## Ranked microphone routing cost
+
+Microphone selection is event-driven: no priority work runs in the sample-buffer callback. With
+the maximum eight saved UIDs, 100,000 higher-rank connection decisions averaged 70 ms in the
+debug performance harness on this Mac, or about **0.70 microseconds per device connection event**.
+Startup and actual recovery additionally enumerate current CoreAudio devices, work that already
+existed and remains outside capture and inference.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

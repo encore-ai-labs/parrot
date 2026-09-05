@@ -4,6 +4,20 @@ import XCTest
 @testable import parrot
 
 final class AudioRecoveryTests: XCTestCase {
+    func testDevicePriorityCommandsParseAndBoundRankedMicrophones() throws {
+        XCTAssertTrue(try Devices.parseAsRoot([]) is Devices.List)
+        let priority = try XCTUnwrap(
+            try Devices.parseAsRoot([
+                "prioritize", "Studio USB", "MacBook Pro Microphone",
+            ]) as? Devices.Prioritize
+        )
+        XCTAssertEqual(priority.devices, ["Studio USB", "MacBook Pro Microphone"])
+        XCTAssertTrue(try Devices.parseAsRoot(["automatic"]) is Devices.Automatic)
+        XCTAssertThrowsError(try Devices.parseAsRoot(
+            ["prioritize"] + (0...AudioDevices.maximumPriorityCount).map { "mic-\($0)" }
+        ))
+    }
+
     func testRuntimeErrorCancelsPartialCaptureAndReconfiguresWarmSession() {
         var state = AudioRecoveryState(keepsSessionWarm: true)
         state.beginCapture()
@@ -70,7 +84,7 @@ final class AudioRecoveryTests: XCTestCase {
         XCTAssertTrue(state.beginCapture())
     }
 
-    func testPreferredMicReconnectCancelsMixedDeviceCapture() {
+    func testRawRecoveryStateStillRejectsAnUnsafeMidCaptureDeviceSwitch() {
         var state = AudioRecoveryState(keepsSessionWarm: true)
         state.beginCapture()
 
@@ -131,6 +145,106 @@ final class AudioRecoveryTests: XCTestCase {
             defaultDeviceID: bluetooth.id,
             excluding: selected.uid
         ))
+    }
+
+    func testMicrophonePrioritySelectsHighestConnectedAndBoundsEditedConfig() throws {
+        let studio = device(id: 1, uid: "studio", transport: kAudioDeviceTransportTypeUSB)
+        let builtIn = device(id: 2, uid: "built-in", transport: kAudioDeviceTransportTypeBuiltIn)
+        let duplicateAndOversized = ["", "studio", "studio", "built-in"]
+            + (0..<20).map { "extra-\($0)" }
+
+        XCTAssertEqual(
+            AudioDevices.normalizedPriorityUIDs(duplicateAndOversized),
+            ["studio", "built-in", "extra-0", "extra-1", "extra-2", "extra-3", "extra-4", "extra-5"]
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(AudioDevices.highestPriority(
+                from: [builtIn],
+                priorityUIDs: [studio.uid, builtIn.uid]
+            )).uid,
+            builtIn.uid
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(AudioDevices.highestPriority(
+                from: [builtIn, studio],
+                priorityUIDs: [studio.uid, builtIn.uid]
+            )).uid,
+            studio.uid
+        )
+        XCTAssertEqual(try XCTUnwrap(AudioDevices.find(" Studio ", in: [studio])).uid, studio.uid)
+        XCTAssertNil(AudioDevices.find("   ", in: [studio]))
+    }
+
+    func testOnlyHigherPriorityConnectionPromotesAndActiveCaptureDefersIt() {
+        let priorities = ["studio", "display", "built-in"]
+
+        XCTAssertEqual(
+            AudioDevices.promotion(
+                connectedUID: "studio",
+                over: "built-in",
+                priorityUIDs: priorities,
+                isCapturing: false
+            ),
+            .immediately
+        )
+        XCTAssertEqual(
+            AudioDevices.promotion(
+                connectedUID: "studio",
+                over: "built-in",
+                priorityUIDs: priorities,
+                isCapturing: true
+            ),
+            .afterCapture
+        )
+        XCTAssertEqual(
+            AudioDevices.promotion(
+                connectedUID: "built-in",
+                over: "studio",
+                priorityUIDs: priorities,
+                isCapturing: false
+            ),
+            .none
+        )
+        XCTAssertEqual(
+            AudioDevices.promotion(
+                connectedUID: "unranked",
+                over: "built-in",
+                priorityUIDs: priorities,
+                isCapturing: false
+            ),
+            .none
+        )
+    }
+
+    func testFallbackExcludesEveryUnavailableRankedMicrophone() throws {
+        let studio = device(id: 1, uid: "studio", transport: kAudioDeviceTransportTypeUSB)
+        let display = device(id: 2, uid: "display", transport: kAudioDeviceTransportTypeDisplayPort)
+        let builtIn = device(id: 3, uid: "built-in", transport: kAudioDeviceTransportTypeBuiltIn)
+
+        let fallback = AudioDevices.recoveryFallback(
+            from: [studio, display, builtIn],
+            defaultDeviceID: display.id,
+            excluding: [studio.uid, display.uid]
+        )
+
+        XCTAssertEqual(try XCTUnwrap(fallback).uid, builtIn.uid)
+    }
+
+    func testPriorityConnectionRoutingCostStaysNegligible() {
+        let priorities = (0..<AudioDevices.maximumPriorityCount).map { "mic-\($0)" }
+        var promotion = AudioDevices.Promotion.none
+
+        measure {
+            for _ in 0..<100_000 {
+                promotion = AudioDevices.promotion(
+                    connectedUID: "mic-0",
+                    over: "mic-7",
+                    priorityUIDs: priorities,
+                    isCapturing: false
+                )
+            }
+        }
+        XCTAssertEqual(promotion, .immediately)
     }
 
     private func device(

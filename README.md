@@ -522,11 +522,26 @@ microphone
 ```sh
 parrot devices                # just list them
 parrot --input-device brio    # pick up front, no prompt
-parrot --no-pick-mic          # use the remembered one, no prompt
+parrot --no-pick-mic          # use saved priority/remembered mic, no prompt
 ```
 
 There's no prompt when there's no terminal (under `launchd`, say) — it falls through to your
-remembered device, or the recommended one.
+highest available saved device, or the recommended one.
+
+For a dock/headset setup, save an explicit highest-first order once:
+
+```sh
+parrot devices prioritize "Logitech BRIO" "MacBook Pro Microphone"
+parrot devices                         # shows ranks and disconnected saved devices
+parrot daemon restart                  # apply it to a running background daemon
+parrot devices automatic               # return to safe automatic selection
+```
+
+Parrot uses the first connected ranked microphone. If it disappears, capture recovers onto the
+next ranked device, then onto a safe non-Bluetooth, non-virtual fallback. When a better-ranked mic
+returns, Parrot promotes it automatically. A reconnect during an active dictation waits until that
+dictation ends, so one note never mixes microphones or gets discarded merely because a dock was
+plugged in. Explicit priorities may include Bluetooth; automatic fallback still avoids it.
 
 **Don't record from Bluetooth headphones if you're listening to music on them.** macOS can't
 run high-quality playback and mic capture on the same Bluetooth device at once — opening a
@@ -748,6 +763,8 @@ parrot transcribe voice-memo.m4a       # adjacent timestamped Markdown
 parrot transcribe *.m4a --output-directory ./notes
 parrot hotkeys                         # list push-to-talk keys
 parrot devices                         # list microphones
+parrot devices prioritize "USB mic" "MacBook Pro Microphone" # ranked fallback
+parrot devices automatic               # clear saved microphone priorities
 parrot apps add Notes --mode notes     # local automatic mode rule
 parrot apps list                       # show saved app-mode rules
 parrot vocabulary                      # list personal recognition hints/replacements

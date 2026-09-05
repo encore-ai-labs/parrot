@@ -32,6 +32,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.deliveryCommand)
         XCTAssertNil(config.cleanup)
         XCTAssertNil(config.automaticParagraphs)
+        XCTAssertNil(config.spaceAfterPaste)
         XCTAssertEqual(permissions(at: root), 0o700)
         XCTAssertEqual(permissions(at: url), 0o600)
     }
@@ -48,6 +49,7 @@ final class ConfigTests: XCTestCase {
         config.journalPath = "/tmp/notes.md"
         config.cleanup = true
         config.automaticParagraphs = false
+        config.spaceAfterPaste = false
 
         try config.write(to: url)
 
@@ -95,7 +97,8 @@ final class ConfigTests: XCTestCase {
                 journalPath: nil,
                 deliveryCommand: nil,
                 cleanup: false,
-                automaticParagraphs: true
+                automaticParagraphs: true,
+                spaceAfterPaste: true
             )
         )
         XCTAssertEqual(
@@ -115,7 +118,8 @@ final class ConfigTests: XCTestCase {
                 journalPath: nil,
                 deliveryCommand: nil,
                 cleanup: false,
-                automaticParagraphs: true
+                automaticParagraphs: true,
+                spaceAfterPaste: true
             )
         )
     }
@@ -293,6 +297,41 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(overridden.automaticParagraphs)
     }
 
+    func testRuntimeDefaultsAddPasteSpaceByDefaultAndAllowOverrides() throws {
+        var config = Config()
+        let builtIn = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertTrue(builtIn.spaceAfterPaste)
+
+        config.spaceAfterPaste = false
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertFalse(saved.spaceAfterPaste)
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            spaceAfterPasteOverride: true,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertTrue(overridden.spaceAfterPaste)
+    }
+
     func testRuntimeDefaultsRejectConflictingModeOverrides() {
         XCTAssertThrowsError(
             try RuntimeDefaults.resolve(
@@ -313,6 +352,7 @@ final class ConfigTests: XCTestCase {
                 "set", "--hotkey", "ralt", "--model", "whisper-small.en",
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
+                "--no-space-after-paste",
             ]) as? Settings.Set
         )
         XCTAssertEqual(set.hotkey, "ralt")
@@ -322,6 +362,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(set.journal, "/tmp/inbox.md")
         XCTAssertTrue(set.cleanup)
         XCTAssertTrue(set.automaticParagraphs)
+        XCTAssertTrue(set.noSpaceAfterPaste)
         XCTAssertTrue(try Settings.parseAsRoot(["reset"]) is Settings.Reset)
 
         let paste = try XCTUnwrap(
@@ -354,6 +395,9 @@ final class ConfigTests: XCTestCase {
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--cleanup", "--no-cleanup"]))
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--auto-paragraphs", "--no-auto-paragraphs",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--space-after-paste", "--no-space-after-paste",
         ]))
     }
 

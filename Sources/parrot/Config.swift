@@ -38,6 +38,9 @@ struct Config: Codable, Equatable {
     /// Insert paragraphs at deliberate pauses while note mode is active.
     /// Nil preserves the built-in on default for notes.
     var automaticParagraphs: Bool?
+    /// Add one boundary space after cursor-injected text. This never changes
+    /// history, journal, command, or stored-file output.
+    var spaceAfterPaste: Bool?
 
     static var directory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -124,6 +127,7 @@ struct RuntimeDefaults: Equatable {
     let deliveryCommand: String?
     let cleanup: Bool
     let automaticParagraphs: Bool
+    let spaceAfterPaste: Bool
 
     static func resolve(
         config: Config,
@@ -137,6 +141,7 @@ struct RuntimeDefaults: Equatable {
         paste: Bool = false,
         cleanupOverride: Bool? = nil,
         automaticParagraphsOverride: Bool? = nil,
+        spaceAfterPasteOverride: Bool? = nil,
         recommendedModel: String
     ) throws -> RuntimeDefaults {
         guard !(notes && dictation) else {
@@ -187,7 +192,8 @@ struct RuntimeDefaults: Equatable {
             cleanup: cleanupOverride ?? config.cleanup ?? false,
             automaticParagraphs: automaticParagraphsOverride
                 ?? config.automaticParagraphs
-                ?? true
+                ?? true,
+            spaceAfterPaste: spaceAfterPasteOverride ?? config.spaceAfterPaste ?? true
         )
     }
 }

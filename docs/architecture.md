@@ -199,6 +199,13 @@ Adding an engine = one new file conforming to `Transcriber`.
 
 `CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString` — pastes the transcript at the current cursor position. Works in nearly every text field on macOS (some Electron apps and secure fields are flaky; platform constraint).
 
+Cursor delivery prepares a separate string with one trailing boundary space by default, avoiding
+concatenation across consecutive captures. It does not double existing whitespace and can be
+disabled with `--no-space-after-paste` or the persisted setting. Preparation lives inside
+`TextInjector`, after delivery routing, so the boundary byte never enters transcript history,
+Markdown journals, local-command stdin, file output, recovery state, or model context. The policy
+does not inspect surrounding application text, selections, windows, or the clipboard.
+
 ### `MarkdownJournal`
 
 `--journal <path>` replaces cursor injection with a timestamped append to a user-selected

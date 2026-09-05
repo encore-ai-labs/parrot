@@ -382,7 +382,9 @@ created and resumed.
 
 ### P5 — smaller things
 
-- No trailing space after injection, so back-to-back dictations concatenate (`helloworld`).
+- ✅ **FIXED** — Cursor injection adds one configurable delivery-only boundary space, so
+  back-to-back dictations cannot concatenate (`helloworld`). History, journals, command stdin,
+  and file output retain exact processed text; no surrounding application content is inspected.
 - No `DecodingOptions` passed to WhisperKit — no language hint, and no control over
   temperature fallback, which is the main lever against hallucination loops.
 - `Setup.waitForAccessibility` throws `ExitCode(0)` on the incomplete path (`Setup.swift:42`),

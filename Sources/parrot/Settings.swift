@@ -33,6 +33,10 @@ struct Settings: ParsableCommand {
                 "paragraphs   \(defaults.automaticParagraphs ? "on in notes" : "off")"
                     + "\(config.automaticParagraphs == nil ? "  (default)" : "")"
             )
+            print(
+                "paste space  \(defaults.spaceAfterPaste ? "on" : "off")"
+                    + "\(config.spaceAfterPaste == nil ? "  (default)" : "")"
+            )
             if let journalPath = defaults.journalPath {
                 print("delivery    journal → \(StartupTUI.displayPath(URL(fileURLWithPath: journalPath)))")
             } else if defaults.deliveryCommand != nil {
@@ -94,10 +98,23 @@ struct Settings: ParsableCommand {
         )
         var noAutomaticParagraphs: Bool = false
 
+        @Flag(
+            name: .customLong("space-after-paste"),
+            help: "Add a boundary space after cursor-injected text."
+        )
+        var spaceAfterPaste: Bool = false
+
+        @Flag(
+            name: .customLong("no-space-after-paste"),
+            help: "Inject exact text with no trailing boundary space."
+        )
+        var noSpaceAfterPaste: Bool = false
+
         func validate() throws {
             guard hotkey != nil || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
-                    || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs else {
+                    || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
+                    || spaceAfterPaste || noSpaceAfterPaste else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
@@ -111,6 +128,11 @@ struct Settings: ParsableCommand {
             guard !(automaticParagraphs && noAutomaticParagraphs) else {
                 throw ValidationError(
                     "pass at most one of --auto-paragraphs or --no-auto-paragraphs"
+                )
+            }
+            guard !(spaceAfterPaste && noSpaceAfterPaste) else {
+                throw ValidationError(
+                    "pass at most one of --space-after-paste or --no-space-after-paste"
                 )
             }
             if let hotkey, Hotkey.parse(hotkey) == nil {
@@ -136,7 +158,8 @@ struct Settings: ParsableCommand {
         func run() throws {
             guard hotkey != nil || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
-                    || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs else {
+                    || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
+                    || spaceAfterPaste || noSpaceAfterPaste else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
@@ -185,6 +208,9 @@ struct Settings: ParsableCommand {
             if automaticParagraphs || noAutomaticParagraphs {
                 config.automaticParagraphs = automaticParagraphs
             }
+            if spaceAfterPaste || noSpaceAfterPaste {
+                config.spaceAfterPaste = spaceAfterPaste
+            }
             let effectiveModelID = config.model ?? ModelRegistry.recommended()?.id ?? ""
             guard let effectiveModel = ModelRegistry.find(effectiveModelID) else {
                 throw ValidationError("no transcription model is available")
@@ -218,6 +244,7 @@ struct Settings: ParsableCommand {
             config.deliveryCommand = nil
             config.cleanup = nil
             config.automaticParagraphs = nil
+            config.spaceAfterPaste = nil
             try config.write()
             print("✓ reset transcription, formatting, and delivery defaults")
             print("restart a running Parrot daemon to apply the change")

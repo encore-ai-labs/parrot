@@ -9,7 +9,8 @@ enum TextInjector {
     /// Inject the given text at the current cursor location.
     /// Splits long strings into chunks because the underlying API has a
     /// per-event character limit (~20 chars).
-    static func inject(_ text: String) {
+    static func inject(_ text: String, appendSpace: Bool) {
+        let text = preparedText(text, appendSpace: appendSpace)
         guard !text.isEmpty else { return }
 
         let utf16 = Array(text.utf16)
@@ -22,6 +23,16 @@ enum TextInjector {
             postChunk(&chunk)
             index = end
         }
+    }
+
+    /// Keeps delivery-only whitespace out of history and other output paths.
+    /// Existing whitespace is authoritative and never doubled.
+    static func preparedText(_ text: String, appendSpace: Bool) -> String {
+        guard appendSpace,
+              let last = text.unicodeScalars.last,
+              !CharacterSet.whitespacesAndNewlines.contains(last)
+        else { return text }
+        return text + " "
     }
 
     private static func postChunk(_ chunk: inout [UniChar]) {

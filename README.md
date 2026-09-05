@@ -59,6 +59,12 @@ Ordinary keys, including Return, remain usable and do not stop the recording.
 Press **Escape** at any point while recording to cancel and discard the audio without
 transcribing, saving history, or injecting text. Escape is consumed as part of cancellation.
 
+Cursor delivery adds one trailing boundary space by default, so consecutive captures become
+`first thought. second thought.` instead of `first thought.second thought.` Existing trailing
+whitespace is never doubled. This delivery-only space is not stored in history, journals, command
+input, or file transcripts. Disable it for exact-input workflows with
+`parrot settings set --no-space-after-paste`, or use `--no-space-after-paste` for one run.
+
 If inference fails—or the daemon is interrupted after a recording—open the menu-bar bird and
 choose **Retry Recovered Recording**. After any successful dictation, **Retry Last Recording**
 can immediately reprocess the in-memory audio with the currently selected mode, without loading
@@ -579,9 +585,11 @@ parrot history copy                    # recover the latest transcript to clipbo
 parrot stats                            # private usage/timing insights from history
 parrot settings                         # show effective saved daemon defaults
 parrot settings set --hotkey end --mode notes
+parrot settings set --no-space-after-paste # exact cursor text; default adds one boundary space
 parrot --journal ~/Documents/Notes/inbox.md # append there; don't type at cursor
 parrot --command '$HOME/bin/route-parrot-note' # final text on stdin; don't paste
 parrot --paste                         # override any saved destination for one run
+parrot --no-space-after-paste          # exact cursor insertion for this run
 parrot --notes                         # explicit spoken commands → local Markdown
 parrot --notes --no-auto-paragraphs    # keep a long note continuous
 parrot --dictation                     # override a saved notes mode for one run

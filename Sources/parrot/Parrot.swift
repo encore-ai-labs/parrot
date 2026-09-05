@@ -196,6 +196,18 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Type at the cursor even when another delivery default is saved.")
     var paste: Bool = false
 
+    @Flag(
+        name: .customLong("space-after-paste"),
+        help: "Add a boundary space after cursor-injected text."
+    )
+    var spaceAfterPaste: Bool = false
+
+    @Flag(
+        name: .customLong("no-space-after-paste"),
+        help: "Inject exact text without the saved trailing boundary space."
+    )
+    var noSpaceAfterPaste: Bool = false
+
     @Flag(name: .long, help: "Re-run first-time setup and overwrite saved preferences.")
     var reconfigure: Bool = false
 
@@ -212,6 +224,11 @@ struct Run: ParsableCommand {
         guard !(automaticParagraphs && noAutomaticParagraphs) else {
             throw ValidationError(
                 "pass at most one of --auto-paragraphs or --no-auto-paragraphs"
+            )
+        }
+        guard !(spaceAfterPaste && noSpaceAfterPaste) else {
+            throw ValidationError(
+                "pass at most one of --space-after-paste or --no-space-after-paste"
             )
         }
         if let journal {
@@ -265,6 +282,9 @@ struct Run: ParsableCommand {
                 cleanupOverride: cleanup || noCleanup ? cleanup : nil,
                 automaticParagraphsOverride: automaticParagraphs || noAutomaticParagraphs
                     ? automaticParagraphs
+                    : nil,
+                spaceAfterPasteOverride: spaceAfterPaste || noSpaceAfterPaste
+                    ? spaceAfterPaste
                     : nil,
                 recommendedModel: recommendedModel
             )
@@ -668,7 +688,7 @@ struct Run: ParsableCommand {
                     let didFinish = await MainActor.run { () -> Bool in
                         guard lifecycle.finish(sessionID) else { return false }
                         if deliveryDecision.injectAtCursor {
-                            TextInjector.inject(text)
+                            TextInjector.inject(text, appendSpace: defaults.spaceAfterPaste)
                         }
                         overlay?.hide()
                         menuBar.setRecording(false)
@@ -954,7 +974,9 @@ struct Run: ParsableCommand {
             historyPath: historyPath,
             delivery: journalWriter.map {
                 "journal → \(StartupTUI.displayPath($0.url))"
-            } ?? (commandDelivery == nil ? "paste at cursor" : "local command ← transcript on stdin"),
+            } ?? (commandDelivery == nil
+                ? "paste at cursor · boundary space \(defaults.spaceAfterPaste ? "on" : "off")"
+                : "local command ← transcript on stdin"),
             cleanup: defaults.cleanup,
             automaticParagraphs: defaults.automaticParagraphs,
             systemHotkeyAction: systemHotkeyAction

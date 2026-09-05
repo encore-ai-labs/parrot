@@ -4,6 +4,7 @@ enum TranscriberFactory {
     static func make(
         model: TranscriptionModel,
         language: String = RecognitionLanguage.automatic,
+        automaticParagraphs: Bool = false,
         vocabulary: PersonalVocabulary = PersonalVocabulary(),
         additionalPromptTerms: [String] = [],
         notePromptTerms: [String] = []
@@ -20,6 +21,7 @@ enum TranscriberFactory {
                     requested: language,
                     model: model
                 ),
+                automaticParagraphs: automaticParagraphs,
                 vocabulary: vocabulary,
                 additionalPromptTerms: additionalPromptTerms,
                 notePromptTerms: notePromptTerms
@@ -27,6 +29,7 @@ enum TranscriberFactory {
         case .parakeet:
             return ParakeetTranscriber(
                 model: model,
+                automaticParagraphs: automaticParagraphs,
                 vocabulary: vocabulary
             )
         }

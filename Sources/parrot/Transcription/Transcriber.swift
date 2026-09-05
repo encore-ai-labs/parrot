@@ -17,4 +17,15 @@ extension Transcriber {
 struct LiveTranscription: Equatable, Sendable {
     let text: String
     let language: String
+    let segments: [TimedTranscriptSegment]
+
+    init(
+        text: String,
+        language: String,
+        segments: [TimedTranscriptSegment] = []
+    ) {
+        self.text = text
+        self.language = language
+        self.segments = segments
+    }
 }

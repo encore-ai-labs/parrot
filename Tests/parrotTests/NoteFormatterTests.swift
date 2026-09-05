@@ -85,6 +85,21 @@ final class NoteFormatterTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(try Run.parseAsRoot([]) as? Run).noteMode)
     }
 
+    func testAutomaticParagraphFlagsParseAndConflict() throws {
+        let enabled = try XCTUnwrap(
+            try Run.parseAsRoot(["--notes", "--auto-paragraphs"]) as? Run
+        )
+        XCTAssertTrue(enabled.automaticParagraphs)
+
+        let disabled = try XCTUnwrap(
+            try Run.parseAsRoot(["--notes", "--no-auto-paragraphs"]) as? Run
+        )
+        XCTAssertTrue(disabled.noAutomaticParagraphs)
+        XCTAssertThrowsError(try Run.parseAsRoot([
+            "--auto-paragraphs", "--no-auto-paragraphs",
+        ]))
+    }
+
     func testFormatterPerformance() {
         let input = """
         Heading one Weekly review. New paragraph. Bullet point Finished the local history search.

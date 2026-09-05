@@ -49,6 +49,18 @@ struct Transcribe: ParsableCommand {
     @Flag(name: .customLong("no-cleanup"), help: "Preserve disfluencies even if cleanup is saved.")
     var noCleanup = false
 
+    @Flag(
+        name: .customLong("auto-paragraphs"),
+        help: "Insert paragraphs at deliberate pauses while using note mode."
+    )
+    var automaticParagraphs = false
+
+    @Flag(
+        name: .customLong("no-auto-paragraphs"),
+        help: "Keep note-mode output continuous even if automatic paragraphs are saved."
+    )
+    var noAutomaticParagraphs = false
+
     @Flag(name: .long, help: "Ignore saved personal vocabulary.")
     var noVocabulary = false
 
@@ -86,6 +98,11 @@ struct Transcribe: ParsableCommand {
         }
         guard !(cleanup && noCleanup) else {
             throw ValidationError("pass at most one of --cleanup or --no-cleanup")
+        }
+        guard !(automaticParagraphs && noAutomaticParagraphs) else {
+            throw ValidationError(
+                "pass at most one of --auto-paragraphs or --no-auto-paragraphs"
+            )
         }
         guard output == nil || outputDirectory == nil else {
             throw ValidationError("pass at most one of --output or --output-directory")
@@ -155,6 +172,12 @@ struct Transcribe: ParsableCommand {
         } else {
             cleanupOutput = config.cleanup ?? false
         }
+        let automaticParagraphsOutput: Bool
+        if automaticParagraphs || noAutomaticParagraphs {
+            automaticParagraphsOutput = automaticParagraphs
+        } else {
+            automaticParagraphsOutput = config.automaticParagraphs ?? true
+        }
 
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
         let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
@@ -162,6 +185,7 @@ struct Transcribe: ParsableCommand {
         let transcriber = TranscriberFactory.make(
             model: selectedModel,
             language: canonicalLanguage,
+            automaticParagraphs: mode == .notes && automaticParagraphsOutput,
             vocabulary: vocabulary,
             additionalPromptTerms: snippets.promptTerms,
             notePromptTerms: NoteFormatter.promptTerms
@@ -194,6 +218,8 @@ struct Transcribe: ParsableCommand {
                     mode: mode,
                     lowercase: lowercaseOutput,
                     cleanup: applyCleanup,
+                    automaticParagraphs: automaticParagraphsOutput,
+                    segments: transcription.segments,
                     snippets: snippetExpander
                 )
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -214,6 +240,7 @@ struct Transcribe: ParsableCommand {
                     sourceName: job.input.lastPathComponent,
                     model: selectedModel.id,
                     mode: mode.rawValue,
+                    automaticParagraphs: mode == .notes && automaticParagraphsOutput,
                     language: transcription.language,
                     transcribedAt: Self.timestamp(Date()),
                     audioSeconds: audioSeconds,
@@ -401,9 +428,14 @@ enum TranscriptProcessing {
         mode: DictationMode,
         lowercase: Bool,
         cleanup: Bool = false,
+        automaticParagraphs: Bool = false,
+        segments: [TimedTranscriptSegment] = [],
         snippets: SnippetExpander
     ) -> String {
-        let cleaned = cleanup ? SpeechCleanup.clean(raw) : raw
+        let structured = mode == .notes && automaticParagraphs
+            ? AutomaticParagraphFormatter.format(raw, segments: segments)
+            : raw
+        let cleaned = cleanup ? SpeechCleanup.clean(structured) : structured
         let formatted = mode == .notes ? NoteFormatter.format(cleaned) : cleaned
         let cased = lowercase ? formatted.lowercased() : formatted
         return snippets.applying(to: cased)
@@ -433,6 +465,7 @@ struct FileTranscriptReport: Codable, Equatable {
     let sourceName: String
     let model: String
     let mode: String
+    let automaticParagraphs: Bool
     let language: String
     let transcribedAt: String
     let audioSeconds: Double
@@ -462,6 +495,7 @@ enum FileTranscriptRenderer {
             output += "- Transcribed: \(report.transcribedAt)\n"
             output += "- Model: `\(escapeCode(report.model))`\n"
             output += "- Mode: \(report.mode)\n"
+            output += "- Automatic paragraphs: \(report.automaticParagraphs ? "on" : "off")\n"
             output += "- Language: \(report.language)\n"
             output += "- Duration: \(timestamp(report.audioSeconds))\n"
             output += String(

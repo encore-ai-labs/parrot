@@ -238,6 +238,22 @@ Cleanup runs before `NoteFormatter` so spoken structure still works, and before
 `SnippetExpander` so saved snippet bodies remain byte-for-byte unchanged. File transcription
 uses the same pass for both primary text and timestamped segment text.
 
+### `AudioPauseDetector` / `AutomaticParagraphFormatter`
+
+Note mode enables pause-aware paragraphs by default. Current recognition engines already return
+coarse timed segments, but Whisper segments can include the silence before the next thought.
+`AudioPauseDetector` therefore reads only a 3.15-second window around each boundary (or uses the
+live samples already in memory), derives a local adaptive noise threshold, and shortens the
+preceding boundary only after at least 1.2 seconds of continuous silence. File memory remains
+bounded independently of recording length, and opposite-phase stereo channels are measured by
+energy rather than averaged into false silence.
+
+`AutomaticParagraphFormatter` reconstructs the transcript from those segments while ignoring
+whitespace. It inserts a blank line only if that reconstruction exactly matches the recognized
+text; otherwise it returns the original bytes. Explicit existing line structure wins. This adds
+no model, prompt, semantic rewrite, or network access, and plain dictation never enters the pass.
+Users can persistently or temporarily disable it.
+
 ### `NoteFormatter`
 
 `--notes` enables an explicit spoken-command layer after transcription and vocabulary
@@ -376,8 +392,8 @@ The registry is the single source of truth for: download URLs, file names, sizes
 inference on the same samples. It reports load time separately from median inference latency and real-time
 factor. An optional reference transcript adds locally computed, case/punctuation-insensitive
 word-error rate. JSON output includes the hardware model, macOS version, exact run timings,
-note-mode state, and vocabulary count so results remain comparable. No audio, reference, or
-transcript leaves the Mac.
+note-mode and automatic-paragraph state, and vocabulary count so results remain comparable. No
+audio, reference, or transcript leaves the Mac.
 
 ### Model storage and download progress
 
@@ -401,7 +417,8 @@ flooding LaunchAgent logs.
 
 A `Codable` struct at `~/.config/parrot/config.json`, holding the chosen microphone UID,
 lowercase preference, first-run completion flag, and optional defaults for hotkey, model,
-dictation/notes mode, speech cleanup, and Markdown journal destination. Every field is optional,
+dictation/notes mode, pause-aware paragraphs, speech cleanup, and Markdown journal destination.
+Every field is optional,
 so older config files decode unchanged and nil continues to mean "use the built-in default."
 
 JSON rather than the TOML originally sketched: `Codable` gives it to us for free, and a TOML
@@ -497,9 +514,10 @@ Models are not bundled. New downloads live in
 8. `HotkeyMonitor` fires `.released`. Overlay switches to spinner. Status: `transcribing`.
 9. `AudioCapture` stops and `LastRecordingRecovery` atomically stages one private safety WAV.
 10. The active `Transcriber` runs CoreML inference and returns text plus its language code.
-11. `SpeechCleanup` optionally removes conservative English disfluencies and is skipped for
-    every other detected language; then the mode captured at
-    recording start selects whether `NoteFormatter` applies explicit Markdown structure commands.
+11. In note mode, `AudioPauseDetector` and `AutomaticParagraphFormatter` conservatively insert
+    blank lines at deliberate pauses. `SpeechCleanup` optionally removes conservative English
+    disfluencies and is skipped for every other detected language; then `NoteFormatter` applies
+    explicit Markdown structure commands.
 12. `SnippetExpander` replaces explicit saved-snippet commands with their local bodies, which
     are never passed through cleanup or note formatting.
 13. `TextInjector` posts the string at the cursor, or `MarkdownJournal` durably appends it when

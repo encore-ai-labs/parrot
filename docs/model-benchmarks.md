@@ -46,6 +46,21 @@ Multilingual Base was 36% slower than English Base on the English clip with equa
 the product decision to leave `.en` as the default and make multilingual recognition explicit.
 The English WER is one normalized substitution (`nine` → `9`), not a missing spoken word.
 
+## Pause-aware paragraph cost
+
+The note path was measured on a 7.05-second two-thought `say` clip with 1.6 seconds of inserted
+digital silence. Both configurations used English Base, five warmed debug-CLI runs, the same
+note prompt, and no vocabulary or snippets.
+
+| Note formatting | Median | Realtime | WER | Output |
+|---|---:|---:|---:|---|
+| Automatic paragraphs off | 0.361 s | 19.5x | 0.0% | One paragraph |
+| Automatic paragraphs on | 0.367 s | 19.2x | 0.0% | Two paragraphs |
+
+Adaptive pause detection added 5.8 ms (1.6%) to the median while preserving every normalized
+word. The formatter-only performance test processes a 200-segment note 100 times in roughly
+25 ms total on this Mac, or about 0.25 ms per long note. Plain dictation bypasses both passes.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

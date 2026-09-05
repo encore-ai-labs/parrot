@@ -13,6 +13,7 @@ enum StartupTUI {
         let historyPath: String?
         let delivery: String
         let cleanup: Bool
+        let automaticParagraphs: Bool
         let systemHotkeyAction: String?
     }
 
@@ -42,6 +43,7 @@ enum StartupTUI {
                 " · snippets: \(details.snippetCount)" +
                 " · delivery: \(details.delivery)" +
                 " · cleanup: \(details.cleanup ? "on (English speech)" : "off")" +
+                " · paragraphs: \(details.automaticParagraphs ? "on in notes" : "off")" +
                 "\(history)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
@@ -68,6 +70,10 @@ enum StartupTUI {
             : "\(details.snippetCount) snippets  (parrot snippets)"
         write(row("snippets", snippets))
         write(row("cleanup", details.cleanup ? "on  ·  local deterministic · English speech" : "off"))
+        write(row(
+            "paragraphs",
+            details.automaticParagraphs ? "on  ·  note pauses ≥1.2s" : "off"
+        ))
         write(row("delivery", details.delivery))
         write(row("history", history))
         write(row("updates", "checking…"))

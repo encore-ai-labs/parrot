@@ -30,6 +30,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.appRules)
         XCTAssertNil(config.journalPath)
         XCTAssertNil(config.cleanup)
+        XCTAssertNil(config.automaticParagraphs)
         XCTAssertEqual(permissions(at: root), 0o700)
         XCTAssertEqual(permissions(at: url), 0o600)
     }
@@ -45,6 +46,7 @@ final class ConfigTests: XCTestCase {
         config.mode = .notes
         config.journalPath = "/tmp/notes.md"
         config.cleanup = true
+        config.automaticParagraphs = false
 
         try config.write(to: url)
 
@@ -74,7 +76,8 @@ final class ConfigTests: XCTestCase {
                 language: "auto",
                 mode: .notes,
                 journalPath: nil,
-                cleanup: false
+                cleanup: false,
+                automaticParagraphs: true
             )
         )
         XCTAssertEqual(
@@ -92,7 +95,8 @@ final class ConfigTests: XCTestCase {
                 language: "auto",
                 mode: .dictation,
                 journalPath: nil,
-                cleanup: false
+                cleanup: false,
+                automaticParagraphs: true
             )
         )
     }
@@ -171,6 +175,41 @@ final class ConfigTests: XCTestCase {
         XCTAssertFalse(overridden.cleanup)
     }
 
+    func testRuntimeDefaultsEnableNoteParagraphsByDefaultAndAllowOverrides() throws {
+        var config = Config()
+        let builtIn = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertTrue(builtIn.automaticParagraphs)
+
+        config.automaticParagraphs = false
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertFalse(saved.automaticParagraphs)
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            automaticParagraphsOverride: true,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertTrue(overridden.automaticParagraphs)
+    }
+
     func testRuntimeDefaultsRejectConflictingModeOverrides() {
         XCTAssertThrowsError(
             try RuntimeDefaults.resolve(
@@ -190,7 +229,7 @@ final class ConfigTests: XCTestCase {
             try Settings.parseAsRoot([
                 "set", "--hotkey", "ralt", "--model", "whisper-small.en",
                 "--language", "English", "--mode", "notes",
-                "--journal", "/tmp/inbox.md", "--cleanup",
+                "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
             ]) as? Settings.Set
         )
         XCTAssertEqual(set.hotkey, "ralt")
@@ -199,6 +238,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(set.mode, "notes")
         XCTAssertEqual(set.journal, "/tmp/inbox.md")
         XCTAssertTrue(set.cleanup)
+        XCTAssertTrue(set.automaticParagraphs)
         XCTAssertTrue(try Settings.parseAsRoot(["reset"]) is Settings.Reset)
 
         let paste = try XCTUnwrap(
@@ -216,6 +256,9 @@ final class ConfigTests: XCTestCase {
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--journal", "/tmp/inbox.txt"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--cleanup", "--no-cleanup"]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--auto-paragraphs", "--no-auto-paragraphs",
+        ]))
     }
 
     func testRuntimeDefaultsCanonicalizeSavedAndOneRunLanguages() throws {

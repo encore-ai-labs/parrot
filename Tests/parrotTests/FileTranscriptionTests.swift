@@ -17,7 +17,8 @@ final class FileTranscriptionTests: XCTestCase {
                 "/tmp/one.m4a", "/tmp/two.mp4",
                 "--model", "whisper-small.en",
                 "--language", "en",
-                "--notes", "--lowercase", "--cleanup", "--no-vocabulary", "--no-snippets",
+                "--notes", "--lowercase", "--cleanup", "--auto-paragraphs",
+                "--no-vocabulary", "--no-snippets",
                 "--format", "json", "--output-directory", "/tmp/transcripts",
                 "--no-timestamps", "--force",
             ]) as? Transcribe
@@ -28,6 +29,7 @@ final class FileTranscriptionTests: XCTestCase {
         XCTAssertTrue(command.notes)
         XCTAssertTrue(command.lowercase)
         XCTAssertTrue(command.cleanup)
+        XCTAssertTrue(command.automaticParagraphs)
         XCTAssertTrue(command.noVocabulary)
         XCTAssertTrue(command.noSnippets)
         XCTAssertEqual(command.format, .json)
@@ -45,6 +47,11 @@ final class FileTranscriptionTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try Transcribe.parseAsRoot(["one.wav", "--cleanup", "--no-cleanup"])
+        )
+        XCTAssertThrowsError(
+            try Transcribe.parseAsRoot([
+                "one.wav", "--auto-paragraphs", "--no-auto-paragraphs",
+            ])
         )
         XCTAssertThrowsError(
             try Transcribe.parseAsRoot([
@@ -204,6 +211,38 @@ final class FileTranscriptionTests: XCTestCase {
         XCTAssertTrue(output.contains("Regards,\nParth"))
     }
 
+    func testProcessingAddsPauseParagraphsOnlyInNoteMode() {
+        let text = "First thought. Second thought."
+        let segments = [
+            TimedTranscriptSegment(startSeconds: 0, endSeconds: 1, text: "First thought."),
+            TimedTranscriptSegment(startSeconds: 2.3, endSeconds: 3, text: "Second thought."),
+        ]
+        let snippets = SnippetExpander(entries: [])
+
+        XCTAssertEqual(
+            TranscriptProcessing.process(
+                text,
+                mode: .notes,
+                lowercase: false,
+                automaticParagraphs: true,
+                segments: segments,
+                snippets: snippets
+            ),
+            "First thought.\n\nSecond thought."
+        )
+        XCTAssertEqual(
+            TranscriptProcessing.process(
+                text,
+                mode: .dictation,
+                lowercase: false,
+                automaticParagraphs: true,
+                segments: segments,
+                snippets: snippets
+            ),
+            text
+        )
+    }
+
     func testCleanupAppliesToTimestampSegmentsWithoutChangingTiming() {
         let segments = [
             TimedTranscriptSegment(startSeconds: 1, endSeconds: 2, text: "Um."),
@@ -241,6 +280,7 @@ final class FileTranscriptionTests: XCTestCase {
             sourceName: "memo.m4a",
             model: "whisper-base.en",
             mode: "notes",
+            automaticParagraphs: true,
             language: "en",
             transcribedAt: "2026-09-05T10:00:00.000Z",
             audioSeconds: 6,

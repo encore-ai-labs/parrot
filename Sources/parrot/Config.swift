@@ -32,6 +32,9 @@ struct Config: Codable, Equatable {
     /// Remove conservative, deterministic speech disfluencies after local
     /// transcription. Nil preserves the built-in off default.
     var cleanup: Bool?
+    /// Insert paragraphs at deliberate pauses while note mode is active.
+    /// Nil preserves the built-in on default for notes.
+    var automaticParagraphs: Bool?
 
     static var directory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -116,6 +119,7 @@ struct RuntimeDefaults: Equatable {
     let mode: DictationMode
     let journalPath: String?
     let cleanup: Bool
+    let automaticParagraphs: Bool
 
     static func resolve(
         config: Config,
@@ -127,6 +131,7 @@ struct RuntimeDefaults: Equatable {
         journalOverride: String? = nil,
         paste: Bool = false,
         cleanupOverride: Bool? = nil,
+        automaticParagraphsOverride: Bool? = nil,
         recommendedModel: String
     ) throws -> RuntimeDefaults {
         guard !(notes && dictation) else {
@@ -153,7 +158,10 @@ struct RuntimeDefaults: Equatable {
             language: resolvedLanguage,
             mode: resolvedMode,
             journalPath: paste ? nil : journalOverride ?? config.journalPath,
-            cleanup: cleanupOverride ?? config.cleanup ?? false
+            cleanup: cleanupOverride ?? config.cleanup ?? false,
+            automaticParagraphs: automaticParagraphsOverride
+                ?? config.automaticParagraphs
+                ?? true
         )
     }
 }

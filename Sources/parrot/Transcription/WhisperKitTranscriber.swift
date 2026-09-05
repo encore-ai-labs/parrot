@@ -9,6 +9,7 @@ actor WhisperKitTranscriber: Transcriber {
     private let downloadProgress: ModelDownloadProgress
     /// Nil requests per-recording language detection from a multilingual model.
     private let language: String?
+    private let automaticParagraphs: Bool
     private var pipeline: WhisperKit?
     private var decodingOptions: DecodingOptions?
     private var noteDecodingOptions: DecodingOptions?
@@ -16,6 +17,7 @@ actor WhisperKitTranscriber: Transcriber {
     init(
         model: TranscriptionModel,
         language: String?,
+        automaticParagraphs: Bool,
         vocabulary: PersonalVocabulary = PersonalVocabulary(),
         additionalPromptTerms: [String] = [],
         notePromptTerms: [String] = [],
@@ -27,6 +29,7 @@ actor WhisperKitTranscriber: Transcriber {
         self.storage = storage
         self.downloadProgress = downloadProgress
         self.language = language
+        self.automaticParagraphs = automaticParagraphs
         vocabularyReplacer = VocabularyReplacer(entries: vocabulary.entries)
         promptTerms = additionalPromptTerms + vocabulary.promptTerms
         self.notePromptTerms = notePromptTerms
@@ -95,9 +98,18 @@ actor WhisperKitTranscriber: Transcriber {
             audioArray: audio,
             decodeOptions: mode == .notes ? noteDecodingOptions : decodingOptions
         )
+        var segments = processedSegments(from: results)
+        if automaticParagraphs && mode == .notes {
+            segments = AudioPauseDetector.refining(
+                segments,
+                samples: audio,
+                sampleRate: Double(WhisperKit.sampleRate)
+            )
+        }
         return LiveTranscription(
             text: processedText(from: results),
-            language: results.first?.language ?? language ?? "unknown"
+            language: results.first?.language ?? language ?? "unknown",
+            segments: segments
         )
     }
 
@@ -121,7 +133,21 @@ actor WhisperKitTranscriber: Transcriber {
             ),
             decodeOptions: mode == .notes ? noteDecodingOptions : decodingOptions
         )
-        let segments = results
+        var segments = processedSegments(from: results)
+        if automaticParagraphs && mode == .notes {
+            segments = (try? AudioPauseDetector.refining(segments, audioAt: url)) ?? segments
+        }
+        return TimedTranscription(
+            text: processedText(from: results),
+            language: results.first?.language ?? "unknown",
+            segments: segments
+        )
+    }
+
+    private func processedSegments(
+        from results: [TranscriptionResult]
+    ) -> [TimedTranscriptSegment] {
+        return results
             .flatMap(\.segments)
             .sorted {
                 if $0.start == $1.start { return $0.end < $1.end }
@@ -138,11 +164,6 @@ actor WhisperKitTranscriber: Transcriber {
                     text: text
                 )
             }
-        return TimedTranscription(
-            text: processedText(from: results),
-            language: results.first?.language ?? "unknown",
-            segments: segments
-        )
     }
 
     private func processedText(from results: [TranscriptionResult]) -> String {

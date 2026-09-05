@@ -148,6 +148,18 @@ struct Run: ParsableCommand {
     @Flag(name: .customLong("no-cleanup"), help: "Preserve disfluencies even if cleanup is saved.")
     var noCleanup: Bool = false
 
+    @Flag(
+        name: .customLong("auto-paragraphs"),
+        help: "Insert paragraphs at deliberate pauses while using note mode."
+    )
+    var automaticParagraphs: Bool = false
+
+    @Flag(
+        name: .customLong("no-auto-paragraphs"),
+        help: "Keep note-mode output continuous even if automatic paragraphs are saved."
+    )
+    var noAutomaticParagraphs: Bool = false
+
     @Flag(name: .long, help: "Don't save successful transcripts to local Markdown history.")
     var noHistory: Bool = false
 
@@ -190,6 +202,11 @@ struct Run: ParsableCommand {
         }
         guard !(cleanup && noCleanup) else {
             throw ValidationError("pass at most one of --cleanup or --no-cleanup")
+        }
+        guard !(automaticParagraphs && noAutomaticParagraphs) else {
+            throw ValidationError(
+                "pass at most one of --auto-paragraphs or --no-auto-paragraphs"
+            )
         }
         if let journal {
             _ = try MarkdownJournal.resolveURL(journal)
@@ -236,6 +253,9 @@ struct Run: ParsableCommand {
                 journalOverride: journal,
                 paste: paste,
                 cleanupOverride: cleanup || noCleanup ? cleanup : nil,
+                automaticParagraphsOverride: automaticParagraphs || noAutomaticParagraphs
+                    ? automaticParagraphs
+                    : nil,
                 recommendedModel: recommendedModel
             )
         } catch {
@@ -421,6 +441,7 @@ struct Run: ParsableCommand {
         let transcriber = TranscriberFactory.make(
             model: chosenModel,
             language: defaults.language,
+            automaticParagraphs: defaults.automaticParagraphs,
             vocabulary: vocabulary,
             additionalPromptTerms: snippets.promptTerms,
             notePromptTerms: NoteFormatter.promptTerms
@@ -541,6 +562,8 @@ struct Run: ParsableCommand {
                         mode: modeForCapture,
                         lowercase: lowercaseMode,
                         cleanup: applyCleanup,
+                        automaticParagraphs: defaults.automaticParagraphs,
+                        segments: transcription.segments,
                         snippets: snippetExpander
                     )
                     let elapsed = Date().timeIntervalSince(started)
@@ -869,6 +892,7 @@ struct Run: ParsableCommand {
                 "journal → \(StartupTUI.displayPath($0.url))"
             } ?? "paste at cursor",
             cleanup: defaults.cleanup,
+            automaticParagraphs: defaults.automaticParagraphs,
             systemHotkeyAction: systemHotkeyAction
         ))
         var updateInProgress = false

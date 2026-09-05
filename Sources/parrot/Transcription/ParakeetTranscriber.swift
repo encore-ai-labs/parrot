@@ -68,6 +68,7 @@ actor ParakeetTranscriber: Transcriber {
     }
 
     private let variant: Variant
+    private let automaticParagraphs: Bool
     private let vocabularyReplacer: VocabularyReplacer
     private let storage: ModelStorage
     private let downloadProgress: ModelDownloadProgress
@@ -75,6 +76,7 @@ actor ParakeetTranscriber: Transcriber {
 
     init(
         model: TranscriptionModel,
+        automaticParagraphs: Bool,
         vocabulary: PersonalVocabulary = PersonalVocabulary(),
         storage: ModelStorage = .default,
         downloadProgress: ModelDownloadProgress = ModelDownloadProgress()
@@ -84,6 +86,7 @@ actor ParakeetTranscriber: Transcriber {
             preconditionFailure("unknown Parakeet model: \(model.id)")
         }
         self.variant = variant
+        self.automaticParagraphs = automaticParagraphs
         vocabularyReplacer = VocabularyReplacer(entries: vocabulary.entries)
         self.storage = storage
         self.downloadProgress = downloadProgress
@@ -147,14 +150,31 @@ actor ParakeetTranscriber: Transcriber {
         if backend == nil { try await warmUp() }
         guard let backend else { throw TranscriberError.notLoaded }
         let compatibleAudio = Self.paddingShortAudio(audio)
+        let sourceDuration = Double(audio.count) / Double(ASRConstants.sampleRate)
+        let wantsTimings = automaticParagraphs && mode == .notes
         switch backend {
         case .compact(let manager):
             var state = TdtDecoderState.make(decoderLayers: 1)
-            return LiveTranscription(text: processed(try await manager.transcribe(
+            let result = try await manager.transcribe(
                 compatibleAudio,
                 decoderState: &state
-            ).text), language: "en")
+            )
+            return liveTranscription(
+                text: result.text,
+                timings: wantsTimings ? result.tokenTimings ?? [] : [],
+                sourceDuration: sourceDuration
+            )
         case .unified(let manager):
+            if wantsTimings {
+                // Unified already carries emission frames through decoding, so
+                // asking for timings adds only their conversion to seconds.
+                let result = try await manager.transcribeWithTimings(compatibleAudio)
+                return liveTranscription(
+                    text: result.text,
+                    timings: result.tokenTimings,
+                    sourceDuration: sourceDuration
+                )
+            }
             return LiveTranscription(
                 text: processed(try await manager.transcribe(compatibleAudio)),
                 language: "en"
@@ -253,49 +273,35 @@ actor ParakeetTranscriber: Transcriber {
         vocabularyReplacer: VocabularyReplacer,
         maximumDuration: TimeInterval? = nil
     ) -> [TimedTranscriptSegment] {
-        guard !words.isEmpty else { return [] }
-        var output: [TimedTranscriptSegment] = []
-        var group: [TimedWord] = []
-
-        func flush() {
-            guard let first = group.first, let last = group.last else { return }
-            var text = group.map(\.text).joined(separator: " ")
-            text = text.replacingOccurrences(
-                of: #"\s+([,.;:!?])"#,
-                with: "$1",
-                options: .regularExpression
-            )
-            text = vocabularyReplacer.applying(to: TranscriptSanitizer.sanitize(text))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty {
-                let start = min(max(0, first.start), maximumDuration ?? .infinity)
-                let end = min(max(start, last.end), maximumDuration ?? .infinity)
-                output.append(TimedTranscriptSegment(
-                    startSeconds: start,
-                    endSeconds: end,
-                    text: text
-                ))
-            }
-            group.removeAll(keepingCapacity: true)
-        }
-
-        for (index, word) in words.enumerated() {
-            group.append(word)
-            let nextGap = index + 1 < words.count
-                ? words[index + 1].start - word.end
-                : .infinity
-            let sentenceEnded = word.text.last.map { ".!?".contains($0) } ?? false
-            if sentenceEnded || nextGap >= 0.8 || group.count >= 28 {
-                flush()
-            }
-        }
-        flush()
-        return output
+        TimedSegmentBuilder.segments(
+            from: words,
+            vocabularyReplacer: vocabularyReplacer,
+            maximumDuration: maximumDuration
+        )
     }
 
     private func processed(_ raw: String) -> String {
         vocabularyReplacer.applying(to: TranscriptSanitizer.sanitize(raw))
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func liveTranscription(
+        text: String,
+        timings: [TokenTiming],
+        sourceDuration: TimeInterval
+    ) -> LiveTranscription {
+        let segments = Self.segments(
+            from: buildWordTimings(from: timings).map {
+                TimedWord(text: $0.word, start: $0.startTime, end: $0.endTime)
+            },
+            vocabularyReplacer: vocabularyReplacer,
+            maximumDuration: sourceDuration
+        )
+        return LiveTranscription(
+            text: processed(text),
+            language: "en",
+            segments: segments
+        )
     }
 }
 

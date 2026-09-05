@@ -33,6 +33,18 @@ struct ModelBenchmark: ParsableCommand {
     @Flag(name: .long, help: "Benchmark the same spoken-command formatting used by --notes.")
     var notes = false
 
+    @Flag(
+        name: .customLong("auto-paragraphs"),
+        help: "Include pause-aware paragraphs in a note-mode benchmark."
+    )
+    var automaticParagraphs = false
+
+    @Flag(
+        name: .customLong("no-auto-paragraphs"),
+        help: "Exclude pause-aware paragraphs from a note-mode benchmark."
+    )
+    var noAutomaticParagraphs = false
+
     @Flag(name: .long, help: "Ignore the saved personal vocabulary during this benchmark.")
     var noVocabulary = false
 
@@ -49,13 +61,19 @@ struct ModelBenchmark: ParsableCommand {
         guard reference == nil || referenceFile == nil else {
             throw ValidationError("pass at most one of --reference or --reference-file")
         }
+        guard !(automaticParagraphs && noAutomaticParagraphs) else {
+            throw ValidationError(
+                "pass at most one of --auto-paragraphs or --no-auto-paragraphs"
+            )
+        }
     }
 
     func run() throws {
         guard let model = ModelRegistry.find(id) else {
             throw ValidationError("unknown model '\(id)'; run `parrot models list`")
         }
-        let requestedLanguage = language ?? Config.load().language ?? RecognitionLanguage.automatic
+        let config = Config.load()
+        let requestedLanguage = language ?? config.language ?? RecognitionLanguage.automatic
         guard let canonicalLanguage = RecognitionLanguage.canonicalize(requestedLanguage) else {
             throw ValidationError("unknown language '\(requestedLanguage)'; run `parrot languages`")
         }
@@ -79,9 +97,15 @@ struct ModelBenchmark: ParsableCommand {
         let vocabulary = try noVocabulary ? PersonalVocabulary() : PersonalVocabulary.load()
         let snippets = try noSnippets ? SnippetLibrary() : SnippetLibrary.load()
         let snippetExpander = SnippetExpander(entries: snippets.entries)
+        let useAutomaticParagraphs = notes && (
+            automaticParagraphs || noAutomaticParagraphs
+                ? automaticParagraphs
+                : config.automaticParagraphs ?? true
+        )
         let transcriber = TranscriberFactory.make(
             model: model,
             language: canonicalLanguage,
+            automaticParagraphs: useAutomaticParagraphs,
             vocabulary: vocabulary,
             additionalPromptTerms: snippets.promptTerms,
             notePromptTerms: NoteFormatter.promptTerms
@@ -90,6 +114,7 @@ struct ModelBenchmark: ParsableCommand {
         if !json {
             print("model    \(model.id)")
             print("language \(canonicalLanguage)")
+            print("paragraphs \(useAutomaticParagraphs ? "on" : "off")")
             print("audio    \(audioURL.path)")
             print(String(format: "duration %.2fs", audioSeconds))
         }
@@ -115,6 +140,8 @@ struct ModelBenchmark: ParsableCommand {
                 result.text,
                 mode: mode,
                 lowercase: false,
+                automaticParagraphs: useAutomaticParagraphs,
+                segments: result.segments,
                 snippets: snippetExpander
             )
             let seconds = elapsedSeconds(since: started)
@@ -135,6 +162,7 @@ struct ModelBenchmark: ParsableCommand {
             language: detectedLanguage,
             modelSizeMB: model.sizeMB,
             noteMode: notes,
+            automaticParagraphs: useAutomaticParagraphs,
             vocabularyTerms: vocabulary.entries.count,
             snippets: snippets.entries.count,
             audioPath: audioURL.path,
@@ -207,6 +235,7 @@ struct ModelBenchmarkReport: Codable {
     let language: String
     let modelSizeMB: Int
     let noteMode: Bool
+    let automaticParagraphs: Bool
     let vocabularyTerms: Int
     let snippets: Int
     let audioPath: String

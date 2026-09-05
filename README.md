@@ -80,6 +80,13 @@ parrot settings set --mode notes
 parrot --notes                       # one-run override
 ```
 
+Long notes also get paragraph breaks automatically when you pause for at least 1.2 seconds.
+Parrot measures local audio energy around recognition boundaries; it does not send text to an
+LLM, infer new wording, or alter normal dictation. A break is inserted only when the timed
+segments reproduce the recognized text exactly, so vocabulary replacements and model output
+remain authoritative. Use `--no-auto-paragraphs` for one run or save the preference with
+`parrot settings set --no-auto-paragraphs`.
+
 | Say | Markdown result |
 |---|---|
 | `new paragraph`, `new line` | Paragraph or line break |
@@ -418,23 +425,25 @@ managed model cache location; transcript, config, and legacy-model paths stay un
 
 Parrot stores settings only at `~/.config/parrot/config.json`, with user-only permissions.
 The chosen microphone and lowercase choice are remembered during setup. Hotkey, model,
-language, note/dictation mode, cleanup, and delivery can be saved explicitly:
+language, note/dictation mode, pause-aware paragraphs, cleanup, and delivery can be saved explicitly:
 
 ```sh
 parrot settings
 parrot settings set --hotkey right-option
 parrot settings set --model whisper-small.en --mode notes
+parrot settings set --no-auto-paragraphs # disable the note-mode default
 parrot settings set --cleanup
 parrot settings set --journal ~/Documents/Notes/inbox.md
 parrot settings set --paste         # restore paste-at-cursor delivery
-parrot settings reset               # resets hotkey/model/mode/cleanup/delivery
+parrot settings reset               # resets transcription/formatting/delivery defaults
 parrot daemon restart               # apply to a running LaunchAgent
 ```
 
 Saved defaults are what a LaunchAgent uses, so launch-at-login no longer falls back to Fn or
 plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--model`,
-`--notes`, `--dictation`, `--cleanup`, and `--no-cleanup` take priority without changing the
-file. `--reconfigure` resets the complete first-run configuration.
+`--notes`, `--dictation`, `--auto-paragraphs`, `--no-auto-paragraphs`, `--cleanup`, and
+`--no-cleanup` take priority without changing the file. `--reconfigure` resets the complete
+first-run configuration.
 
 ### App-aware modes
 
@@ -523,6 +532,7 @@ parrot settings set --hotkey end --mode notes
 parrot --journal ~/Documents/Notes/inbox.md # append there; don't type at cursor
 parrot --paste                         # override a saved journal for one run
 parrot --notes                         # explicit spoken commands → local Markdown
+parrot --notes --no-auto-paragraphs    # keep a long note continuous
 parrot --dictation                     # override a saved notes mode for one run
 parrot --cleanup                       # conservative local filler/false-start cleanup
 parrot --no-cleanup                    # preserve disfluencies for this run

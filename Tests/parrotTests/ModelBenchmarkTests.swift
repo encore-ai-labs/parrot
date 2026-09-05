@@ -36,7 +36,7 @@ final class ModelBenchmarkTests: XCTestCase {
                 "whisper-base.en", "--audio", "/tmp/sample.wav",
                 "--language", "en",
                 "--reference", "hello world", "--runs", "5", "--notes",
-                "--no-snippets", "--json",
+                "--auto-paragraphs", "--no-snippets", "--json",
             ]) as? ModelBenchmark
         )
         XCTAssertEqual(command.id, "whisper-base.en")
@@ -45,6 +45,7 @@ final class ModelBenchmarkTests: XCTestCase {
         XCTAssertEqual(command.reference, "hello world")
         XCTAssertEqual(command.runs, 5)
         XCTAssertTrue(command.notes)
+        XCTAssertTrue(command.automaticParagraphs)
         XCTAssertTrue(command.noSnippets)
         XCTAssertTrue(command.json)
     }
@@ -59,6 +60,12 @@ final class ModelBenchmarkTests: XCTestCase {
             try ModelBenchmark.parseAsRoot([
                 "whisper-base.en", "--audio", "/tmp/sample.wav",
                 "--reference", "hello", "--reference-file", "/tmp/reference.txt",
+            ])
+        )
+        XCTAssertThrowsError(
+            try ModelBenchmark.parseAsRoot([
+                "whisper-base.en", "--audio", "/tmp/sample.wav",
+                "--auto-paragraphs", "--no-auto-paragraphs",
             ])
         )
     }

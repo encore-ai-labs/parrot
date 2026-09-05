@@ -29,6 +29,10 @@ struct Settings: ParsableCommand {
             print("language    \(defaults.language)\(config.language == nil ? "  (default)" : "")")
             print("mode        \(defaults.mode.rawValue)\(config.mode == nil ? "  (default)" : "")")
             print("cleanup     \(defaults.cleanup ? "on" : "off")\(config.cleanup == nil ? "  (default)" : "")")
+            print(
+                "paragraphs   \(defaults.automaticParagraphs ? "on in notes" : "off")"
+                    + "\(config.automaticParagraphs == nil ? "  (default)" : "")"
+            )
             if let journalPath = defaults.journalPath {
                 print("delivery    journal → \(StartupTUI.displayPath(URL(fileURLWithPath: journalPath)))")
             } else {
@@ -70,9 +74,21 @@ struct Settings: ParsableCommand {
         @Flag(name: .customLong("no-cleanup"), help: "Preserve speech disfluencies.")
         var noCleanup: Bool = false
 
+        @Flag(
+            name: .customLong("auto-paragraphs"),
+            help: "Insert paragraphs at deliberate pauses in note mode."
+        )
+        var automaticParagraphs: Bool = false
+
+        @Flag(
+            name: .customLong("no-auto-paragraphs"),
+            help: "Disable pause-aware paragraphs in note mode."
+        )
+        var noAutomaticParagraphs: Bool = false
+
         func validate() throws {
             guard hotkey != nil || model != nil || language != nil || mode != nil || journal != nil || paste
-                    || cleanup || noCleanup else {
+                    || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
@@ -82,6 +98,11 @@ struct Settings: ParsableCommand {
             }
             guard !(cleanup && noCleanup) else {
                 throw ValidationError("pass at most one of --cleanup or --no-cleanup")
+            }
+            guard !(automaticParagraphs && noAutomaticParagraphs) else {
+                throw ValidationError(
+                    "pass at most one of --auto-paragraphs or --no-auto-paragraphs"
+                )
             }
             if let hotkey, Hotkey.parse(hotkey) == nil {
                 throw ValidationError("unknown hotkey '\(hotkey)'; run `parrot hotkeys`")
@@ -102,7 +123,7 @@ struct Settings: ParsableCommand {
 
         func run() throws {
             guard hotkey != nil || model != nil || language != nil || mode != nil || journal != nil || paste
-                    || cleanup || noCleanup else {
+                    || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs else {
                 throw ValidationError(
                     "provide at least one setting to change"
                 )
@@ -142,6 +163,9 @@ struct Settings: ParsableCommand {
             if cleanup || noCleanup {
                 config.cleanup = cleanup
             }
+            if automaticParagraphs || noAutomaticParagraphs {
+                config.automaticParagraphs = automaticParagraphs
+            }
             let effectiveModelID = config.model ?? ModelRegistry.recommended()?.id ?? ""
             guard let effectiveModel = ModelRegistry.find(effectiveModelID) else {
                 throw ValidationError("no transcription model is available")
@@ -162,7 +186,7 @@ struct Settings: ParsableCommand {
 
     struct Reset: ParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Reset hotkey, model, language, mode, cleanup, and delivery defaults."
+            abstract: "Reset transcription, formatting, and delivery defaults."
         )
 
         func run() throws {
@@ -173,8 +197,9 @@ struct Settings: ParsableCommand {
             config.mode = nil
             config.journalPath = nil
             config.cleanup = nil
+            config.automaticParagraphs = nil
             try config.write()
-            print("✓ reset hotkey, model, language, mode, cleanup, and delivery defaults")
+            print("✓ reset transcription, formatting, and delivery defaults")
             print("restart a running Parrot daemon to apply the change")
         }
     }

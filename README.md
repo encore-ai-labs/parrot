@@ -269,6 +269,10 @@ parrot history copy                    # copy latest, or pass an entry ID
 parrot history show latest --original  # recognition before cleanup/replacements
 parrot history last --original         # original recognition, clean for pipes
 parrot history copy latest --original  # recover original recognition to clipboard
+parrot history export --period today   # clean chronological Markdown to stdout
+parrot history export --period week --output ~/Documents/parrot-week.md
+parrot history export --since 2026-09-01 --until 2026-09-05 --query "project roadmap"
+parrot history export --format jsonl --output history.jsonl
 parrot history path                    # print the Markdown directory
 parrot history prune --keep-days 30    # preview a rolling cleanup
 ```
@@ -288,6 +292,19 @@ session that should leave no transcript history, run:
 ```sh
 parrot --no-history
 ```
+
+`history export` turns all history, a day, week, month, custom inclusive date range, or local
+search result into one chronological note. Markdown is the readable default; JSON Lines includes
+stable IDs, ISO-8601 timestamps, final/original text, language, audio duration, processing
+duration, and real-time factor for local tools. Add `--original` to make recoverable
+pre-processing recognition the primary text. Search matches both versions with the same
+case/diacritic-insensitive all-words behavior as `history search`.
+
+Without `--output`, export writes only document bytes to stdout, so pipes stay clean. File output
+is an atomic private `0600` write, creates missing parent directories as `0700`, and refuses to
+replace an existing file unless `--force` is explicit. Export holds the existing shared history
+lock while reading, never edits source history or retained audio, and adds no recording or
+inference work.
 
 History is kept forever by default. To opt into automatic retention, save a rolling window and
 restart the daemon:
@@ -777,6 +794,8 @@ parrot history                         # list recent local transcripts
 parrot history search project roadmap # search private Markdown history
 parrot history copy                    # recover the latest transcript to clipboard
 parrot history last --original         # recover recognition before local processing
+parrot history export --period week --output weekly-notes.md
+parrot history export --query "project roadmap" --format jsonl
 parrot history audio                   # list opt-in retained local recordings
 parrot history audio reprocess latest  # rerun one through the current local model/mode
 parrot history prune --keep-days 30    # preview; add --confirm to remove old entries

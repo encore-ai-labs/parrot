@@ -457,6 +457,15 @@ note bodies containing arbitrary Markdown headings. A compatibility parser reads
 from older releases. `parrot history` exposes recent listing, local full-text search, exact show,
 latest-text output for pipes, clipboard recovery, and the underlying directory path.
 
+`parrot history export` selects entries under the same shared lock by local calendar period,
+inclusive date range, and/or all-word folded search, then reverses the normal newest-first reader
+order into a coherent chronology. Markdown groups entries by day without rewriting their bodies;
+JSON Lines carries stable IDs, both recoverable text forms, language, durations, and calculated
+real-time factor. Standard output contains document bytes only. File output reuses the atomic
+private transcript writer, refuses replacement without `--force`, and does not mutate history or
+audio. Selection/rendering is an explicit CLI operation and is absent from microphone, delivery,
+and inference paths.
+
 Live transcribers also return sanitized recognizer output before deterministic vocabulary and the
 later cleanup, filler, note, spoken-edit, and snippet pipeline. If that original differs from the
 delivered text, the history writer Base64-encodes it in a versioned HTML comment immediately before

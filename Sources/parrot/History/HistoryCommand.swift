@@ -2,11 +2,14 @@ import AppKit
 import ArgumentParser
 import Foundation
 
+extension HistoryExportFormat: ExpressibleByArgument {}
+
 struct History: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Find and recover locally saved dictations.",
         subcommands: [
-            List.self, Search.self, Show.self, Last.self, Copy.self, Audio.self, Path.self, Prune.self,
+            List.self, Search.self, Show.self, Last.self, Copy.self, Export.self,
+            Audio.self, Path.self, Prune.self,
         ],
         defaultSubcommand: List.self
     )
@@ -83,6 +86,89 @@ struct History: ParsableCommand {
                 throw ValidationError("macOS did not accept the transcript on the clipboard")
             }
             print("✓ copied \(record.id)")
+        }
+    }
+
+    struct Export: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Export a private date range or search result as Markdown or JSON Lines."
+        )
+
+        @Option(name: .long, help: "First local calendar date to include (YYYY-MM-DD).")
+        var since: String?
+
+        @Option(name: .long, help: "Last local calendar date to include (YYYY-MM-DD).")
+        var until: String?
+
+        @Option(name: .long, help: "Convenience range: all, today, week, or month.")
+        var period: StatsPeriod?
+
+        @Option(name: .long, help: "Include entries matching all search words.")
+        var query: String?
+
+        @Option(name: .long, help: "Output format: markdown or jsonl.")
+        var format: HistoryExportFormat = .markdown
+
+        @Flag(name: .long, help: "Export original recognition when available.")
+        var original = false
+
+        @Option(name: .long, help: "Write atomically to this private file; defaults to stdout.")
+        var output: String?
+
+        @Flag(name: .long, help: "Atomically replace an existing output file.")
+        var force = false
+
+        func validate() throws {
+            guard period == nil || (since == nil && until == nil) else {
+                throw ValidationError("--period cannot be combined with --since or --until")
+            }
+            _ = try resolvedRange()
+            if let query {
+                _ = try HistoryExporter.select(
+                    [],
+                    range: HistoryExportRange(since: nil, until: nil),
+                    query: query
+                )
+            }
+            guard output != nil || !force else {
+                throw ValidationError("--force requires --output")
+            }
+        }
+
+        func run() throws {
+            let range = try resolvedRange()
+            let reader = TranscriptHistoryReader()
+            let records = try HistoryExporter.select(
+                reader.records(startingAt: range.start, endingBefore: range.endExclusive),
+                range: range,
+                query: query
+            )
+            guard !records.isEmpty else {
+                throw ValidationError("no transcript history matched the export filters")
+            }
+            let data = try HistoryExporter.render(
+                records,
+                format: format,
+                original: original
+            )
+            guard let output else {
+                FileHandle.standardOutput.write(data)
+                return
+            }
+
+            let path = NSString(string: output).expandingTildeInPath
+            let destination = URL(fileURLWithPath: path).standardizedFileURL
+            try SafeTranscriptWriter.write(data, to: destination, force: force)
+            FileHandle.standardError.write(Data(
+                "✓ exported \(records.count) transcript\(records.count == 1 ? "" : "s")\n"
+                    .utf8
+            ))
+            FileHandle.standardError.write(Data("  \(destination.path)\n".utf8))
+        }
+
+        private func resolvedRange() throws -> HistoryExportRange {
+            if let period { return HistoryExportRange(period: period) }
+            return try HistoryExportRange(since: since, until: until)
         }
     }
 

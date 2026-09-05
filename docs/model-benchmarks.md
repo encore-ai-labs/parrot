@@ -142,6 +142,14 @@ debug performance harness on this Mac, or about **0.70 microseconds per device c
 Startup and actual recovery additionally enumerate current CoreAudio devices, work that already
 existed and remains outside capture and inference.
 
+## Local history export cost
+
+History export is an explicit CLI operation and adds no capture, delivery, model, or daemon-idle
+work. In the debug performance harness, filtering 5,000 in-memory notes for two search words and
+rendering the 295 matches as metadata-bearing JSON Lines averaged **49 ms** on this Mac. The reader
+reads only daily Markdown files that can overlap a requested date period under one shared lock;
+rendering keeps no audio and makes no network or model request.
+
 ## Reproduce it
 
 Use representative audio and an exact reference on your own Mac:

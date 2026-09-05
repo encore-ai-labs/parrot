@@ -45,14 +45,22 @@ struct TranscriptHistoryReader {
     }
 
     func all() throws -> [TranscriptRecord] {
+        try records(startingAt: nil, endingBefore: nil)
+    }
+
+    /// Reads only daily files that can overlap the requested interval. This
+    /// keeps short-range exports fast even when history spans years.
+    func records(startingAt start: Date?, endingBefore end: Date?) throws -> [TranscriptRecord] {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: directory.path) else { return [] }
         return try HistoryFileLock.withLock(directory: directory, mode: .shared) {
-            try allUnlocked()
+            try allUnlocked(startingAt: start, endingBefore: end)
         }
     }
 
-    private func allUnlocked() throws -> [TranscriptRecord] {
+    private func allUnlocked(startingAt start: Date?, endingBefore end: Date?) throws
+        -> [TranscriptRecord]
+    {
         let fileManager = FileManager.default
         let urls = try fileManager.contentsOfDirectory(
             at: directory,
@@ -69,7 +77,13 @@ struct TranscriptHistoryReader {
                     forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
                   )
             else { return false }
-            return values.isRegularFile == true && values.isSymbolicLink != true
+            guard values.isRegularFile == true && values.isSymbolicLink != true,
+                  let day = dailyFileDate(url),
+                  let followingDay = calendar.date(byAdding: .day, value: 1, to: day)
+            else { return false }
+            if let start, followingDay <= start { return false }
+            if let end, day >= end { return false }
+            return true
         }
 
         var records: [TranscriptRecord] = []
@@ -77,7 +91,12 @@ struct TranscriptHistoryReader {
             let markdown = try String(contentsOf: url, encoding: .utf8)
             records.append(contentsOf: parse(markdown, fileURL: url))
         }
-        return records.sorted {
+        return records.filter { record in
+            if let start, record.recordedAt < start { return false }
+            if let end, record.recordedAt >= end { return false }
+            return true
+        }
+        .sorted {
             if $0.recordedAt != $1.recordedAt { return $0.recordedAt > $1.recordedAt }
             return $0.id > $1.id
         }
@@ -226,20 +245,38 @@ struct TranscriptHistoryReader {
     }
 
     private func recordedDate(fileURL: URL, time: String) -> Date? {
-        let dateName = fileURL.deletingPathExtension().lastPathComponent
-        let dateParts = dateName.split(separator: "-").compactMap { Int($0) }
+        guard let day = dailyFileDate(fileURL) else { return nil }
         let timeParts = time.split(separator: ":").compactMap { Int($0) }
-        guard dateParts.count == 3, timeParts.count == 3 else { return nil }
+        guard timeParts.count == 3 else { return nil }
+        let dateParts = calendar.dateComponents([.year, .month, .day], from: day)
         return calendar.date(from: DateComponents(
             calendar: calendar,
             timeZone: calendar.timeZone,
-            year: dateParts[0],
-            month: dateParts[1],
-            day: dateParts[2],
+            year: dateParts.year,
+            month: dateParts.month,
+            day: dateParts.day,
             hour: timeParts[0],
             minute: timeParts[1],
             second: timeParts[2]
         ))
+    }
+
+    private func dailyFileDate(_ fileURL: URL) -> Date? {
+        let name = fileURL.deletingPathExtension().lastPathComponent
+        let parts = name.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3,
+              let date = calendar.date(from: DateComponents(
+                calendar: calendar,
+                timeZone: calendar.timeZone,
+                year: parts[0],
+                month: parts[1],
+                day: parts[2]
+              ))
+        else { return nil }
+        let resolved = calendar.dateComponents([.year, .month, .day], from: date)
+        guard resolved.year == parts[0], resolved.month == parts[1], resolved.day == parts[2]
+        else { return nil }
+        return calendar.startOfDay(for: date)
     }
 
     private func legacyID(fileURL: URL, time: String) -> String {

@@ -416,6 +416,16 @@ ends, preventing both mixed-source audio and reconnect-triggered note loss; the 
 with capture state, closing the former reconnect/start race. Legacy singular-UID configs decode
 unchanged. Ranking runs only on startup/recovery/connection events, never per audio buffer.
 
+**3.31 — Private history is searchable but difficult to turn into a reusable project note.** ✅ **FIXED**
+
+`history export` now collects all history, a local day/week/month, an inclusive date range, or an
+all-words search into chronological Markdown or schema-stable JSON Lines. It can surface preserved
+original recognition while structured output retains both forms plus timing/language metadata.
+Output defaults to a pipe-clean stdout; file writes are private, atomic, and no-clobber unless
+explicitly forced. The operation shares the reader lock, leaves source Markdown/audio untouched,
+skips daily files outside a requested date period, and runs only when invoked, so note retrieval
+has no capture or model cost.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

@@ -29,7 +29,13 @@ final class LocalModelTextEnhancerTests: XCTestCase {
         )
         XCTAssertEqual(dictation.last?.content, "um this is a project update")
         XCTAssertTrue(dictation.first?.content.contains("at the cursor") == true)
-        XCTAssertTrue(notes.first?.content.contains("paragraphs or lists") == true)
+        XCTAssertTrue(dictation.first?.content.contains("lists are allowed") == true)
+        XCTAssertTrue(notes.first?.content.contains("Markdown lists") == true)
+        XCTAssertTrue(notes.first?.content.contains("recognizable filenames") == true)
+        XCTAssertTrue(notes.first?.content.contains("quotation marks") == true)
+        XCTAssertTrue(notes.first?.content.contains("`config.swift`") == true)
+        XCTAssertTrue(notes.first?.content.contains("`Sources/parrot/Config.swift`") == true)
+        XCTAssertTrue(notes.first?.content.contains("`swift test --filter FormatterTests`") == true)
         XCTAssertEqual(SmartFormatterPrompt.maximumTokens(for: "hello"), 34)
         XCTAssertEqual(
             SmartFormatterPrompt.maximumTokens(
@@ -42,6 +48,18 @@ final class LocalModelTextEnhancerTests: XCTestCase {
             for: String(repeating: "x", count: SmartFormatterPrompt.maximumInputBytes + 1),
             mode: .dictation
         ))
+    }
+
+    func testPromptTurnsExplicitSpokenQuoteBoundariesIntoDelimiters() throws {
+        let messages = try SmartFormatterPrompt.messages(
+            for: "tell Sam quote deploy after lunch end quote and call it open quote ship plan close quote",
+            mode: .dictation
+        )
+
+        XCTAssertEqual(
+            messages.last?.content,
+            "tell Sam \"deploy after lunch\" and call it \"ship plan\""
+        )
     }
 
     func testOutputValidationPreservesProtectedFacts() throws {
@@ -60,6 +78,54 @@ final class LocalModelTextEnhancerTests: XCTestCase {
             "Run swift test, then email parth@example.com about build 472 at https://example.com/x.",
             preserving: input
         ))
+    }
+
+    func testOutputValidationPreservesWrittenTechnicalTokensWhileAllowingMarkdown() throws {
+        let input = "update Sources/parrot/Config.swift then run swift test --filter ConfigTests"
+        let output = "Update `Sources/parrot/Config.swift`, then run `swift test --filter ConfigTests`."
+
+        XCTAssertEqual(
+            try SmartFormatterPrompt.validatedOutput(output, preserving: input),
+            output
+        )
+        XCTAssertThrowsError(try SmartFormatterPrompt.validatedOutput(
+            "Update `Sources/parrot/Settings.swift`, then run `swift test --filter ConfigTests`.",
+            preserving: input
+        ))
+        XCTAssertThrowsError(try SmartFormatterPrompt.validatedOutput(
+            "Update `Sources/parrot/Config.swift`, then run `swift test ConfigTests`.",
+            preserving: input
+        ))
+    }
+
+    func testOutputValidationAllowsSpokenStructureToBecomeFormatting() throws {
+        let input = "my tasks are first update config dot swift second run swift test third tell Sam quote deploy after lunch end quote"
+        let output = """
+            My tasks are:
+            - Update `config.swift`.
+            - Run `swift test`.
+            - Tell Sam, "deploy after lunch."
+            """
+
+        XCTAssertEqual(
+            try SmartFormatterPrompt.validatedOutput(output, preserving: input),
+            output
+        )
+        XCTAssertThrowsError(try SmartFormatterPrompt.validatedOutput(
+            "Change sources to `parrot`, then run `swift test` and tell Sam, \"deploy after lunch.\"",
+            preserving: "change Sources slash parrot slash Config dot swift then run swift test and tell Sam quote deploy after lunch end quote"
+        ))
+        XCTAssertThrowsError(try SmartFormatterPrompt.validatedOutput(
+            "Tell Sam, \"deploy.\"",
+            preserving: "tell Sam quote deploy after lunch end quote"
+        ))
+        XCTAssertEqual(
+            try SmartFormatterPrompt.validatedOutput(
+                "Name the pull request `smarter formatting`.",
+                preserving: "name the pull request quote smarter formatting end quote"
+            ),
+            "Name the pull request \"smarter formatting\"."
+        )
     }
 
     func testOutputValidationRejectsPreamblesRunawayAndEmptyText() {

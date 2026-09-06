@@ -60,6 +60,7 @@ final class LocalModelTextEnhancerTests: XCTestCase {
         )
 
         XCTAssertTrue(ordered.first?.content.contains("ordered sequence") == true)
+        XCTAssertEqual(ordered.last?.content, "1. Wash\n2. Dry\n3. Fold")
         XCTAssertTrue(technical.first?.content.contains("multiple technical names") == true)
         XCTAssertEqual(ordered.count, 2)
         XCTAssertEqual(technical.count, 2)
@@ -176,6 +177,25 @@ final class LocalModelTextEnhancerTests: XCTestCase {
         XCTAssertEqual(
             try SmartFormatterPrompt.validatedOutput(output, preserving: input),
             output
+        )
+    }
+
+    func testUnsafeOrdinalRewriteFallsBackToSourcePreservingList() throws {
+        let input = "The first thing I want to do is actually buy myself a phone. The second thing I need to do is make sure I call my mom and let her know I love her. And then the third thing I need to do is say it was up to my girlfriend."
+        let unsafeModelOutput = """
+            - Buy a phone
+            - Call your mother
+            - Tell your girlfriend
+            """
+        let expected = """
+            1. Actually buy myself a phone
+            2. Make sure I call my mom and let her know I love her
+            3. Say it was up to my girlfriend
+            """
+
+        XCTAssertEqual(
+            try SmartFormatterPrompt.validatedOutput(unsafeModelOutput, preserving: input),
+            expected
         )
     }
 

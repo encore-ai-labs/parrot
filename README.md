@@ -15,7 +15,11 @@ Or build it yourself — see [Build from source](#build-from-source).
 
 **Requires:** macOS 14+ on Apple Silicon (M1 or newer). Transcription runs on the Apple Neural Engine via CoreML — so the installer refuses to run on Intel.
 
-The installer drops the binary in `/usr/local/bin/parrot`. Builds are unsigned for now, so the installer strips the quarantine xattr — once you've inspected the script you'll see exactly what it does.
+The `parrot` command is installed at `/usr/local/bin/parrot`. If that directory is
+administrator-owned, the installer asks for a terminal password once to create a stable symlink;
+the real executable lives at `~/.local/share/parrot/bin/parrot`, so every later update is
+passwordless. Builds are unsigned for now, so the installer strips the quarantine xattr — once
+you've inspected the script you'll see exactly what it does.
 
 On each launch, release builds check GitHub for a newer stable release without delaying
 startup. Interactive launches offer to update and restart in place; the menu-bar menu also
@@ -23,9 +27,10 @@ gets an **Update Parrot…** action. You can update directly at any time with `p
 Downloaded release archives are checked against their published SHA-256 checksum before
 installation. Network failures do not affect startup and are retried on the next launch.
 
-If the install directory needs administrator access, Parrot uses the standard macOS authorization
-prompt; otherwise it updates without prompting. Parrot always swaps in a fresh executable instead
-of overwriting the running binary. A failed or cancelled update leaves the existing binary in place;
+If an older installation placed a root-owned executable in `/usr/local/bin`, the first update to
+the user-managed layout asks for the password in Terminal once. Parrot does not invoke `osascript`
+or show a generic authorization dialog. Parrot always swaps in a fresh executable instead of
+overwriting the running binary. A failed or cancelled update leaves the existing command in place;
 run `parrot update` again to retry.
 
 Very old builds may print `sudo: unable to read password: Input/output error` before they can
@@ -35,8 +40,8 @@ self-update. Bootstrap past that updater bug once with the current installer:
 curl -fsSL https://raw.githubusercontent.com/encore-ai-labs/parrot/master/scripts/install.sh | sh
 ```
 
-It uses the normal macOS administrator dialog when `/usr/local/bin` is not writable; subsequent
-`parrot update` runs use the repaired flow.
+It performs the one-time symlink migration in Terminal when `/usr/local/bin` is not writable;
+subsequent `parrot update` runs do not require administrator access.
 
 ## How to use
 

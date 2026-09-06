@@ -124,13 +124,16 @@ struct SmartFormatterPrompt {
             ? "Use readable paragraphs, headings, or Markdown lists when the speech clearly calls for them."
             : "Preserve all meaningful wording and infer suitable prose, paragraphs, or Markdown lists for insertion at the cursor."
         let semanticInstruction = structuralHint(for: trimmed)
+        let preparedTranscript = prepareExplicitQuotes(in: trimmed)
+        let modelTranscript = sourcePreservingOrderedList(from: preparedTranscript)
+            ?? preparedTranscript
         return [
             FormatterChatMessage(
                 role: "system",
                 content: "\(instructions)\n\(modeInstruction)\n\(semanticInstruction)"
             ),
         ] + structuralExample(for: trimmed) + [
-            FormatterChatMessage(role: "user", content: prepareExplicitQuotes(in: trimmed)),
+            FormatterChatMessage(role: "user", content: modelTranscript),
         ]
     }
 
@@ -203,6 +206,27 @@ struct SmartFormatterPrompt {
     }
 
     static func validatedOutput(_ output: String, preserving input: String) throws -> String {
+        do {
+            return try validateModelOutput(output, preserving: input)
+        } catch LocalModelEnhancementError.unsafeRewrite {
+            // Tiny local models sometimes turn ordered tasks into terse imperatives,
+            // dropping qualifying clauses in the process. The ordinal boundaries are
+            // safe to infer directly from the source, so preserve the speaker's item
+            // text instead of discarding all useful structure with the model output.
+            if let ordered = sourcePreservingOrderedList(
+                from: prepareExplicitQuotes(in: input)
+            ) {
+                debugValidation("using source-preserving ordered-list fallback")
+                return ordered
+            }
+            throw LocalModelEnhancementError.unsafeRewrite
+        }
+    }
+
+    private static func validateModelOutput(
+        _ output: String,
+        preserving input: String
+    ) throws -> String {
         let structured = enforceOrderedListStyle(in: output, from: input)
         let repaired = enforceExplicitQuotes(in: structured, from: input)
         let trimmed = repaired.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -249,6 +273,67 @@ struct SmartFormatterPrompt {
             throw LocalModelEnhancementError.unsafeRewrite
         }
         return trimmed
+    }
+
+    /// Converts naturally spoken ordinal sequences to Markdown while retaining the
+    /// item bodies verbatim. This is deliberately narrower than the model prompt:
+    /// it removes only explicit list scaffolding such as "the first thing I need to
+    /// do is", never rewrites the actual task text.
+    private static func sourcePreservingOrderedList(from input: String) -> String? {
+        let ordinalWords = [
+            "first", "second", "third", "fourth", "fifth", "sixth",
+            "seventh", "eighth", "ninth", "tenth", "finally",
+        ]
+        let alternatives = ordinalWords.joined(separator: "|")
+        guard let expression = try? NSRegularExpression(
+            pattern: "(?i)(?:\\b(?:and\\s+then|and|then)\\s+)?(?:the\\s+)?\\b(\(alternatives))\\b\\s*[:,;-]?\\s*"
+        ) else { return nil }
+        let fullRange = NSRange(input.startIndex..<input.endIndex, in: input)
+        let matches = expression.matches(in: input, range: fullRange)
+        guard matches.count >= 2 else { return nil }
+
+        let scaffoldingPatterns = [
+            #"(?i)^(?:thing|item|step|task)\s+(?:i|we)\s+(?:want|need|have|plan)\s+to\s+do\s+is\s+"#,
+            #"(?i)^(?:thing|item|step|task)\s+(?:to\s+do\s+)?is\s+"#,
+            #"(?i)^(?:thing|item|step|task)\s+"#,
+        ]
+        let scaffolding = scaffoldingPatterns.compactMap {
+            try? NSRegularExpression(pattern: $0)
+        }
+        var items: [String] = []
+        for (index, match) in matches.enumerated() {
+            let start = match.range.location + match.range.length
+            let end = index + 1 < matches.count
+                ? matches[index + 1].range.location
+                : fullRange.location + fullRange.length
+            guard start <= end,
+                  let range = Range(NSRange(location: start, length: end - start), in: input)
+            else { return nil }
+
+            var item = String(input[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            for pattern in scaffolding {
+                let itemRange = NSRange(item.startIndex..<item.endIndex, in: item)
+                guard let prefix = pattern.firstMatch(in: item, range: itemRange),
+                      prefix.range.location == 0,
+                      let prefixRange = Range(prefix.range, in: item)
+                else { continue }
+                item.removeSubrange(prefixRange)
+                break
+            }
+            item = item.trimmingCharacters(
+                in: CharacterSet.whitespacesAndNewlines.union(
+                    CharacterSet(charactersIn: ",:;-.")
+                )
+            )
+            guard !item.isEmpty else { return nil }
+            if let first = item.first, first.isLetter, first.isLowercase {
+                item.replaceSubrange(item.startIndex...item.startIndex, with: first.uppercased())
+            }
+            items.append(item)
+        }
+        guard items.count == matches.count else { return nil }
+        return items.enumerated().map { "\($0.offset + 1). \($0.element)" }
+            .joined(separator: "\n")
     }
 
     private static func enforceOrderedListStyle(in output: String, from input: String) -> String {

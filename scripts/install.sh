@@ -2,9 +2,10 @@
 # parrot installer.
 #   curl -fsSL https://raw.githubusercontent.com/encore-ai-labs/parrot/master/scripts/install.sh | sh
 #
-# Fetches the latest arm64 macOS binary from GitHub Releases, drops it
-# in /usr/local/bin, and strips the quarantine xattr so Gatekeeper doesn't
-# block the unsigned binary.
+# Fetches the latest arm64 macOS binary from GitHub Releases and strips the
+# quarantine xattr so Gatekeeper doesn't block the unsigned binary. On Macs
+# where /usr/local/bin is admin-owned, the real binary lives in the user's
+# data directory and /usr/local/bin/parrot is a stable one-time symlink.
 #
 # Apple Silicon only — WhisperKit uses the Apple Neural Engine via CoreML,
 # which only ships on M-series chips.
@@ -14,6 +15,7 @@ set -euo pipefail
 REPO="encore-ai-labs/parrot"
 BIN_NAME="parrot"
 INSTALL_DIR="${PARROT_INSTALL_DIR:-/usr/local/bin}"
+MANAGED_INSTALL_DIR="${PARROT_MANAGED_INSTALL_DIR:-${HOME}/.local/share/parrot/bin}"
 ASSET="parrot-macos-arm64.tar.gz"
 CHECKSUM="${ASSET}.sha256"
 
@@ -91,6 +93,18 @@ xattr -d com.apple.quarantine "$TMP/${BIN_NAME}" 2>/dev/null || true
 # 5. install
 TARGET="${INSTALL_DIR}/${BIN_NAME}"
 
+atomic_install() {
+    local source="$1"
+    local destination_dir="$2"
+    local destination="$3"
+
+    STAGED=$(mktemp "${destination_dir}/.parrot-update.XXXXXX")
+    cp "$source" "$STAGED"
+    chmod 755 "$STAGED"
+    mv -f "$STAGED" "$destination"
+    STAGED=""
+}
+
 # Always replace the executable with a new inode. Overwriting a running,
 # signed Mach-O binary in place can leave macOS killing later launches even
 # when the new bytes and signature are valid. Replacing the directory entry
@@ -101,27 +115,35 @@ if [ -w "$INSTALL_DIR" ]; then
     else
         dim "→ installing to ${TARGET}..."
     fi
-    STAGED=$(mktemp "${INSTALL_DIR}/.parrot-update.XXXXXX")
-    cp "$TMP/${BIN_NAME}" "$STAGED"
-    chmod 755 "$STAGED"
-    mv -f "$STAGED" "$TARGET"
-    STAGED=""
+    atomic_install "$TMP/${BIN_NAME}" "$INSTALL_DIR" "$TARGET"
+    FINAL_BINARY="$TARGET"
 else
-    dim "→ administrator access required"
-    dim "  approve the standard macOS prompt to finish the update"
-    /usr/bin/osascript \
-        -e 'use scripting additions' \
-        -e 'on run argv' \
-        -e 'set installDirectory to item 1 of argv' \
-        -e 'set sourcePath to item 2 of argv' \
-        -e 'set targetPath to item 3 of argv' \
-        -e 'set installCommand to "/bin/mkdir -p " & quoted form of installDirectory & " && /bin/mv " & quoted form of sourcePath & " " & quoted form of targetPath & " && /bin/chmod 755 " & quoted form of targetPath' \
-        -e 'do shell script installCommand with administrator privileges' \
-        -e 'end run' \
-        "$INSTALL_DIR" "$TMP/${BIN_NAME}" "$TARGET" >/dev/null
+    MANAGED_TARGET="${MANAGED_INSTALL_DIR}/${BIN_NAME}"
+    mkdir -p "$MANAGED_INSTALL_DIR"
+    chmod 700 "$MANAGED_INSTALL_DIR"
+    dim "→ updating ${MANAGED_TARGET}..."
+    atomic_install "$TMP/${BIN_NAME}" "$MANAGED_INSTALL_DIR" "$MANAGED_TARGET"
+    FINAL_BINARY="$MANAGED_TARGET"
+
+    # Existing installations may have a root-owned executable at the public
+    # command path. Replace it once with a symlink; every later update swaps
+    # only the user-owned target and needs no password or authorization dialog.
+    CURRENT_LINK="$(readlink "$TARGET" 2>/dev/null || true)"
+    if [ ! -L "$TARGET" ] || [ "$CURRENT_LINK" != "$MANAGED_TARGET" ]; then
+        if ! /usr/bin/tty </dev/tty >/dev/null 2>&1; then
+            red "one-time Parrot install migration requires a terminal"
+            red "run 'parrot update' from Terminal to finish without an osascript dialog"
+            exit 1
+        fi
+        dim "→ one-time administrator access required"
+        dim "  future Parrot updates will not need a password"
+        /usr/bin/sudo -p "Parrot one-time install migration — Password: " -v
+        /usr/bin/sudo /bin/mkdir -p "$INSTALL_DIR"
+        /usr/bin/sudo /bin/ln -sfn "$MANAGED_TARGET" "$TARGET"
+    fi
 fi
 
-xattr -d com.apple.quarantine "$TARGET" 2>/dev/null || true
+xattr -d com.apple.quarantine "$FINAL_BINARY" 2>/dev/null || true
 
 green "✓ parrot ${TAG} installed at ${TARGET}"
 if [ "${PARROT_UPDATE_MODE:-0}" != "1" ]; then

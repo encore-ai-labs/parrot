@@ -29,13 +29,12 @@ final class LocalModelTextEnhancerTests: XCTestCase {
         )
         XCTAssertEqual(dictation.last?.content, "um this is a project update")
         XCTAssertTrue(dictation.first?.content.contains("at the cursor") == true)
-        XCTAssertTrue(dictation.first?.content.contains("lists are allowed") == true)
+        XCTAssertTrue(dictation.first?.content.contains("Infer presentation from meaning") == true)
+        XCTAssertTrue(dictation.first?.content.contains("numbered Markdown list") == true)
+        XCTAssertTrue(dictation.first?.content.contains("Preserve all meaningful wording") == true)
         XCTAssertTrue(notes.first?.content.contains("Markdown lists") == true)
         XCTAssertTrue(notes.first?.content.contains("recognizable filenames") == true)
         XCTAssertTrue(notes.first?.content.contains("quotation marks") == true)
-        XCTAssertTrue(notes.first?.content.contains("`config.swift`") == true)
-        XCTAssertTrue(notes.first?.content.contains("`Sources/parrot/Config.swift`") == true)
-        XCTAssertTrue(notes.first?.content.contains("`swift test --filter FormatterTests`") == true)
         XCTAssertEqual(SmartFormatterPrompt.maximumTokens(for: "hello"), 34)
         XCTAssertEqual(
             SmartFormatterPrompt.maximumTokens(
@@ -48,6 +47,38 @@ final class LocalModelTextEnhancerTests: XCTestCase {
             for: String(repeating: "x", count: SmartFormatterPrompt.maximumInputBytes + 1),
             mode: .dictation
         ))
+    }
+
+    func testPromptAddsContentFreeStructuralHints() throws {
+        let ordered = try SmartFormatterPrompt.messages(
+            for: "first wash second dry third fold",
+            mode: .dictation
+        )
+        let technical = try SmartFormatterPrompt.messages(
+            for: "files are Config dot swift and Sources slash main dot swift",
+            mode: .dictation
+        )
+
+        XCTAssertTrue(ordered.first?.content.contains("ordered sequence") == true)
+        XCTAssertTrue(technical.first?.content.contains("multiple technical names") == true)
+        XCTAssertEqual(ordered.count, 2)
+        XCTAssertEqual(technical.count, 2)
+        XCTAssertTrue(technical.first?.content.contains("`Sources/parrot/Config.swift`") == true)
+    }
+
+    func testPromptAddsOnlyRelevantNeutralListExample() throws {
+        let list = try SmartFormatterPrompt.messages(
+            for: "for launch we need design copy documentation and tests",
+            mode: .dictation
+        )
+        let prose = try SmartFormatterPrompt.messages(
+            for: "I think we need to wait and talk tomorrow",
+            mode: .dictation
+        )
+
+        XCTAssertEqual(list.count, 4)
+        XCTAssertTrue(list.contains(where: { $0.content.contains("- Apples.") }))
+        XCTAssertEqual(prose.count, 2)
     }
 
     func testPromptTurnsExplicitSpokenQuoteBoundariesIntoDelimiters() throws {
@@ -100,16 +131,22 @@ final class LocalModelTextEnhancerTests: XCTestCase {
 
     func testOutputValidationAllowsSpokenStructureToBecomeFormatting() throws {
         let input = "my tasks are first update config dot swift second run swift test third tell Sam quote deploy after lunch end quote"
-        let output = """
+        let modelOutput = """
             My tasks are:
             - Update `config.swift`.
             - Run `swift test`.
             - Tell Sam, "deploy after lunch."
             """
+        let expected = """
+            My tasks are:
+            1. Update `config.swift`.
+            2. Run `swift test`.
+            3. Tell Sam, "deploy after lunch."
+            """
 
         XCTAssertEqual(
-            try SmartFormatterPrompt.validatedOutput(output, preserving: input),
-            output
+            try SmartFormatterPrompt.validatedOutput(modelOutput, preserving: input),
+            expected
         )
         XCTAssertThrowsError(try SmartFormatterPrompt.validatedOutput(
             "Change sources to `parrot`, then run `swift test` and tell Sam, \"deploy after lunch.\"",
@@ -125,6 +162,39 @@ final class LocalModelTextEnhancerTests: XCTestCase {
                 preserving: "name the pull request quote smarter formatting end quote"
             ),
             "Name the pull request \"smarter formatting\"."
+        )
+    }
+
+    func testOutputValidationAllowsNaturalListIntroductionToBecomeAList() throws {
+        let input = "here are the three things we need to do first fix the authentication bug second add a regression test and third deploy the new version"
+        let output = """
+            1. Fix the authentication bug.
+            2. Add a regression test.
+            3. Deploy the new version.
+            """
+
+        XCTAssertEqual(
+            try SmartFormatterPrompt.validatedOutput(output, preserving: input),
+            output
+        )
+    }
+
+    func testOutputValidationCountsTechnicalPathComponentsAsWords() throws {
+        let input = "the files I changed were Sources slash parrot slash Config dot swift readme dot md and Package dot swift"
+        let output = "The files I changed were `Sources/parrot/Config.swift`, `readme.md`, and `Package.swift`."
+        let bullets = """
+            - `Sources/parrot/Config.swift`
+            - `readme.md`
+            - `Package.swift`
+            """
+
+        XCTAssertEqual(
+            try SmartFormatterPrompt.validatedOutput(output, preserving: input),
+            output
+        )
+        XCTAssertEqual(
+            try SmartFormatterPrompt.validatedOutput(bullets, preserving: input),
+            bullets
         )
     }
 

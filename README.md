@@ -128,11 +128,13 @@ and output are bounded, important code/Markdown/numeric/URL/email tokens are che
 generation, validation, or the deadline fails, Parrot immediately uses its normal deterministic
 transcript instead.
 
-The formatter can infer Markdown bullets from a clearly dictated list, put recognizable filenames,
-paths, commands, flags, identifiers, and short code fragments in backticks, translate explicit
-technical separators such as “dot” and “slash,” and add quotation marks around clearly dictated
-quotes. These transformations are conservative: ordinary inline lists stay inline, existing
-technical tokens are protected from renaming, and ambiguous wording is left as prose.
+The formatter infers structure from ordinary speech; there are no smart-formatting commands to
+memorize. It can choose numbered Markdown steps when sequence matters, bullets for an unordered
+collection of tasks or files, put recognizable filenames, paths, commands, flags, identifiers, and
+short code fragments in backticks, translate technical separators such as “dot” and “slash,” and
+add quotation marks around quoted wording. These transformations are conservative: short inline
+lists stay inline, existing technical tokens are protected from renaming, and ambiguous wording is
+left as prose.
 
 Smart formatting is opt-in because even a small generative model adds memory and some delivery
 latency. Disable it without deleting the download using `parrot formatter off`; re-enable it with

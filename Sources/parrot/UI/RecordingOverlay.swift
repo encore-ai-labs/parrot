@@ -62,6 +62,9 @@ final class RecordingOverlay {
     private let model: OverlayModel
     private let levelCoalescer: AudioLevelCoalescer
     private var hideWorkItem: DispatchWorkItem?
+    private var previewGate = RealtimePreviewGate()
+    private static let compactSize = NSSize(width: 96, height: 44)
+    private static let previewSize = NSSize(width: 420, height: 52)
 
     init() {
         let model = OverlayModel()
@@ -76,12 +79,21 @@ final class RecordingOverlay {
         )
     }
 
-    func show(_ state: State) {
+    func show(_ state: State, previewSessionID: UUID? = nil) {
         hideWorkItem?.cancel()
         hideWorkItem = nil
         ensureWindow()
         if state == .recording {
+            previewGate.begin(sessionID: previewSessionID)
             model.resetLevels()
+            model.partialText = ""
+            window?.setContentSize(Self.compactSize)
+        } else if state == .transcribing {
+            previewGate.end()
+            model.partialText = ""
+            window?.setContentSize(Self.compactSize)
+        } else {
+            previewGate.end()
         }
         guard let window else { return }
         let needsAppear = !window.isVisible
@@ -99,6 +111,7 @@ final class RecordingOverlay {
     }
 
     func hide() {
+        previewGate.end()
         model.state = .hidden
         // Let the SwiftUI scale+fade animation play out before yanking the
         // window — otherwise it just pops away.
@@ -114,6 +127,14 @@ final class RecordingOverlay {
     /// Push a new audio level (0…~1). Safe to call from any thread.
     nonisolated func pushLevel(_ level: Float) {
         levelCoalescer.submit(level)
+    }
+
+    /// Streaming partials are presentation-only. The completed model result is
+    /// still the sole text that can reach history, a journal, or the cursor.
+    nonisolated func pushPartial(_ text: String, sessionID: UUID) {
+        DispatchQueue.main.async { [weak self] in
+            self?.showPartial(text, sessionID: sessionID)
+        }
     }
 
     private func ensureWindow() {
@@ -141,6 +162,25 @@ final class RecordingOverlay {
         window = panel
     }
 
+    private func showPartial(_ text: String, sessionID: UUID) {
+        guard model.state == .recording, previewGate.accepts(sessionID) else { return }
+        let preview = Self.previewText(text)
+        guard !preview.isEmpty, preview != model.partialText else { return }
+        model.partialText = preview
+        window?.setContentSize(Self.previewSize)
+        if let window { positionAtBottomCenter(window) }
+    }
+
+    nonisolated static func previewText(_ text: String, maximumCharacters: Int = 180) -> String {
+        let normalized = text
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        guard normalized.count > maximumCharacters else { return normalized }
+        let suffix = String(normalized.suffix(maximumCharacters))
+        guard let firstSpace = suffix.firstIndex(of: " ") else { return suffix }
+        return "…" + suffix[suffix.index(after: firstSpace)...]
+    }
+
     private func positionAtBottomCenter(_ window: NSPanel) {
         let pointer = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) })
@@ -154,6 +194,24 @@ final class RecordingOverlay {
     }
 }
 
+/// A recording identity keeps delayed callbacks from a completed/cancelled
+/// stream from repainting the next recording's overlay.
+struct RealtimePreviewGate: Equatable {
+    private(set) var activeSessionID: UUID?
+
+    mutating func begin(sessionID: UUID?) {
+        activeSessionID = sessionID
+    }
+
+    mutating func end() {
+        activeSessionID = nil
+    }
+
+    func accepts(_ sessionID: UUID) -> Bool {
+        activeSessionID == sessionID
+    }
+}
+
 /// Observable state for the SwiftUI pill.
 @MainActor
 final class OverlayModel: ObservableObject {
@@ -163,6 +221,7 @@ final class OverlayModel: ObservableObject {
 
     @Published var state: RecordingOverlay.State = .hidden
     @Published var levels: [Float] = Array(repeating: 0, count: barCount)
+    @Published var partialText = ""
 
     func pushLevel(_ level: Float) {
         guard state == .recording else { return }
@@ -203,9 +262,21 @@ private struct OverlayPill: View {
     @ViewBuilder
     private var content: some View {
         switch model.state {
-        case .hidden, .recording:
+        case .hidden:
             Waveform(levels: model.levels)
                 .frame(width: 54, height: 22)
+        case .recording:
+            HStack(spacing: model.partialText.isEmpty ? 0 : 12) {
+                Waveform(levels: model.levels)
+                    .frame(width: 54, height: 22)
+                if !model.partialText.isEmpty {
+                    Text(model.partialText)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .lineLimit(2)
+                        .frame(maxWidth: 320, alignment: .leading)
+                }
+            }
         case .transcribing:
             ProgressView()
                 .controlSize(.small)

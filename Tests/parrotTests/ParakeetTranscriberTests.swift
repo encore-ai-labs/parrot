@@ -17,6 +17,17 @@ final class ParakeetTranscriberTests: XCTestCase {
         XCTAssertEqual(compact.engine, .parakeet)
         XCTAssertEqual(compact.sizeMB, 331)
         XCTAssertTrue(TranscriberFactory.make(model: compact) is ParakeetTranscriber)
+
+        let streaming = try XCTUnwrap(
+            ModelRegistry.find("parakeet-unified-streaming.en")
+        )
+        XCTAssertEqual(streaming.engine, .parakeet)
+        XCTAssertEqual(streaming.languages, ["en"])
+        XCTAssertEqual(streaming.sizeMB, 614)
+        let realtime = try XCTUnwrap(
+            TranscriberFactory.make(model: streaming) as? any RealtimeTranscriber
+        )
+        XCTAssertTrue(realtime.supportsRealtime)
     }
 
     func testDownloadedStateRequiresEveryRuntimeArtifact() throws {

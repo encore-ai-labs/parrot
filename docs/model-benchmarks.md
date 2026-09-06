@@ -28,6 +28,30 @@ compact model and 30 times faster than Unified, and had the lowest maximum resid
 The optional Parakeet choices are useful for long sessions or repeated file transcription,
 where their one-time model load can be amortized.
 
+## Live local streaming validation
+
+The optional `parakeet-unified-streaming.en` path was measured through Parrot's production
+160 ms append/finalize API on the same M3 Max and release build. The source was the 194.12-second
+controlled note described below; five unpaced runs reused its exact 265-word reference and disabled
+personal vocabulary, snippets, and fillers.
+
+| Tier | First partial | Distinct partials | Median compute | Throughput | Release-to-final | WER |
+|---|---:|---:|---:|---:|---:|---:|
+| Parakeet Unified INT8 `[70,7,1]` | 0.64 s audio | 122 | 7.144 s | 27.2x realtime | 20.8 ms | 9.3% |
+
+Every run produced its first non-empty preview at exactly 0.64 seconds and the same 122 distinct
+pre-release updates. The model processed audio about 27 times faster than it arrived, so a normal
+realtime recording keeps recognition ahead of capture and paid only the measured 20.8 ms median
+model tail after release. A one-run 38.82-second measurement reported 138,493,952 bytes maximum
+resident set size (about 132 MiB). The first optimized-process load took 15.51 seconds while Core ML
+prepared the model; a subsequent process loaded it in 0.204 seconds from the system's warm cache.
+
+Accuracy is the reason this remains opt-in: the streaming tier scored 9.3% WER on this repeated
+synthetic note, while Whisper Base scored 0.0% on the same reference. The live option optimizes
+feedback and release latency, not universal accuracy. Its partials are never delivered or saved;
+only the final result enters Parrot's deterministic note pipeline. A five-second bounded audio
+queue and the original recovery WAV provide exact fallback if local inference cannot keep up.
+
 ## Multilingual Base validation
 
 The multilingual path was separately measured on the same Mac with the local debug CLI and two
@@ -248,6 +272,7 @@ Use representative audio and an exact reference on your own Mac:
 ```sh
 parrot models download parakeet-tdt-ctc-110m.en
 parrot models download parakeet-unified.en
+parrot models download parakeet-unified-streaming.en
 
 parrot models benchmark whisper-base.en \
   --audio sample.aiff --reference "Exact spoken words" \
@@ -260,10 +285,17 @@ parrot models benchmark parakeet-tdt-ctc-110m.en \
 parrot models benchmark parakeet-unified.en \
   --audio sample.aiff --reference "Exact spoken words" \
   --runs 3 --notes --no-vocabulary --no-fillers --no-snippets
+
+parrot models benchmark parakeet-unified-streaming.en \
+  --audio sample.aiff --reference "Exact spoken words" \
+  --runs 3 --simulate-live --notes --no-vocabulary --no-fillers --no-snippets
 ```
 
 Use `--json` for machine-readable results. Model download time is deliberately excluded from
 load time; download each candidate before benchmarking it.
+For `--simulate-live`, total run time is an unpaced throughput measurement. The report separately
+records `partialUpdates`, `firstPartialAudioSeconds`, and `medianFinalizationSeconds`; the last is
+the model work remaining after a real user releases the hotkey when streaming has kept up.
 
 To measure the one-capture spoken mode switch, begin the audio with `note mode` or `dictation
 mode` and add `--spoken-mode-trigger`. The JSON report records `noteMode` as the decoder mode and

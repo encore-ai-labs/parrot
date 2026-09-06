@@ -257,6 +257,13 @@ final class AudioCapture: NSObject {
     /// Called for every buffer with its RMS level (0…~1). Arbitrary thread.
     var onLevel: ((Float) -> Void)?
 
+    /// Optional realtime-ASR feed. Both callbacks run synchronously while the
+    /// capture lock establishes ordering with stop/cancel, so consumers must
+    /// only enqueue the value and return. They are nil on the normal path,
+    /// leaving idle and non-streaming capture allocation-free.
+    var onCaptureStarted: (([Float]) -> Void)?
+    var onCapturedSamples: (([Float]) -> Void)?
+
     /// Operational messages such as disconnect/recovery. Arbitrary thread.
     var onStatus: ((String) -> Void)?
 
@@ -361,6 +368,7 @@ final class AudioCapture: NSObject {
             lock.unlock()
             throw CaptureError.temporarilyUnavailable
         }
+        onCaptureStarted?(captured)
         lock.unlock()
 
         do {
@@ -962,6 +970,9 @@ extension AudioCapture: AVCaptureAudioDataOutputSampleBufferDelegate {
                 recordingSpool = nil
                 recordingIsFileBacked = false
             }
+        }
+        if isCapturing, storageFailure == nil, let onCapturedSamples {
+            onCapturedSamples(Array(samples))
         }
         if usePreRoll {
             for s in samples {

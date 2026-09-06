@@ -44,6 +44,15 @@ enum ModelRegistry {
             recommended: false
         ),
         TranscriptionModel(
+            id: "parakeet-unified-streaming.en",
+            displayName: "Parakeet Unified Live (English, 640 ms)",
+            engine: .parakeet,
+            whisperKitID: nil,
+            sizeMB: 614,
+            languages: ["en"],
+            recommended: false
+        ),
+        TranscriptionModel(
             id: "whisper-large-v3-turbo",
             displayName: "Whisper Large v3 Turbo",
             engine: .whisperKit,

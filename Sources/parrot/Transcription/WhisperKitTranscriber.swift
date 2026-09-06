@@ -326,7 +326,22 @@ struct TimedTranscriptSegment: Codable, Equatable, Sendable {
     let text: String
 }
 
-enum TranscriberError: Error {
+enum TranscriberError: LocalizedError {
     case missingEngineID
     case notLoaded
+    case invalidAudio
+    case unsupportedRealtime
+
+    var errorDescription: String? {
+        switch self {
+        case .missingEngineID:
+            "the selected model does not define an engine identifier"
+        case .notLoaded:
+            "the transcription model is not loaded"
+        case .invalidAudio:
+            "the captured audio is invalid"
+        case .unsupportedRealtime:
+            "the selected model does not support live transcription"
+        }
+    }
 }

@@ -1015,6 +1015,14 @@ struct Run: ParsableCommand {
             usePreRoll: defaults.warmMicrophone,
             liveRecordingURL: recordingRecovery.fileURL
         )
+        let realtimeTranscriber = (transcriber as? any RealtimeTranscriber).flatMap {
+            $0.supportsRealtime ? $0 : nil
+        }
+        let realtimeRouter = RealtimeCaptureRouter()
+        if realtimeTranscriber != nil {
+            capture.onCaptureStarted = { realtimeRouter.submit($0) }
+            capture.onCapturedSamples = { realtimeRouter.submit($0) }
+        }
         capture.onStatus = { message in
             FileHandle.standardError.write(Data("\(message)\n".utf8))
         }
@@ -1211,6 +1219,7 @@ struct Run: ParsableCommand {
         var retryContext: Task<String?, Never>?
         var recordingWasLatched = false
         var retryCompactPauses = false
+        var realtimeTeardown: Task<Void, Never>?
 
         func preparePersonalization() -> Task<PersonalizationRefresh, Never> {
             Task {
@@ -1254,10 +1263,13 @@ struct Run: ParsableCommand {
             sessionID: Int,
             audioDuration seconds: TimeInterval,
             compactLongPauses: Bool,
-            personalizationUpdate: Task<PersonalizationRefresh, Never>
+            personalizationUpdate: Task<PersonalizationRefresh, Never>,
+            realtimeCompletion: Task<RealtimeTranscriptionSession.Completion, Never>? = nil,
+            transcriberReadyAfter: Task<Void, Never>? = nil
         ) {
             Task {
-                [modeForCapture, deliveryRoute, recognitionContext, recording, compactLongPauses] in
+                [modeForCapture, deliveryRoute, recognitionContext, recording,
+                 compactLongPauses, realtimeCompletion, transcriberReadyAfter] in
                 let started = Date()
                 let inferenceRecording: PreparedInferenceRecording
                 if compactLongPauses {
@@ -1293,26 +1305,38 @@ struct Run: ParsableCommand {
                     // decoder and post-processing use one coherent revision.
                     let personalization = await personalizationUpdate.value.snapshot
                     let context = await recognitionContext?.value
+                    if let transcriberReadyAfter { await transcriberReadyAfter.value }
                     let transcription: LiveTranscription
-                    switch inferenceRecording.recording {
-                    case .memory(let samples, _, _):
-                        transcription = try await transcriber.transcribe(
-                            samples,
-                            mode: modeForCapture,
-                            recognitionContext: context
-                        )
-                    case .file(let url, _, _):
-                        let timed = try await transcriber.transcribeFile(
-                            at: url,
-                            mode: modeForCapture,
-                            recognitionContext: context
-                        )
-                        transcription = LiveTranscription(
-                            text: timed.text,
-                            language: timed.language,
-                            segments: timed.segments,
-                            originalText: timed.originalText
-                        )
+                    let realtimeResult = await realtimeCompletion?.value
+                    if let fallbackReason = realtimeResult?.fallbackReason {
+                        FileHandle.standardError.write(Data(
+                            "\(fallbackReason)\n".utf8
+                        ))
+                    }
+                    if let completed = realtimeResult?.transcription,
+                       !inferenceRecording.didCompact {
+                        transcription = completed
+                    } else {
+                        switch inferenceRecording.recording {
+                        case .memory(let samples, _, _):
+                            transcription = try await transcriber.transcribe(
+                                samples,
+                                mode: modeForCapture,
+                                recognitionContext: context
+                            )
+                        case .file(let url, _, _):
+                            let timed = try await transcriber.transcribeFile(
+                                at: url,
+                                mode: modeForCapture,
+                                recognitionContext: context
+                            )
+                            transcription = LiveTranscription(
+                                text: timed.text,
+                                language: timed.language,
+                                segments: timed.segments,
+                                originalText: timed.originalText
+                            )
+                        }
                     }
                     let applyCleanup = defaults.cleanup
                         && RecognitionLanguage.supportsEnglishCleanup(transcription.language)
@@ -1504,6 +1528,21 @@ struct Run: ParsableCommand {
             guard let sessionID = lifecycle.start() else { return }
             recordingWasLatched = false
             recordingPersonalizationUpdate = preparePersonalization()
+            let realtimePreviewID = realtimeTranscriber.map { _ in UUID() }
+            if let realtimeTranscriber,
+               let personalizationUpdate = recordingPersonalizationUpdate,
+               let realtimePreviewID {
+                let session = RealtimeTranscriptionSession(
+                    transcriber: realtimeTranscriber,
+                    after: realtimeTeardown,
+                    prepare: { _ = await personalizationUpdate.value },
+                    partial: { text in
+                        overlay?.pushPartial(text, sessionID: realtimePreviewID)
+                    }
+                )
+                realtimeTeardown = nil
+                realtimeRouter.activate(session)
+            }
             recordingContext = MainActor.assumeIsolated {
                 RecognitionContextCapture.start(source: effectiveRecognitionContext)
             }
@@ -1544,11 +1583,14 @@ struct Run: ParsableCommand {
                         selection.mode,
                         automaticApplicationName: selection.automaticApplicationName
                     )
-                    overlay?.show(.recording)
+                    overlay?.show(.recording, previewSessionID: realtimePreviewID)
                     menuBar.setRecording(true)
                     menuBar.setRecordingRecoveryBusy(true)
                 }
             } catch {
+                if let realtime = realtimeRouter.deactivate() {
+                    realtimeTeardown = realtime.cancel()
+                }
                 recordingContext?.cancel()
                 recordingContext = nil
                 lifecycle.failStart(sessionID)
@@ -1576,10 +1618,15 @@ struct Run: ParsableCommand {
             monitor.stopExitKeyMonitoring()
             let captured: CapturedAudio
             let recording: LastRecordingRecovery.Recording?
+            var realtimeSession: RealtimeTranscriptionSession?
             do {
                 captured = try capture.stop()
+                realtimeSession = realtimeRouter.deactivate()
                 recording = try recordingRecovery.adoptLiveCapture(captured)
             } catch {
+                if let realtime = realtimeSession ?? realtimeRouter.deactivate() {
+                    realtimeTeardown = realtime.cancel()
+                }
                 contextForCapture?.cancel()
                 _ = lifecycle.finish(sessionID)
                 FileHandle.standardError.write(Data(
@@ -1622,6 +1669,9 @@ struct Run: ParsableCommand {
                 }
             }
             guard let recording else {
+                if let realtimeSession {
+                    realtimeTeardown = realtimeSession.cancel()
+                }
                 contextForCapture?.cancel()
                 try? recordingRecovery.forget()
                 _ = lifecycle.finish(sessionID)
@@ -1637,6 +1687,9 @@ struct Run: ParsableCommand {
                 rms: rms,
                 enabled: !noAudioGate
             ) {
+                if let realtimeSession {
+                    realtimeTeardown = realtimeSession.cancel()
+                }
                 contextForCapture?.cancel()
                 try? recordingRecovery.forget()
                 _ = lifecycle.finish(sessionID)
@@ -1652,6 +1705,25 @@ struct Run: ParsableCommand {
             retryDeliveryRoute = deliveryRouteForCapture
             retryContext = contextForCapture
             retryCompactPauses = compactPausesForCapture
+            let realtimeCompletion: Task<RealtimeTranscriptionSession.Completion, Never>?
+            var transcriberReadyAfter: Task<Void, Never>?
+            if let realtimeSession, compactPausesForCapture {
+                let teardown = realtimeSession.cancel()
+                realtimeTeardown = teardown
+                transcriberReadyAfter = teardown
+                realtimeCompletion = nil
+            } else if let realtimeSession {
+                transcriberReadyAfter = nil
+                realtimeCompletion = Task {
+                    await realtimeSession.finish(
+                        mode: modeForCapture,
+                        sourceDuration: seconds
+                    )
+                }
+            } else {
+                realtimeCompletion = nil
+                transcriberReadyAfter = nil
+            }
             transcribeAndDeliver(
                 recording,
                 mode: modeForCapture,
@@ -1660,7 +1732,9 @@ struct Run: ParsableCommand {
                 sessionID: sessionID,
                 audioDuration: seconds,
                 compactLongPauses: compactPausesForCapture,
-                personalizationUpdate: personalizationUpdateForCapture
+                personalizationUpdate: personalizationUpdateForCapture,
+                realtimeCompletion: realtimeCompletion,
+                transcriberReadyAfter: transcriberReadyAfter
             )
         }
 
@@ -1671,6 +1745,9 @@ struct Run: ParsableCommand {
             recordingWasLatched = false
             monitor.stopExitKeyMonitoring()
             capture.cancel()
+            if let realtime = realtimeRouter.deactivate() {
+                realtimeTeardown = realtime.cancel()
+            }
             try? recordingRecovery.forget()
             FileHandle.standardError.write(Data("× recording cancelled\n".utf8))
             MainActor.assumeIsolated {
@@ -1694,6 +1771,7 @@ struct Run: ParsableCommand {
                   let sessionID = lifecycle.beginRetry()
             else { return }
             let personalizationUpdate = preparePersonalization()
+            let pendingRealtimeTeardown = realtimeTeardown
             let seconds = recording.duration
             FileHandle.standardError.write(Data(
                 "↻ retrying last recording · \(retryMode.rawValue)\n".utf8
@@ -1715,7 +1793,8 @@ struct Run: ParsableCommand {
                 sessionID: sessionID,
                 audioDuration: seconds,
                 compactLongPauses: retryCompactPauses,
-                personalizationUpdate: personalizationUpdate
+                personalizationUpdate: personalizationUpdate,
+                transcriberReadyAfter: pendingRealtimeTeardown
             )
         }
 
@@ -2041,7 +2120,9 @@ struct Vocabulary: ParsableCommand {
 struct Models: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Manage transcription models.",
-        subcommands: [List.self, Download.self, Path.self, Migrate.self, ModelBenchmark.self]
+        subcommands: [
+            List.self, Download.self, Remove.self, Path.self, Migrate.self, ModelBenchmark.self,
+        ]
     )
 
     struct List: ParsableCommand {
@@ -2072,6 +2153,7 @@ struct Models: ParsableCommand {
                 }
                 print("\(star) \(id) \(size)  \(langs)  \(stored)  \(m.displayName)")
             }
+            print("\nfree space with: parrot models remove <id>")
         }
     }
 
@@ -2093,6 +2175,78 @@ struct Models: ParsableCommand {
             }
             sem.wait()
             if let e = capturedError { throw e }
+        }
+    }
+
+    struct Remove: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Remove one model from Parrot-managed storage."
+        )
+
+        @Argument(help: "Model id from `parrot models list`.")
+        var id: String
+
+        @Flag(
+            name: .long,
+            help: "Remove the selected default too; it will download again unless you change models."
+        )
+        var force = false
+
+        func run() throws {
+            guard let model = ModelRegistry.find(id) else {
+                throw ValidationError("unknown model '\(id)'; run `parrot models list`")
+            }
+
+            let daemonLock: DaemonLock
+            do {
+                daemonLock = try DaemonLock.acquire()
+            } catch let error as DaemonLock.LockError {
+                switch error {
+                case .alreadyRunning:
+                    throw ValidationError(
+                        "stop the running Parrot daemon before removing a model"
+                    )
+                default:
+                    throw error
+                }
+            }
+            defer { daemonLock.release() }
+
+            let storage = ModelStorage.default
+            guard try storage.hasManagedArtifacts(for: model) else {
+                if model.engine == .whisperKit,
+                   let variant = model.whisperKitID,
+                   let existing = storage.existingModel(variant: variant),
+                   existing.source == .legacyDocuments {
+                    print("not removed — \(model.id) is in shared legacy storage")
+                    print("path: \(existing.modelFolder.path)")
+                    print("run `parrot models migrate`, then repeat this command")
+                } else {
+                    print("\(model.id) is not installed in Parrot-managed storage")
+                }
+                return
+            }
+            let selected = Config.load().model ?? ModelRegistry.recommended()?.id
+            if selected == model.id, !force {
+                throw ValidationError(
+                    "\(model.id) is your selected model; choose another with "
+                        + "`parrot settings set --model <id>`, or pass --force"
+                )
+            }
+
+            guard let result = try storage.removeManagedModel(model) else { return }
+
+            let reclaimed = ByteCountFormatter.string(
+                fromByteCount: result.reclaimedBytes,
+                countStyle: .file
+            )
+            print("✓ removed \(model.id) · reclaimed \(reclaimed)")
+            for path in result.removedPaths {
+                print("  \(path.path)")
+            }
+            if selected == model.id {
+                print("  select another model before starting Parrot to avoid a redownload")
+            }
         }
     }
 

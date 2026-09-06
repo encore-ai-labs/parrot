@@ -480,6 +480,25 @@ launches exit successfully with controls. `daemon stop` handles either launchd o
 runtime PID and waits for lock release. The same release adds explicit, bounded pause compaction for
 locked notes; it always transcribes a disposable private inference copy and never edits recovery.
 
+**3.38 — Local recognition gives no textual feedback until the hotkey is released.** ✅ **FIXED**
+
+An optional 640 ms Parakeet Unified streaming model now consumes ordered 16 kHz capture buffers
+through one bounded worker and displays provisional text in the click-through overlay. Partials are
+scoped by recording UUID and cannot reach delivery or persistence. The final stream result alone is
+authoritative; model failure, cancellation, pause compaction, or more than five seconds of queued
+audio resets the shared manager and uses the complete private recovery recording. The benchmark CLI
+exercises the real append/finalize API and measures first partials and release-to-final latency. On
+the controlled 194.12-second note, five M3 Max runs produced a first partial at 0.64 seconds, 27.2x
+throughput, and a 20.8 ms median finalization tail; its 9.3% WER keeps it opt-in behind Whisper Base.
+
+**3.39 — Reclaiming model disk space requires manually deleting undocumented folders.** ✅ **FIXED**
+
+`parrot models remove <id>` now deletes only registry-derived artifacts beneath Parrot's managed
+model root, reports reclaimed bytes, and refuses both a running daemon and the selected model unless
+the user explicitly passes `--force`. Parent symlinks cannot redirect deletion outside the managed
+root, shared/legacy Documents caches are never touched, and removing one Unified Parakeet encoder
+preserves the small shared decoder/vocabulary plus the other batch/live encoder.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |

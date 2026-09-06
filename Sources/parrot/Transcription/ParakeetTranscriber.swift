@@ -12,14 +12,16 @@ actor ParakeetTranscriber: Transcriber {
 
     let modelID: String
 
-    enum Variant {
+    enum Variant: Equatable {
         case compact
         case unified
+        case unifiedStreaming
 
         init?(modelID: String) {
             switch modelID {
             case "parakeet-tdt-ctc-110m.en": self = .compact
             case "parakeet-unified.en": self = .unified
+            case "parakeet-unified-streaming.en": self = .unifiedStreaming
             default: return nil
             }
         }
@@ -27,7 +29,7 @@ actor ParakeetTranscriber: Transcriber {
         var folderName: String {
             switch self {
             case .compact: return Repo.parakeetTdtCtc110m.folderName
-            case .unified: return Repo.parakeetUnified.folderName
+            case .unified, .unifiedStreaming: return Repo.parakeetUnified.folderName
             }
         }
 
@@ -47,6 +49,13 @@ actor ParakeetTranscriber: Transcriber {
                     "parakeet_unified_joint_decision_single_step.mlmodelc",
                     "vocab.json",
                 ]
+            case .unifiedStreaming:
+                return [
+                    "parakeet_unified_encoder_streaming_70_7_1_int8.mlmodelc",
+                    "parakeet_unified_decoder.mlmodelc",
+                    "parakeet_unified_joint_decision_single_step.mlmodelc",
+                    "vocab.json",
+                ]
             }
         }
 
@@ -56,8 +65,22 @@ actor ParakeetTranscriber: Transcriber {
                 // FluidAudio currently loads this acoustic CTC head alongside
                 // the compact TDT model for its hybrid decoding path.
                 return [(Repo.parakeetCtc110m.folderName, "CtcHead.mlmodelc")]
-            case .unified:
+            case .unified, .unifiedStreaming:
                 return []
+            }
+        }
+
+        /// Large encoder artifacts owned exclusively by one Parrot model ID.
+        /// Unified decoder/joint/vocabulary files are shared by batch and live
+        /// variants and deliberately remain as a small reusable cache.
+        var removableArtifacts: [String] {
+            switch self {
+            case .compact:
+                return requiredArtifacts
+            case .unified:
+                return ["parakeet_unified_encoder_int8.mlmodelc"]
+            case .unifiedStreaming:
+                return ["parakeet_unified_encoder_streaming_70_7_1_int8.mlmodelc"]
             }
         }
     }
@@ -65,9 +88,11 @@ actor ParakeetTranscriber: Transcriber {
     private enum Backend {
         case compact(AsrManager)
         case unified(UnifiedAsrManager)
+        case unifiedStreaming(StreamingUnifiedAsrManager)
     }
 
     private let variant: Variant
+    nonisolated let supportsRealtime: Bool
     private let automaticParagraphs: Bool
     private var vocabularyReplacer: VocabularyReplacer
     private var personalizationRevision: UInt64 = 0
@@ -87,6 +112,7 @@ actor ParakeetTranscriber: Transcriber {
             preconditionFailure("unknown Parakeet model: \(model.id)")
         }
         self.variant = variant
+        supportsRealtime = variant == .unifiedStreaming
         self.automaticParagraphs = automaticParagraphs
         vocabularyReplacer = VocabularyReplacer(entries: vocabulary.entries)
         self.storage = storage
@@ -137,6 +163,16 @@ actor ParakeetTranscriber: Transcriber {
                     progressHandler: progressHandler
                 )
                 backend = .unified(loaded)
+            case .unifiedStreaming:
+                let loaded = StreamingUnifiedAsrManager(
+                    config: UnifiedConfig(leftFrames: 70, chunkFrames: 7, rightFrames: 1),
+                    encoderPrecision: .int8
+                )
+                try await loaded.loadModels(
+                    to: storage.managedBase,
+                    progressHandler: progressHandler
+                )
+                backend = .unifiedStreaming(loaded)
             }
         } catch {
             downloadProgress.finish()
@@ -194,6 +230,13 @@ actor ParakeetTranscriber: Transcriber {
                 language: "en",
                 originalText: originalText
             )
+        case .unifiedStreaming(let manager):
+            return try await transcribeStreaming(
+                audio,
+                manager: manager,
+                mode: mode,
+                sourceDuration: sourceDuration
+            )
         }
     }
 
@@ -202,7 +245,6 @@ actor ParakeetTranscriber: Transcriber {
         mode: DictationMode,
         recognitionContext: String?
     ) async throws -> TimedTranscription {
-        _ = mode
         _ = recognitionContext // Parakeet has no acoustic prompt API.
         if backend == nil { try await warmUp() }
         guard let backend else { throw TranscriberError.notLoaded }
@@ -239,6 +281,20 @@ actor ParakeetTranscriber: Transcriber {
             let result = try await manager.transcribeWithTimings(samples)
             text = result.text
             timings = result.tokenTimings
+        case .unifiedStreaming(let manager):
+            let samples = try AudioConverter().resampleAudioFile(url)
+            let result = try await transcribeStreaming(
+                samples,
+                manager: manager,
+                mode: mode,
+                sourceDuration: sourceDuration ?? Double(samples.count) / Double(ASRConstants.sampleRate)
+            )
+            return TimedTranscription(
+                text: result.text,
+                language: result.language,
+                segments: result.segments,
+                originalText: result.originalText
+            )
         }
         let originalText = sanitized(text)
         return TimedTranscription(
@@ -266,6 +322,24 @@ actor ParakeetTranscriber: Transcriber {
     ) -> Bool {
         guard let variant = Variant(modelID: model.id) else { return false }
         return isDownloaded(variant: variant, storage: storage)
+    }
+
+    nonisolated static func managedRemovalTargets(
+        model: TranscriptionModel,
+        storage: ModelStorage
+    ) -> [URL] {
+        guard let variant = Variant(modelID: model.id) else { return [] }
+        let folder = storage.managedBase.appendingPathComponent(
+            variant.folderName,
+            isDirectory: true
+        )
+        let primary = variant.removableArtifacts.map { folder.appendingPathComponent($0) }
+        let supplemental = variant.supplementalArtifacts.map { item in
+            storage.managedBase
+                .appendingPathComponent(item.folder, isDirectory: true)
+                .appendingPathComponent(item.artifact)
+        }
+        return primary + supplemental
     }
 
     private nonisolated static func isDownloaded(
@@ -330,6 +404,115 @@ actor ParakeetTranscriber: Transcriber {
             segments: segments,
             originalText: originalText
         )
+    }
+
+    private func transcribeStreaming(
+        _ audio: [Float],
+        manager: StreamingUnifiedAsrManager,
+        mode: DictationMode,
+        sourceDuration: TimeInterval
+    ) async throws -> LiveTranscription {
+        try await manager.reset()
+        await manager.setPartialTranscriptCallback { _ in }
+        do {
+            if !audio.isEmpty {
+                try await manager.appendAudio(Self.audioBuffer(for: audio))
+            }
+            let text = try await manager.finish()
+            let timings = await manager.consumeTokenTimings()
+            let result = liveTranscription(
+                text: text,
+                timings: automaticParagraphs && mode == .notes ? timings : [],
+                sourceDuration: sourceDuration
+            )
+            await manager.setPartialTranscriptCallback { _ in }
+            try await manager.reset()
+            return result
+        } catch {
+            await manager.setPartialTranscriptCallback { _ in }
+            try? await manager.reset()
+            throw error
+        }
+    }
+
+    nonisolated private static func audioBuffer(for audio: [Float]) throws -> AVAudioPCMBuffer {
+        guard audio.count <= Int(UInt32.max),
+              let format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: Double(ASRConstants.sampleRate),
+                channels: 1,
+                interleaved: false
+              ),
+              let buffer = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(audio.count)
+              ),
+              let channel = buffer.floatChannelData?[0]
+        else { throw TranscriberError.invalidAudio }
+        buffer.frameLength = AVAudioFrameCount(audio.count)
+        audio.withUnsafeBufferPointer { source in
+            guard let baseAddress = source.baseAddress else { return }
+            channel.update(from: baseAddress, count: audio.count)
+        }
+        return buffer
+    }
+}
+
+extension ParakeetTranscriber: RealtimeTranscriber {
+    func beginRealtime(
+        partial: @escaping @Sendable (String) -> Void
+    ) async throws {
+        if backend == nil { try await warmUp() }
+        guard case .unifiedStreaming(let manager) = backend else {
+            throw TranscriberError.unsupportedRealtime
+        }
+        let replacer = vocabularyReplacer
+        try await manager.reset()
+        await manager.setPartialTranscriptCallback { raw in
+            let original = TranscriptSanitizer.sanitize(raw)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            partial(replacer.applying(to: original))
+        }
+    }
+
+    func appendRealtime(_ audio: [Float]) async throws {
+        guard case .unifiedStreaming(let manager) = backend else {
+            throw TranscriberError.unsupportedRealtime
+        }
+        guard !audio.isEmpty else { return }
+        try await manager.appendAudio(Self.audioBuffer(for: audio))
+        try await manager.processBufferedAudio()
+    }
+
+    func finishRealtime(
+        mode: DictationMode,
+        sourceDuration: TimeInterval
+    ) async throws -> LiveTranscription {
+        guard case .unifiedStreaming(let manager) = backend else {
+            throw TranscriberError.unsupportedRealtime
+        }
+        do {
+            let text = try await manager.finish()
+            let timings = await manager.consumeTokenTimings()
+            let result = liveTranscription(
+                text: text,
+                timings: automaticParagraphs && mode == .notes ? timings : [],
+                sourceDuration: sourceDuration
+            )
+            await manager.setPartialTranscriptCallback { _ in }
+            try await manager.reset()
+            return result
+        } catch {
+            await manager.setPartialTranscriptCallback { _ in }
+            try? await manager.reset()
+            throw error
+        }
+    }
+
+    func cancelRealtime() async {
+        guard case .unifiedStreaming(let manager) = backend else { return }
+        await manager.setPartialTranscriptCallback { _ in }
+        try? await manager.reset()
     }
 }
 

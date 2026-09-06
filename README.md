@@ -731,13 +731,30 @@ parrot languages
 parrot models path
 ```
 
+To reclaim space without guessing at cache folders, stop the daemon and remove exact model IDs:
+
+```sh
+parrot daemon stop
+parrot models remove whisper-small
+parrot models remove parakeet-unified.en
+parrot models list
+```
+
+Parrot deletes only that model's artifacts under its managed model directory and prints the measured
+space reclaimed. It refuses while the daemon is running and protects the currently selected model;
+choose another first, or pass `--force` if you intentionally want it downloaded again at the next
+launch. The two Unified Parakeet choices share small decoder/vocabulary files, so removing either
+deletes its large exclusive encoder while preserving the other choice. Old models under the shared
+`~/Documents/huggingface/` layout are reported but never deleted automatically; migrate a known
+Parrot model first, then remove its managed copy.
+
 To move known legacy Parrot model folders into managed storage, first stop the daemon and run
 `parrot models migrate`. Migration never overwrites an existing managed model and leaves
 compatibility links at the old paths for other local tools. Tokenizer metadata may remain in
 the shared legacy Hugging Face cache; the large Core ML model bundles are what Parrot moves.
 Downloads show percentage progress in both interactive terminals and daemon logs.
 
-Parrot includes two optional English-only Parakeet engines. Whisper Base remains the default:
+Parrot includes three optional English-only Parakeet choices. Whisper Base remains the default:
 it starts quickly, uses the least warm memory, and is the safest general choice. Pick a
 Parakeet model when repeated inference speed matters more than model load cost:
 
@@ -747,6 +764,7 @@ Parakeet model when repeated inference speed matters more than model load cost:
 | `whisper-base` | 147 MB | 100 languages; fixed language or automatic detection |
 | `parakeet-tdt-ctc-110m.en` | 331 MB | Small, very fast English engine |
 | `parakeet-unified.en` | 614 MB | Fast English engine with punctuation and capitalization |
+| `parakeet-unified-streaming.en` | 614 MB | Live local English preview; 640 ms latency tier |
 | `whisper-small` | 486 MB | Higher-capacity multilingual Whisper |
 
 ```sh
@@ -755,10 +773,30 @@ parrot settings set --model parakeet-tdt-ctc-110m.en
 parrot daemon restart
 ```
 
-Both engines run through Core ML on the Mac and use the same private vocabulary replacement,
+All Parrot engines run through Core ML on the Mac and use the same private vocabulary replacement,
 note formatting, history, live dictation, file transcription, and benchmark flows. Parakeet is
 English-only and does not currently use Whisper's acoustic prompt hints. See the
 [measured model comparison](docs/model-benchmarks.md) before changing the default.
+
+For live text while you speak, install the streaming Unified model and select it explicitly:
+
+```sh
+parrot models download parakeet-unified-streaming.en
+parrot settings set --model parakeet-unified-streaming.en
+parrot daemon restart
+```
+
+Its recording pill expands with provisional text after about 640 ms of audio. All recognition
+still runs through Core ML on the Mac; after the model download, neither partial nor final text
+needs a network request. Partials are display-only—the final model result is the sole value that
+can reach your cursor, journal, command, or history. Delayed callbacks are tied to one recording,
+and a stream that errors or accumulates more than five seconds of queued audio is discarded in
+favor of the complete private recovery recording, so lag cannot silently drop words. Escape keeps
+its normal cancel-and-delete behavior.
+
+When locked-note pause compaction is enabled, Parrot may show live partials while recording but
+intentionally finalizes the compacted recovery copy through the normal path. That preserves the
+compaction timeline contract instead of mixing text from two different audio sequences.
 
 Measure a model with the same audio on your own Mac instead of relying on generic benchmark
 claims. Record a short representative sample (running Parrot once with `--dump-wav` writes the
@@ -779,6 +817,8 @@ accurate). The benchmark uses your saved vocabulary, fillers, and snippets by de
 benchmark the live leading mode-selection path; JSON records both the requested and effective mode.
 Add `--compact-pauses` to compare the locked-recording optimization on the same source; the report
 records original duration, inference duration, removed pause time, and preparation cost.
+For the live model, add `--simulate-live`: Parrot feeds the file through the same 160 ms streaming
+API and reports distinct pre-release partials, audio-to-first-partial, and release-to-final time.
 Use `--json` to save comparable machine-readable reports. Download each candidate first with
 `parrot models download <id>` so network time is not included in model-load time.
 For reproducible tests or managed deployments, `PARROT_MODELS_DIRECTORY` overrides only the
@@ -892,6 +932,7 @@ parrot doctor                          # check permissions + fn key setting
 parrot models list                     # list available models
 parrot languages                       # supported language names and codes
 parrot models download <id>            # pre-download a model
+parrot models remove <id> [--force]    # reclaim one managed model's disk space
 parrot models path                     # show managed and legacy model locations
 parrot models migrate                  # safely move known legacy model bundles
 parrot models benchmark <id> --audio sample.wav

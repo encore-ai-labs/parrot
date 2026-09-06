@@ -57,6 +57,12 @@ struct ModelBenchmark: ParsableCommand {
     )
     var compactPauses = false
 
+    @Flag(
+        name: .customLong("simulate-live"),
+        help: "Feed a real-time model in 160 ms chunks and measure release-to-final latency."
+    )
+    var simulateLive = false
+
     @Flag(name: .long, help: "Ignore the saved personal vocabulary during this benchmark.")
     var noVocabulary = false
 
@@ -144,6 +150,13 @@ struct ModelBenchmark: ParsableCommand {
             additionalPromptTerms: snippets.promptTerms,
             notePromptTerms: NoteFormatter.promptTerms
         )
+        let realtimeTranscriber = transcriber as? any RealtimeTranscriber
+        if simulateLive,
+           !(realtimeTranscriber?.supportsRealtime ?? false) {
+            throw ValidationError(
+                "--simulate-live requires a live model such as parakeet-unified-streaming.en"
+            )
+        }
 
         if !json {
             print("model    \(model.id)")
@@ -174,14 +187,64 @@ struct ModelBenchmark: ParsableCommand {
         }
 
         var timings: [Double] = []
+        var finalizationTimings: [Double] = []
+        var partialUpdateCounts: [Int] = []
+        var firstPartialAudioTimings: [Double] = []
         var transcript = ""
         var detectedLanguage = canonicalLanguage
         var effectiveMode: DictationMode = notes ? .notes : .dictation
         for index in 1...runs {
             let started = ContinuousClock.now
             let mode: DictationMode = notes ? .notes : .dictation
-            let result = try waitForAsync {
-                try await transcriber.transcribe(samples, mode: mode)
+            let result: LiveTranscription
+            if simulateLive, let realtimeTranscriber {
+                let measured = try waitForAsync {
+                    () async throws -> (LiveTranscription, Double, RealtimeBenchmarkMetrics) in
+                    let partials = RealtimeBenchmarkObserver()
+                    do {
+                        try await realtimeTranscriber.beginRealtime(partial: { text in
+                            partials.observe(text)
+                        })
+                        var offset = 0
+                        while offset < samples.count {
+                            let end = min(
+                                offset + RealtimeTranscriptionSession.processingBatchSamples,
+                                samples.count
+                            )
+                            partials.willSubmit(totalSamples: end)
+                            try await realtimeTranscriber.appendRealtime(
+                                Array(samples[offset..<end])
+                            )
+                            offset = end
+                        }
+                        partials.markFinishing()
+                        let finalStarted = ContinuousClock.now
+                        let result = try await realtimeTranscriber.finishRealtime(
+                            mode: mode,
+                            sourceDuration: inferenceAudioSeconds
+                        )
+                        return (
+                            result,
+                            Self.elapsedSeconds(since: finalStarted),
+                            partials.snapshot()
+                        )
+                    } catch {
+                        await realtimeTranscriber.cancelRealtime()
+                        throw error
+                    }
+                }
+                result = measured.0
+                finalizationTimings.append(measured.1)
+                partialUpdateCounts.append(measured.2.updateCount)
+                if let firstPartialSamples = measured.2.firstPartialSamples {
+                    firstPartialAudioTimings.append(
+                        Double(firstPartialSamples) / AudioCapture.targetSampleRate
+                    )
+                }
+            } else {
+                result = try waitForAsync {
+                    try await transcriber.transcribe(samples, mode: mode)
+                }
             }
             detectedLanguage = result.language
             if spokenModeTrigger {
@@ -228,12 +291,27 @@ struct ModelBenchmark: ParsableCommand {
             timings.append(seconds)
             if !json {
                 let speed = seconds > 0 ? audioSeconds / seconds : 0
-                print(String(format: "run %-2d   %.3fs · %.1f× realtime", index, seconds, speed))
+                let finish = finalizationTimings.last.map {
+                    String(format: " · %.3fs finish", $0)
+                } ?? ""
+                let partials = partialUpdateCounts.last.map {
+                    " · \($0) partials"
+                } ?? ""
+                print(String(
+                    format: "run %-2d   %.3fs · %.1f× realtime%@%@",
+                    index, seconds, speed, finish, partials
+                ))
             }
         }
 
         let median = BenchmarkMath.median(timings)
         let mean = timings.reduce(0, +) / Double(timings.count)
+        let medianFinalization = finalizationTimings.isEmpty
+            ? nil
+            : BenchmarkMath.median(finalizationTimings)
+        let medianFirstPartialAudio = firstPartialAudioTimings.isEmpty
+            ? nil
+            : BenchmarkMath.median(firstPartialAudioTimings)
         let rtf = audioSeconds > 0 ? median / audioSeconds : 0
         let wer = expected.map { BenchmarkMath.wordErrorRate(reference: $0, hypothesis: transcript) }
         let report = ModelBenchmarkReport(
@@ -246,6 +324,7 @@ struct ModelBenchmark: ParsableCommand {
             effectiveMode: effectiveMode.rawValue,
             automaticParagraphs: effectiveMode == .notes && paragraphPreference,
             compactPauses: compactPauses,
+            simulatedLive: simulateLive,
             vocabularyTerms: vocabulary.entries.count,
             snippets: snippets.entries.count,
             fillers: fillers.entries.count,
@@ -256,6 +335,11 @@ struct ModelBenchmark: ParsableCommand {
             compactionSeconds: compactionSeconds,
             loadSeconds: loadSeconds,
             runSeconds: timings,
+            finalizationSeconds: finalizationTimings,
+            medianFinalizationSeconds: medianFinalization,
+            partialUpdates: partialUpdateCounts,
+            firstPartialAudioSeconds: firstPartialAudioTimings,
+            medianFirstPartialAudioSeconds: medianFirstPartialAudio,
             medianSeconds: median,
             meanSeconds: mean,
             realTimeFactor: rtf,
@@ -274,6 +358,16 @@ struct ModelBenchmark: ParsableCommand {
         } else {
             print(String(format: "median   %.3fs · RTF %.3f", median, rtf))
             print(String(format: "mean     %.3fs", mean))
+            if let medianFinalization {
+                print(String(format: "finish   %.3fs median after release", medianFinalization))
+            }
+            if let medianFirstPartialAudio {
+                print(String(
+                    format: "preview  %.2fs audio to first partial · %d median updates",
+                    medianFirstPartialAudio,
+                    Int(BenchmarkMath.median(partialUpdateCounts.map(Double.init)))
+                ))
+            }
             if let wer {
                 print(String(format: "WER      %.1f%%", wer * 100))
             }
@@ -293,10 +387,14 @@ struct ModelBenchmark: ParsableCommand {
         }
     }
 
-    private func elapsedSeconds(since start: ContinuousClock.Instant) -> Double {
+    private static func elapsedSeconds(since start: ContinuousClock.Instant) -> Double {
         let duration = start.duration(to: .now)
         return Double(duration.components.seconds)
             + Double(duration.components.attoseconds) / 1_000_000_000_000_000_000
+    }
+
+    private func elapsedSeconds(since start: ContinuousClock.Instant) -> Double {
+        Self.elapsedSeconds(since: start)
     }
 
     private func waitForAsync<T>(_ operation: @escaping @Sendable () async throws -> T) throws -> T {
@@ -326,6 +424,7 @@ struct ModelBenchmarkReport: Codable {
     let effectiveMode: String
     let automaticParagraphs: Bool
     let compactPauses: Bool
+    let simulatedLive: Bool
     let vocabularyTerms: Int
     let snippets: Int
     let fillers: Int
@@ -336,6 +435,11 @@ struct ModelBenchmarkReport: Codable {
     let compactionSeconds: Double
     let loadSeconds: Double
     let runSeconds: [Double]
+    let finalizationSeconds: [Double]
+    let medianFinalizationSeconds: Double?
+    let partialUpdates: [Int]
+    let firstPartialAudioSeconds: [Double]
+    let medianFirstPartialAudioSeconds: Double?
     let medianSeconds: Double
     let meanSeconds: Double
     let realTimeFactor: Double
@@ -344,6 +448,56 @@ struct ModelBenchmarkReport: Codable {
     let wordErrorRate: Double?
     let hardwareModel: String
     let macOS: String
+}
+
+struct RealtimeBenchmarkMetrics: Equatable, Sendable {
+    let updateCount: Int
+    let firstPartialSamples: Int?
+}
+
+/// Thread-safe instrumentation for callbacks owned by the streaming model.
+/// Only distinct, non-empty previews observed before `finish` are measured.
+final class RealtimeBenchmarkObserver: @unchecked Sendable {
+    private let lock = NSLock()
+    private var submittedSamples = 0
+    private var updateCount = 0
+    private var firstPartialSamples: Int?
+    private var latest = ""
+    private var isFinishing = false
+
+    func willSubmit(totalSamples: Int) {
+        lock.lock()
+        submittedSamples = totalSamples
+        lock.unlock()
+    }
+
+    func observe(_ text: String) {
+        let preview = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !preview.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isFinishing, preview != latest else { return }
+        latest = preview
+        updateCount += 1
+        if firstPartialSamples == nil {
+            firstPartialSamples = submittedSamples
+        }
+    }
+
+    func markFinishing() {
+        lock.lock()
+        isFinishing = true
+        lock.unlock()
+    }
+
+    func snapshot() -> RealtimeBenchmarkMetrics {
+        lock.lock()
+        defer { lock.unlock() }
+        return RealtimeBenchmarkMetrics(
+            updateCount: updateCount,
+            firstPartialSamples: firstPartialSamples
+        )
+    }
 }
 
 private final class AsyncResultBox<Value>: @unchecked Sendable {

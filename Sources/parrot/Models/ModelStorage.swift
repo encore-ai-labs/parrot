@@ -24,6 +24,22 @@ struct ModelMigrationResult: Equatable {
     let outcome: Outcome
 }
 
+struct ModelRemovalResult: Equatable {
+    let removedPaths: [URL]
+    let reclaimedBytes: Int64
+}
+
+enum ModelStorageError: LocalizedError {
+    case unsafeRemovalTarget(URL)
+
+    var errorDescription: String? {
+        switch self {
+        case .unsafeRemovalTarget(let url):
+            return "refusing to remove model path outside managed storage: \(url.path)"
+        }
+    }
+}
+
 struct ModelStorage {
     static var `default`: ModelStorage {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -139,6 +155,45 @@ struct ModelStorage {
         return results
     }
 
+    /// Removes only artifacts under Parrot's managed model root. Legacy
+    /// Documents caches may be shared with other tools and are never deleted.
+    func hasManagedArtifacts(for model: TranscriptionModel) throws -> Bool {
+        try validatedRemovalCandidates(for: model).contains { itemExists(at: $0) }
+    }
+
+    func removeManagedModel(_ model: TranscriptionModel) throws -> ModelRemovalResult? {
+        let candidates = try validatedRemovalCandidates(for: model)
+        let existing = candidates.filter { itemExists(at: $0) }
+        guard !existing.isEmpty else { return nil }
+
+        let bytes = existing.reduce(Int64(0)) { $0 + logicalSize(of: $1) }
+        for url in existing {
+            try fileManager.removeItem(at: url)
+        }
+        return ModelRemovalResult(removedPaths: existing, reclaimedBytes: bytes)
+    }
+
+    private func validatedRemovalCandidates(
+        for model: TranscriptionModel
+    ) throws -> [URL] {
+        let candidates: [URL]
+        switch model.engine {
+        case .whisperKit:
+            guard let variant = model.whisperKitID else { return [] }
+            candidates = [modelFolder(base: managedBase, variant: variant)]
+        case .parakeet:
+            candidates = ParakeetTranscriber.managedRemovalTargets(
+                model: model,
+                storage: self
+            )
+        }
+
+        for url in candidates where !isStrictDescendant(url, of: managedBase) {
+            throw ModelStorageError.unsafeRemovalTarget(url)
+        }
+        return candidates
+    }
+
     func modelFolder(base: URL, variant: String) -> URL {
         base
             .appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
@@ -173,5 +228,54 @@ struct ModelStorage {
               let type = attributes[.type] as? FileAttributeType
         else { return false }
         return type == .typeSymbolicLink
+    }
+
+    private func itemExists(at url: URL) -> Bool {
+        if fileManager.fileExists(atPath: url.path) { return true }
+        return isSymbolicLink(at: url)
+    }
+
+    private func isStrictDescendant(_ candidate: URL, of root: URL) -> Bool {
+        let rootComponents = root.standardizedFileURL
+            .resolvingSymlinksInPath()
+            .pathComponents
+        // Resolve every parent component but not the leaf itself: deleting a
+        // leaf symlink is safe, while traversing a symlinked parent is not.
+        let candidateComponents = candidate
+            .deletingLastPathComponent()
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .appendingPathComponent(candidate.lastPathComponent)
+            .pathComponents
+        return candidateComponents.count > rootComponents.count
+            && candidateComponents.starts(with: rootComponents)
+    }
+
+    private func logicalSize(of url: URL) -> Int64 {
+        guard !isSymbolicLink(at: url) else { return 0 }
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return 0 }
+        if !isDirectory.boolValue {
+            let attributes = try? fileManager.attributesOfItem(atPath: url.path)
+            return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        }
+
+        guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: nil)
+        else { return 0 }
+        var total: Int64 = 0
+        for case let item as URL in enumerator {
+            guard !isSymbolicLink(at: item) else {
+                enumerator.skipDescendants()
+                continue
+            }
+            var childIsDirectory: ObjCBool = false
+            guard fileManager.fileExists(
+                atPath: item.path,
+                isDirectory: &childIsDirectory
+            ), !childIsDirectory.boolValue else { continue }
+            let attributes = try? fileManager.attributesOfItem(atPath: item.path)
+            total += (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        }
+        return total
     }
 }

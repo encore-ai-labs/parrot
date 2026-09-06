@@ -16,6 +16,23 @@ protocol Transcriber: Sendable {
     ) async throws -> TimedTranscription
 }
 
+/// Optional capability for a model that can consume microphone audio while it
+/// arrives. The daemon keeps final delivery transactional: partial text is UI
+/// only, and `finishRealtime` produces the one authoritative transcription.
+protocol RealtimeTranscriber: Transcriber {
+    var supportsRealtime: Bool { get }
+
+    func beginRealtime(
+        partial: @escaping @Sendable (String) -> Void
+    ) async throws
+    func appendRealtime(_ audio: [Float]) async throws
+    func finishRealtime(
+        mode: DictationMode,
+        sourceDuration: TimeInterval
+    ) async throws -> LiveTranscription
+    func cancelRealtime() async
+}
+
 /// Immutable, bounded recognition state that can be replaced between
 /// captures without reloading the speech model.
 struct TranscriberPersonalization: Sendable {

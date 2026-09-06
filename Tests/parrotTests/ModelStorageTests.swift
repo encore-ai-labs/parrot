@@ -142,6 +142,127 @@ final class ModelStorageTests: XCTestCase {
     func testModelStorageCommandsParse() throws {
         XCTAssertNotNil(try Models.Path.parseAsRoot([]) as? Models.Path)
         XCTAssertNotNil(try Models.Migrate.parseAsRoot([]) as? Models.Migrate)
+        let remove = try XCTUnwrap(
+            try Models.Remove.parseAsRoot(["parakeet-unified.en"]) as? Models.Remove
+        )
+        XCTAssertEqual(remove.id, "parakeet-unified.en")
+        XCTAssertFalse(remove.force)
+    }
+
+    func testRemovingManagedWhisperLeavesOtherModelsAndLegacyUntouched() throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storage = makeStorage(root)
+        let removed = try XCTUnwrap(ModelRegistry.find("whisper-base.en"))
+        let kept = try XCTUnwrap(ModelRegistry.find("whisper-small.en"))
+        let removedVariant = try XCTUnwrap(removed.whisperKitID)
+        let keptVariant = try XCTUnwrap(kept.whisperKitID)
+        let removedPath = storage.modelFolder(base: storage.managedBase, variant: removedVariant)
+        let keptPath = storage.modelFolder(base: storage.managedBase, variant: keptVariant)
+        let legacyPath = storage.modelFolder(base: storage.legacyBase, variant: removedVariant)
+        try createCompleteModel(at: removedPath)
+        try createCompleteModel(at: keptPath)
+        try createCompleteModel(at: legacyPath)
+
+        XCTAssertTrue(try storage.hasManagedArtifacts(for: removed))
+
+        let result = try XCTUnwrap(storage.removeManagedModel(removed))
+
+        XCTAssertEqual(result.removedPaths, [removedPath])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: removedPath.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: keptPath.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyPath.path))
+        XCTAssertFalse(try storage.hasManagedArtifacts(for: removed))
+    }
+
+    func testRemovingOneUnifiedVariantPreservesSharedAndOtherEncoder() throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storage = makeStorage(root)
+        let batch = try XCTUnwrap(ModelRegistry.find("parakeet-unified.en"))
+        let live = try XCTUnwrap(ModelRegistry.find("parakeet-unified-streaming.en"))
+        let folder = storage.managedBase.appendingPathComponent(
+            "parakeet-unified-en-0.6b",
+            isDirectory: true
+        )
+        for artifact in [
+            "parakeet_unified_encoder_int8.mlmodelc",
+            "parakeet_unified_encoder_streaming_70_7_1_int8.mlmodelc",
+            "parakeet_unified_decoder.mlmodelc",
+            "parakeet_unified_joint_decision_single_step.mlmodelc",
+        ] {
+            try FileManager.default.createDirectory(
+                at: folder.appendingPathComponent(artifact),
+                withIntermediateDirectories: true
+            )
+        }
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: folder.appendingPathComponent("vocab.json").path,
+            contents: Data("vocab".utf8)
+        ))
+
+        _ = try storage.removeManagedModel(batch)
+
+        XCTAssertFalse(ParakeetTranscriber.isDownloaded(model: batch, storage: storage))
+        XCTAssertTrue(ParakeetTranscriber.isDownloaded(model: live, storage: storage))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: folder.appendingPathComponent("parakeet_unified_decoder.mlmodelc").path
+        ))
+
+        _ = try storage.removeManagedModel(live)
+
+        XCTAssertFalse(ParakeetTranscriber.isDownloaded(model: live, storage: storage))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: folder.appendingPathComponent("parakeet_unified_decoder.mlmodelc").path
+        ))
+    }
+
+    func testRemovalRejectsEscapingManagedRoot() throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storage = makeStorage(root)
+        let outside = root.appendingPathComponent("outside")
+        try createCompleteModel(at: outside)
+        let malicious = TranscriptionModel(
+            id: "unsafe",
+            displayName: "Unsafe",
+            engine: .whisperKit,
+            whisperKitID: "../../../../../../outside",
+            sizeMB: 1,
+            languages: ["en"],
+            recommended: false
+        )
+
+        XCTAssertThrowsError(try storage.removeManagedModel(malicious)) { error in
+            XCTAssertTrue(error is ModelStorageError)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.path))
+    }
+
+    func testRemovalRejectsSymlinkedParentEscapingManagedRoot() throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storage = makeStorage(root)
+        let model = try XCTUnwrap(ModelRegistry.find("whisper-base.en"))
+        let outside = root.appendingPathComponent("outside")
+        try createCompleteModel(at: outside.appendingPathComponent("openai_whisper-base.en"))
+        let parent = storage.managedBase
+            .appendingPathComponent("models/argmaxinc", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: parent,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: parent.appendingPathComponent("whisperkit-coreml"),
+            withDestinationURL: outside
+        )
+
+        XCTAssertThrowsError(try storage.removeManagedModel(model)) { error in
+            XCTAssertTrue(error is ModelStorageError)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: outside.appendingPathComponent("openai_whisper-base.en").path
+        ))
     }
 
     private func makeStorage(_ root: URL) -> ModelStorage {

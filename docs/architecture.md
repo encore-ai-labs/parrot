@@ -86,6 +86,7 @@ Subcommands:
 - `parrot` (default) — run the daemon
 - `parrot models list` — show registered models, mark which are downloaded
 - `parrot models download <id>` — pre-fetch a model
+- `parrot models remove <id>` — remove one stopped, non-selected managed model
 - `parrot doctor` — check microphone and accessibility permissions, print remediation steps
 - `parrot devices test` — bounded local microphone level/activity/clipping diagnosis
 - `parrot vocabulary` — manage local recognition hints and exact text replacements
@@ -159,6 +160,13 @@ hotkey, with no duration timeout. Escape closes and deletes the live spool. A cr
 termination leaves the payload in place, and startup repairs only the two WAV size fields from the
 regular file length before offering retry.
 
+When the selected transcriber advertises `RealtimeTranscriber`, the same ordered Float32 buffers
+also enter a bounded asynchronous bridge in 160 ms processing batches. Non-streaming models leave
+both callbacks nil, so their audio-buffer path retains no extra array allocation. Streaming never
+waits on Core ML while holding the capture lock: a single worker preserves order, and queued input
+is capped at five seconds. Overflow or any model error invalidates the partial stream and finalizes
+from the complete recovery recording instead of dropping queued speech.
+
 **Why not `AVAudioEngine`.** It opens the *system default* input the instant
 `engine.inputNode` is touched, before any code can rebind it. Bluetooth can't carry A2DP
 playback and mic capture at once, so a headset set as default input gets dragged onto HFP and
@@ -215,6 +223,15 @@ protocol Transcriber {
         recognitionContext: String?
     ) async throws -> TimedTranscription
 }
+
+protocol RealtimeTranscriber: Transcriber {
+    var supportsRealtime: Bool { get }
+    func beginRealtime(partial: @escaping @Sendable (String) -> Void) async throws
+    func appendRealtime(_ audio: [Float]) async throws
+    func finishRealtime(mode: DictationMode, sourceDuration: TimeInterval) async throws
+        -> LiveTranscription
+    func cancelRealtime() async
+}
 ```
 
 `LiveTranscription` carries both text and the recognized language code. English-only Whisper
@@ -227,8 +244,15 @@ preserves the small on-device footprint; the existing English recommendation rem
 Concrete implementations:
 
 - `WhisperKitTranscriber` — wraps the `WhisperKit` package. CoreML, ANE-accelerated.
-- `ParakeetTranscriber` — wraps FluidAudio for compact Parakeet TDT/CTC and Parakeet Unified INT8.
+- `ParakeetTranscriber` — wraps FluidAudio for compact Parakeet TDT/CTC, batch Unified INT8,
+  and the optional 640 ms Unified streaming tier.
 - `TranscriberFactory` — selects the concrete actor from the registry's engine field.
+
+`RealtimeTranscriptionSession` is the only capture-to-model bridge. It serializes model access
+across cancel/retry/new-recording boundaries, coalesces small input buffers, and makes completion
+transactional: a successful streaming final is authoritative; overload or failure returns an
+explicit fallback decision for the existing recovery-audio path. A compacted locked note cancels
+and resets streaming before normal inference because its final audio timeline differs.
 
 Adding an engine = one new file conforming to `Transcriber`.
 
@@ -623,6 +647,10 @@ Window configuration:
 Content: a compact SwiftUI waveform hosted via `NSHostingView`. `AudioCapture` emits RMS only
 while recording, and `AudioLevelCoalescer` keeps only the newest sample behind at most one
 scheduled main-queue delivery. A slow UI therefore cannot accumulate audio-buffer tasks.
+With the optional streaming model, the pill expands to show a bounded two-line partial transcript.
+That text is presentation-only. Each recording owns a UUID, and the overlay rejects callbacks from
+every prior UUID after stop, cancel, or a new start, so delayed model work cannot repaint a later
+recording.
 
 States:
 - **Hidden** — idle. No window on screen.
@@ -664,6 +692,9 @@ word-error rate. `--spoken-mode-trigger` exercises the live leading-trigger path
 includes the hardware model, macOS version, exact run timings, requested/effective mode,
 automatic-paragraph state, and vocabulary count so results remain comparable. No audio,
 reference, or transcript leaves the Mac.
+For a realtime-capable model, `--simulate-live` uses the production 160 ms append API and adds
+pre-release partial counts, audio-to-first-partial, and release-to-final measurements to the
+report. The feed is intentionally unpaced so the same run also exposes sustained local throughput.
 
 ### Model storage and download progress
 
@@ -677,6 +708,13 @@ the legacy model is loaded in place with its existing tokenizer cache, avoiding 
 shared with another local tool. It moves only complete model variants known to Parrot, never
 overwrites an existing destination, and leaves an absolute compatibility symlink for each
 moved model. The daemon ownership lock must be available before migration begins.
+
+`parrot models remove <id>` takes the same ownership lock, refuses the selected default unless
+`--force` is explicit, and accepts only registry IDs. Every deletion target is derived beneath and
+symlink-parent-checked against the managed root; legacy Documents caches are never removed. Whisper
+variants own one complete folder. Unified batch/live variants share their small decoder, joint, and
+vocabulary files, so removal deletes only the requested model's large exclusive encoder. The result
+reports logical bytes reclaimed and leaves other installed variants usable.
 
 The engine libraries perform each transfer. `ModelDownloadProgress` consumes their progress
 callback, repainting stderr at 1% increments in a terminal and emitting newline-delimited
@@ -767,6 +805,7 @@ Current registry:
 | WhisperKit | `whisper-base` | ~147 MB | 100 languages; explicit or automatic detection |
 | FluidAudio | `parakeet-tdt-ctc-110m.en` | ~331 MB | Optional; smallest and fastest Parakeet |
 | FluidAudio | `parakeet-unified.en` | ~614 MB | Optional; punctuation-aware English Parakeet |
+| FluidAudio | `parakeet-unified-streaming.en` | ~614 MB | Optional; 640 ms live local English preview |
 | WhisperKit | `whisper-small.en` | ~488 MB | More accurate English, higher latency |
 | WhisperKit | `whisper-small` | ~486 MB | Higher-capacity multilingual Whisper |
 | WhisperKit | `whisper-large-v3-turbo` | ~1.62 GB | Highest-capacity multilingual option |
@@ -783,11 +822,13 @@ Models are not bundled. New downloads live in
 3. Sets `.accessory` activation policy and enters `NSApp.run()`. Status: `listening`. Overlay hidden.
 4. User holds Fn.
 5. `HotkeyMonitor` fires `.pressed`. `RecordingOverlay` shows. Status: `recording`.
-6. `AudioCapture` flips its capturing flag and seeds from the pre-roll ring (the session is already running). Buffers fill. Overlay animates mic level.
+6. `AudioCapture` flips its capturing flag and seeds from the pre-roll ring (the session is already running). Buffers fill. Overlay animates mic level; a realtime-capable model consumes the same ordered buffers and displays provisional text.
 7. User releases Fn.
 8. `HotkeyMonitor` fires `.released`. Overlay switches to spinner. Status: `transcribing`.
 9. `AudioCapture` stops and `LastRecordingRecovery` atomically stages one private safety WAV.
-10. The active `Transcriber` runs CoreML inference and returns text plus its language code.
+10. The active `Transcriber` returns text plus its language code. A healthy realtime session
+    finalizes its already-running Core ML stream; every other model, failed stream, or compacted
+    audio copy uses normal post-release inference.
 11. In note mode, `AudioPauseDetector` and `AutomaticParagraphFormatter` conservatively insert
     blank lines at deliberate pauses. `PersonalFillerRemover` applies explicit user-selected
     phrases in any language. `SpeechCleanup` optionally removes conservative English disfluencies
@@ -908,7 +949,7 @@ Settled since the original draft:
 
 - **Parakeet integration** — FluidAudio 0.15.6. It provides maintained model downloads,
   compact disk-backed file transcription, Unified timing output, and tested Core ML execution.
-  Parrot keeps both engines opt-in based on its own same-audio benchmark rather than changing
+  Parrot keeps the Parakeet engines opt-in based on its own same-audio benchmark rather than changing
   the default from an upstream headline number.
 
 - **AUHAL vs. `AVCaptureSession` for the input path** — `AVCaptureSession`. Measured to isolate

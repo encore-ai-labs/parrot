@@ -65,8 +65,10 @@ backoff, so failures cannot create a busy loop.
 
 When Fn/Globe is selected as either shortcut, Parrot temporarily changes macOS's bare Fn action to
 **Do Nothing** while the daemon is running. That prevents the emoji picker, input-source
-switcher, or Apple Dictation from racing Parrot. Your previous setting is restored on a
-normal quit. Other hotkeys do not change this system preference.
+switcher, or Apple Dictation from racing Parrot. Parrot also consumes the selected Fn event itself,
+including companion events emitted by some keyboards, so the tap that ends locked recording cannot
+open a system UI or steal focus before insertion. Your previous setting is restored on a normal
+quit. Other hotkeys do not change this system preference.
 
 For hands-free dictation, quickly double-tap the push-to-talk key. Recording stays on after
 the second release; tap the selected push-to-talk key once more to stop and transcribe.

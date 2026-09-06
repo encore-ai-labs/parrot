@@ -58,10 +58,13 @@ final class HotkeyMonitor {
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
         // A plain key (End, F13, …) does something in the focused app, so we
-        // need `.defaultTap` to be able to swallow it. Modifiers are inert on
-        // their own, so they use `.listenOnly` — which is safer, and means we
-        // can never accidentally eat someone's Option key.
-        let options: CGEventTapOptions = hotkeys.contains(where: \.needsKeyEvents)
+        // need `.defaultTap` to swallow it. Fn/Globe is also special: unlike
+        // ordinary modifiers, macOS attaches a global single-key action to it.
+        // Suppress the physical Fn edge as well as temporarily setting that
+        // action to Do Nothing, so a stop tap cannot steal focus before paste.
+        let options: CGEventTapOptions = hotkeys.contains {
+            $0.needsKeyEvents || $0.needsSystemActionDisabled
+        }
             ? .defaultTap
             : .listenOnly
 
@@ -177,10 +180,11 @@ final class HotkeyMonitor {
     func handleExitKey(type: CGEventType, event: CGEvent) -> Bool {
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
 
-        // Activation keys remain under the primary event tap's
-        // control, allowing one more press to end latched recording too.
-        if hotkeys.contains(where: { $0.keyEventCode == keycode }) {
-            return false
+        // Activation keys remain under the primary event tap's control. Some
+        // keyboards additionally emit a keyDown/keyUp companion for Fn; consume
+        // that duplicate here while flagsChanged remains the gesture source.
+        if let hotkey = hotkeys.first(where: { $0.keyEventCode == keycode }) {
+            return hotkey.needsSystemActionDisabled
         }
 
         if let swallowedExitKeyCode {
@@ -214,11 +218,20 @@ final class HotkeyMonitor {
     /// synchronously on the tap thread — the callback has to return the verdict
     /// before it can hand off to the main queue.
     func shouldSwallow(type: CGEventType, event: CGEvent) -> Bool {
-        guard type == .keyDown || type == .keyUp else { return false }
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+        if type == .flagsChanged {
+            return hotkeys.contains { hotkey in
+                hotkey.needsSystemActionDisabled && hotkey.keyEventCode == keycode
+            }
+        }
+        guard type == .keyDown || type == .keyUp else { return false }
         return hotkeys.contains { hotkey in
-            guard case .key(_, let wanted) = hotkey else { return false }
-            return keycode == wanted
+            switch hotkey {
+            case .key(_, let wanted):
+                return keycode == wanted
+            case .modifier:
+                return hotkey.needsSystemActionDisabled && hotkey.keyEventCode == keycode
+            }
         }
     }
 

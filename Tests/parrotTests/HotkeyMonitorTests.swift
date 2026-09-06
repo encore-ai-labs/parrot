@@ -46,9 +46,13 @@ final class HotkeyMonitorTests: XCTestCase {
             type: .keyDown,
             event: try keyboardEvent(keyCode: 36)
         ))
-        XCTAssertFalse(monitor.shouldSwallow(
+        XCTAssertTrue(monitor.shouldSwallow(
             type: .flagsChanged,
             event: try keyboardEvent(keyCode: 63)
+        ))
+        XCTAssertFalse(monitor.shouldSwallow(
+            type: .flagsChanged,
+            event: try keyboardEvent(keyCode: 61)
         ))
         XCTAssertTrue(monitor.shouldRoute(
             type: .keyDown,
@@ -113,12 +117,29 @@ final class HotkeyMonitorTests: XCTestCase {
         ))
     }
 
-    func testSelectedHotkeyCompanionEventStaysWithPrimaryMonitor() throws {
+    func testFnCompanionEventsAreConsumedWithoutBecomingAnotherGesture() throws {
         let monitor = HotkeyMonitor(hotkey: .default)
+
+        XCTAssertTrue(try monitor.handleExitKey(
+            type: .keyDown,
+            event: keyboardEvent(keyCode: 63) // Fn
+        ))
+        XCTAssertTrue(try monitor.handleExitKey(
+            type: .keyUp,
+            event: keyboardEvent(keyCode: 63) // Fn
+        ))
+        XCTAssertEqual(
+            monitor.route(type: .keyDown, event: try keyboardEvent(keyCode: 63)),
+            []
+        )
+    }
+
+    func testOrdinaryModifierCompanionsAreNotConsumed() throws {
+        let monitor = HotkeyMonitor(hotkey: try XCTUnwrap(Hotkey.parse("right-option")))
 
         XCTAssertFalse(try monitor.handleExitKey(
             type: .keyDown,
-            event: keyboardEvent(keyCode: 63) // Fn
+            event: keyboardEvent(keyCode: 61)
         ))
     }
 

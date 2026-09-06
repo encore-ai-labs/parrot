@@ -19,6 +19,7 @@ enum StartupTUI {
         let historyPath: String?
         let historyRetentionDays: Int?
         let audioHistoryRetentionDays: Int?
+        let enhancement: String?
         let delivery: String
         let cleanup: Bool
         let automaticParagraphs: Bool
@@ -56,6 +57,7 @@ enum StartupTUI {
             let context = details.recognitionContext == "off"
                 ? ""
                 : " · context: \(details.recognitionContext) (local)"
+            let enhancement = details.enhancement.map { " · enhancement: \($0)" } ?? ""
             let template = details.noteTemplate.map { " · template: \($0)" } ?? ""
             write(
                 "listening on \(details.hotkey) hold/double-tap · model: \(details.model)" +
@@ -70,7 +72,8 @@ enum StartupTUI {
                 " · paragraphs: \(details.automaticParagraphs ? "on in notes" : "off")" +
                 " · pause trim: \(details.compactLockedPauses ? "on when locked" : "off")" +
                 " · capture: \(details.warmMicrophone ? "warm/pre-roll" : "cold/on press")" +
-                "\(history)\(audioHistory)\(noteHotkey)\(noteJournal)\(context)\(systemAction) · ^C to quit\n"
+                "\(history)\(audioHistory)\(noteHotkey)\(noteJournal)\(context)"
+                    + "\(enhancement)\(systemAction) · ^C to quit\n"
             )
             write("checking for updates…\n")
             return
@@ -132,6 +135,12 @@ enum StartupTUI {
             : "\(details.templateCount) note templates  ·  live reload  (parrot templates)"
         write(row("templates", templates))
         write(row("cleanup", details.cleanup ? "on  ·  local deterministic · English speech" : "off"))
+        write(row(
+            "enhancement",
+            details.enhancement.map {
+                "on  ·  \($0) · fallback preserved"
+            } ?? "off  ·  zero default-path work"
+        ))
         write(row(
             "paragraphs",
             details.automaticParagraphs ? "on  ·  note pauses ≥1.2s" : "off"

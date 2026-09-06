@@ -131,6 +131,55 @@ final class LocalCommandDeliveryTests: XCTestCase {
         XCTAssertEqual(errno, ESRCH)
     }
 
+    func testLocalEnhancerReturnsBoundedUTF8WithoutInterpretingTranscript() throws {
+        let enhancer = try LocalTextEnhancer(
+            command: "/usr/bin/tr '[:lower:]' '[:upper:]'"
+        )
+        let transcript = "Project note $(touch never-runs) 🦜"
+
+        XCTAssertEqual(
+            try enhancer.enhance(transcript),
+            "PROJECT NOTE $(TOUCH NEVER-RUNS) 🦜"
+        )
+        XCTAssertEqual(enhancer.command, "/usr/bin/tr '[:lower:]' '[:upper:]'")
+        XCTAssertEqual(enhancer.timeout, LocalTextEnhancer.defaultTimeout)
+    }
+
+    func testLocalEnhancerRejectsEmptyInvalidAndOversizedOutput() throws {
+        let empty = try LocalTextEnhancer(command: ":")
+        XCTAssertThrowsError(try empty.enhance("note")) { error in
+            XCTAssertEqual(error as? LocalCommandDelivery.DeliveryError, .emptyOutput)
+        }
+
+        let invalid = try LocalTextEnhancer(command: "/usr/bin/printf '\\377'")
+        XCTAssertThrowsError(try invalid.enhance("note")) { error in
+            XCTAssertEqual(error as? LocalCommandDelivery.DeliveryError, .invalidOutput)
+        }
+
+        let oversized = try LocalTextEnhancer(
+            command: "/usr/bin/yes x | /usr/bin/head -c \(LocalCommandDelivery.maximumTransformOutputBytes + 1)",
+            timeout: 2
+        )
+        XCTAssertThrowsError(try oversized.enhance("note")) { error in
+            XCTAssertEqual(
+                error as? LocalCommandDelivery.DeliveryError,
+                .outputTooLarge(LocalCommandDelivery.maximumTransformOutputBytes)
+            )
+        }
+    }
+
+    func testLocalEnhancerCapturesLargeOutputWithoutPipeDeadlock() throws {
+        let byteCount = 512 * 1_024
+        let enhancer = try LocalTextEnhancer(
+            command: "/usr/bin/yes x | /usr/bin/head -c \(byteCount)",
+            timeout: 2
+        )
+
+        let output = try enhancer.enhance("note")
+
+        XCTAssertEqual(output.utf8.count, byteCount - 1)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("parrot-command-tests-\(UUID().uuidString)")

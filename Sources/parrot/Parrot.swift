@@ -14,7 +14,7 @@ struct Parrot: ParsableCommand {
             Run.self, Setup.self, Doctor.self, Models.self,
             Hotkeys.self, Devices.self, Apps.self, Vocabulary.self, Snippets.self, Fillers.self,
             Templates.self, History.self, Stats.self, Transcribe.self, Settings.self, Languages.self,
-            Install.self, Daemon.self, Update.self,
+            FormatterCommand.self, Install.self, Daemon.self, Update.self,
         ],
         defaultSubcommand: Run.self
     )
@@ -491,6 +491,18 @@ struct Run: ParsableCommand {
     )
     var command: String?
 
+    @Option(
+        name: .customLong("enhance-command"),
+        help: "Replace final text with bounded stdout from a local command."
+    )
+    var enhancementCommand: String?
+
+    @Flag(
+        name: .customLong("no-enhancement"),
+        help: "Disable saved local enhancement for this run."
+    )
+    var noEnhancement: Bool = false
+
     @Flag(name: .long, help: "Type at the cursor even when another delivery default is saved.")
     var paste: Bool = false
 
@@ -545,6 +557,9 @@ struct Run: ParsableCommand {
     func validate() throws {
         guard [journal != nil, command != nil, paste].filter({ $0 }).count <= 1 else {
             throw ValidationError("pass at most one of --journal, --command, or --paste")
+        }
+        guard !(enhancementCommand != nil && noEnhancement) else {
+            throw ValidationError("pass at most one of --enhance-command or --no-enhancement")
         }
         guard !(noteTemplate != nil && noNoteTemplate) else {
             throw ValidationError("pass at most one of --template or --no-template")
@@ -608,6 +623,9 @@ struct Run: ParsableCommand {
         if let command {
             _ = try LocalCommandDelivery(command: command)
         }
+        if let enhancementCommand {
+            _ = try LocalTextEnhancer(command: enhancementCommand)
+        }
     }
 
     func run() throws {
@@ -665,6 +683,8 @@ struct Run: ParsableCommand {
                 journalOverride: journal,
                 commandOverride: command,
                 paste: paste,
+                enhancementCommandOverride: enhancementCommand,
+                disableEnhancement: noEnhancement,
                 cleanupOverride: cleanup || noCleanup ? cleanup : nil,
                 automaticParagraphsOverride: automaticParagraphs || noAutomaticParagraphs
                     ? automaticParagraphs
@@ -780,6 +800,28 @@ struct Run: ParsableCommand {
             }
         } else {
             commandDelivery = nil
+        }
+        var textEnhancer: TextEnhancementBackend?
+        if let enhancementModelID = defaults.enhancementModel {
+            guard let formatterModel = FormatterModel.find(enhancementModelID) else {
+                FileHandle.standardError.write(Data(
+                    "unknown saved formatter model: \(enhancementModelID)\n"
+                        .appending("run `parrot formatter install` to repair it.\n").utf8
+                ))
+                throw ExitCode(1)
+            }
+            textEnhancer = .managedModel(LocalModelTextEnhancer(model: formatterModel))
+        } else if let enhancementCommand = defaults.enhancementCommand {
+            do {
+                textEnhancer = .command(try LocalTextEnhancer(command: enhancementCommand))
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "local enhancement unavailable: \(error.localizedDescription)\n".utf8
+                ))
+                throw ExitCode(1)
+            }
+        } else {
+            textEnhancer = nil
         }
 
         let fnSystemAction: FnSystemActionOverride?
@@ -1008,9 +1050,23 @@ struct Run: ParsableCommand {
             FileHandle.standardError.write(Data("warmup failed: \(warmupError)\n".utf8))
             throw ExitCode(1)
         }
+        if let enhancer = textEnhancer {
+            do {
+                try waitForAsync {
+                    try await enhancer.warmUp()
+                }
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "local formatter unavailable: \(error.localizedDescription)"
+                        .appending(" · continuing without enhancement\n").utf8
+                ))
+                textEnhancer = nil
+            }
+        }
 
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
+        let terminationEnhancer = textEnhancer
         // `NSApp.terminate` ends the process from inside AppKit and does not
         // unwind this command's stack, so `defer` alone cannot restore the
         // preference on a normal quit. Keep the defer for startup failures and
@@ -1020,12 +1076,14 @@ struct Run: ParsableCommand {
             object: app,
             queue: .main
         ) { _ in
+            terminationEnhancer?.shutdown()
             restoreFnSystemAction()
             MainActor.assumeIsolated {
                 TextInjector.restoreClipboardIfNeeded()
             }
         }
         defer { NotificationCenter.default.removeObserver(terminationObserver) }
+        defer { textEnhancer?.shutdown() }
 
         let monitor = HotkeyMonitor(hotkeys: configuredHotkeys, debug: debugHotkey)
         let recordingRecovery = LastRecordingRecovery()
@@ -1417,7 +1475,7 @@ struct Run: ParsableCommand {
                         templates: personalization.templates,
                         configuredNoteTemplate: configuredNoteTemplate
                     )
-                    let text = processed.text
+                    var text = processed.text
                     if processed.usedSpokenModeTrigger {
                         FileHandle.standardError.write(Data(
                             "↪ spoken mode · \(processed.mode.rawValue)\n".utf8
@@ -1428,10 +1486,41 @@ struct Run: ParsableCommand {
                             "↪ spoken template · \(template)\n".utf8
                         ))
                     }
+                    var enhancementDuration: TimeInterval?
+                    if let textEnhancer,
+                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        let enhancementStarted = Date()
+                        let deterministicText = text
+                        let result: Result<String, Error>
+                        do {
+                            result = .success(try await textEnhancer.enhance(
+                                deterministicText,
+                                mode: processed.mode
+                            ))
+                        } catch {
+                            result = .failure(error)
+                        }
+                        let enhancementElapsed = Date().timeIntervalSince(enhancementStarted)
+                        enhancementDuration = enhancementElapsed
+                        switch result {
+                        case .success(let enhanced):
+                            text = enhanced
+                            FileHandle.standardError.write(Data(String(
+                                format: "✦ enhanced locally · %.2fs\n",
+                                enhancementElapsed
+                            ).utf8))
+                        case .failure(let error):
+                            FileHandle.standardError.write(Data(
+                                "local enhancement failed: \(error.localizedDescription)"
+                                    .appending(" · using deterministic transcript\n").utf8
+                            ))
+                        }
+                    }
+                    let finalText = text
                     let elapsed = Date().timeIntervalSince(started)
                     let completionLog = logTranscripts
-                        ? String(format: "→ %.2fs · %@\n", elapsed, text)
-                        : String(format: "→ %.2fs · ", elapsed) + "\(text.count) chars\n"
+                        ? String(format: "→ %.2fs · %@\n", elapsed, finalText)
+                        : String(format: "→ %.2fs · ", elapsed) + "\(finalText.count) chars\n"
                     FileHandle.standardError.write(Data(completionLog.utf8))
                     let journalForCapture = deliveryRoute == .noteJournal
                         ? noteJournalWriter
@@ -1442,7 +1531,7 @@ struct Run: ParsableCommand {
                     var deliveredToJournal = false
                     if let journalForCapture {
                         do {
-                            if let url = try journalForCapture.append(text) {
+                            if let url = try journalForCapture.append(finalText) {
                                 deliveredToJournal = true
                                 FileHandle.standardError.write(Data(
                                     "✓ appended to \(StartupTUI.displayPath(url))\n".utf8
@@ -1457,7 +1546,7 @@ struct Run: ParsableCommand {
                     var commandDeliverySucceeded = commandForCapture == nil
                     if let commandForCapture {
                         do {
-                            try commandForCapture.deliver(text)
+                            try commandForCapture.deliver(finalText)
                             commandDeliverySucceeded = true
                             FileHandle.standardError.write(Data(
                                 "✓ delivered to local command\n".utf8
@@ -1481,9 +1570,10 @@ struct Run: ParsableCommand {
                     if deliveryDecision.deliveryCompleted, let history {
                         do {
                             historyWrite = try await history.appendEntry(
-                                text,
+                                finalText,
                                 audioDuration: seconds,
                                 processingDuration: elapsed,
+                                enhancementDuration: enhancementDuration,
                                 language: transcription.language,
                                 modelID: transcriber.modelID,
                                 mode: processed.mode,
@@ -1510,12 +1600,12 @@ struct Run: ParsableCommand {
                     let didFinish = await MainActor.run { () -> Bool in
                         guard lifecycle.finish(sessionID) else { return false }
                         if deliveryDecision.deliveryCompleted {
-                            lastTranscriptStore.update(text)
+                            lastTranscriptStore.update(finalText)
                             menuBar.setLastTranscript(available: true)
                         }
                         if deliveryDecision.injectAtCursor {
                             TextInjector.inject(
-                                text,
+                                finalText,
                                 appendSpace: defaults.spaceAfterPaste,
                                 smartInsertion: defaults.smartInsertion,
                                 context: insertionSnapshot,
@@ -1989,6 +2079,7 @@ struct Run: ParsableCommand {
             historyPath: historyPath,
             historyRetentionDays: defaults.historyRetentionDays,
             audioHistoryRetentionDays: audioHistoryRetentionDays,
+            enhancement: textEnhancer.map(\.displayName),
             delivery: journalWriter.map {
                 "journal → \(StartupTUI.displayPath($0.url))"
             } ?? (commandDelivery == nil

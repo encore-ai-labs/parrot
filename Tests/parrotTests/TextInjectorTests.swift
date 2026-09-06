@@ -180,6 +180,16 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertThrowsError(try Run.parseAsRoot([
             "--smart-insertion", "--no-smart-insertion",
         ]))
+        let enhanced = try XCTUnwrap(try Run.parseAsRoot([
+            "--enhance-command", "/Users/me/bin/polish-note",
+        ]) as? Run)
+        XCTAssertEqual(enhanced.enhancementCommand, "/Users/me/bin/polish-note")
+        XCTAssertTrue(try XCTUnwrap(
+            try Run.parseAsRoot(["--no-enhancement"]) as? Run
+        ).noEnhancement)
+        XCTAssertThrowsError(try Run.parseAsRoot([
+            "--enhance-command", "/usr/bin/true", "--no-enhancement",
+        ]))
         XCTAssertThrowsError(try Run.parseAsRoot([
             "--clipboard-restore-delay-ms", "5001",
         ]))

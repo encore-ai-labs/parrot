@@ -8,6 +8,7 @@ struct TranscriptRecord: Equatable {
     let fileURL: URL
     let audioDuration: TimeInterval?
     let processingDuration: TimeInterval?
+    let enhancementDuration: TimeInterval?
     let language: String?
     let modelID: String?
     let mode: DictationMode?
@@ -20,6 +21,7 @@ struct TranscriptRecord: Equatable {
         fileURL: URL,
         audioDuration: TimeInterval? = nil,
         processingDuration: TimeInterval? = nil,
+        enhancementDuration: TimeInterval? = nil,
         language: String? = nil,
         modelID: String? = nil,
         mode: DictationMode? = nil
@@ -31,6 +33,7 @@ struct TranscriptRecord: Equatable {
         self.fileURL = fileURL
         self.audioDuration = audioDuration
         self.processingDuration = processingDuration
+        self.enhancementDuration = enhancementDuration
         self.language = language
         self.modelID = modelID
         self.mode = mode
@@ -184,6 +187,7 @@ struct TranscriptHistoryReader {
                 fileURL: fileURL,
                 audioDuration: duration(from: metrics["audio-ms"]),
                 processingDuration: duration(from: metrics["processing-ms"]),
+                enhancementDuration: duration(from: metrics["enhancement-ms"]),
                 language: metrics["language"].flatMap(RecognitionLanguage.canonicalize),
                 modelID: HistoryMetricValue.identifier(metrics["model"]),
                 mode: metrics["mode"].flatMap(DictationMode.parse)

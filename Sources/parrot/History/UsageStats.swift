@@ -19,6 +19,9 @@ struct UsageSummary: Codable, Equatable {
     let measuredDictations: Int
     let voiceSeconds: TimeInterval
     let processingSeconds: TimeInterval
+    let enhancementAttempts: Int
+    let enhancementSeconds: TimeInterval
+    let averageEnhancementSeconds: TimeInterval?
     let averageSpeakingWPM: Double?
     let processingRealtimeFactor: Double?
     let estimatedTypingSeconds: TimeInterval
@@ -73,6 +76,14 @@ enum UsageStats {
             voiceSeconds += audio
             processingSeconds += max(0, record.processingDuration ?? 0)
         }
+        let enhancementDurations = filtered.compactMap { record -> TimeInterval? in
+            guard let duration = record.enhancementDuration,
+                  duration.isFinite,
+                  duration >= 0
+            else { return nil }
+            return duration
+        }
+        let enhancementSeconds = enhancementDurations.reduce(0, +)
 
         let safeTypingWPM = max(1, typingWPM)
         let measuredTypingSeconds = Double(measuredWords) / safeTypingWPM * 60
@@ -87,7 +98,15 @@ enum UsageStats {
                       audio.isFinite, processing.isFinite,
                       audio > 0, processing >= 0
                 else { return nil }
-                return (audio, processing)
+                let enhancement: TimeInterval
+                if let duration = record.enhancementDuration,
+                   duration.isFinite,
+                   duration >= 0 {
+                    enhancement = duration
+                } else {
+                    enhancement = 0
+                }
+                return (audio, max(0, processing - enhancement))
             }
             let voice = measured.reduce(0) { $0 + $1.0 }
             let processing = measured.reduce(0) { $0 + $1.1 }
@@ -122,6 +141,11 @@ enum UsageStats {
             measuredDictations: measuredDictations,
             voiceSeconds: voiceSeconds,
             processingSeconds: processingSeconds,
+            enhancementAttempts: enhancementDurations.count,
+            enhancementSeconds: enhancementSeconds,
+            averageEnhancementSeconds: enhancementDurations.isEmpty
+                ? nil
+                : enhancementSeconds / Double(enhancementDurations.count),
             averageSpeakingWPM: voiceSeconds > 0
                 ? Double(measuredWords) / (voiceSeconds / 60)
                 : nil,

@@ -36,6 +36,8 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.appRules)
         XCTAssertNil(config.journalPath)
         XCTAssertNil(config.deliveryCommand)
+        XCTAssertNil(config.enhancementCommand)
+        XCTAssertNil(config.enhancementModel)
         XCTAssertNil(config.cleanup)
         XCTAssertNil(config.automaticParagraphs)
         XCTAssertNil(config.compactLockedPauses)
@@ -64,6 +66,7 @@ final class ConfigTests: XCTestCase {
         config.language = "en"
         config.mode = .notes
         config.journalPath = "/tmp/notes.md"
+        config.enhancementCommand = "$HOME/bin/polish-parrot-note"
         config.cleanup = true
         config.automaticParagraphs = false
         config.compactLockedPauses = false
@@ -91,12 +94,17 @@ final class ConfigTests: XCTestCase {
         let url = root.appendingPathComponent("config.json")
         var config = Config()
         config.deliveryCommand = "$HOME/bin/route-parrot-note --inbox"
+        config.enhancementCommand = "$HOME/bin/polish-parrot-note"
 
         try config.write(to: url)
 
         XCTAssertEqual(
             Config.load(from: url).deliveryCommand,
             "$HOME/bin/route-parrot-note --inbox"
+        )
+        XCTAssertEqual(
+            Config.load(from: url).enhancementCommand,
+            "$HOME/bin/polish-parrot-note"
         )
         XCTAssertEqual(permissions(at: url), 0o600)
     }
@@ -129,6 +137,8 @@ final class ConfigTests: XCTestCase {
                 mode: .notes,
                 journalPath: nil,
                 deliveryCommand: nil,
+                enhancementCommand: nil,
+                enhancementModel: nil,
                 cleanup: false,
                 automaticParagraphs: true,
                 compactLockedPauses: false,
@@ -161,6 +171,8 @@ final class ConfigTests: XCTestCase {
                 mode: .dictation,
                 journalPath: nil,
                 deliveryCommand: nil,
+                enhancementCommand: nil,
+                enhancementModel: nil,
                 cleanup: false,
                 automaticParagraphs: true,
                 compactLockedPauses: false,
@@ -173,6 +185,89 @@ final class ConfigTests: XCTestCase {
                 audioHistoryRetentionDays: nil
             )
         )
+    }
+
+    func testRuntimeDefaultsKeepEnhancementOffAndAllowExplicitLocalOverrides() throws {
+        var config = Config()
+        let builtIn = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertNil(builtIn.enhancementCommand)
+        XCTAssertNil(builtIn.enhancementModel)
+
+        config.enhancementCommand = "$HOME/bin/polish-note"
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(saved.enhancementCommand, "$HOME/bin/polish-note")
+        XCTAssertNil(saved.enhancementModel)
+
+        let disabled = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            disableEnhancement: true,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertNil(disabled.enhancementCommand)
+        XCTAssertNil(disabled.enhancementModel)
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            enhancementCommandOverride: "/usr/local/bin/local-model",
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(overridden.enhancementCommand, "/usr/local/bin/local-model")
+        XCTAssertNil(overridden.enhancementModel)
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            enhancementCommandOverride: "/usr/bin/true",
+            disableEnhancement: true,
+            recommendedModel: "whisper-base.en"
+        ))
+
+        config.enhancementCommand = nil
+        config.enhancementModel = FormatterModel.recommended.id
+        let localModel = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertEqual(localModel.enhancementModel, FormatterModel.recommended.id)
+        XCTAssertNil(localModel.enhancementCommand)
+
+        config.enhancementCommand = "/usr/bin/true"
+        XCTAssertThrowsError(try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        ))
     }
 
     func testRuntimeDefaultsRecognitionContextIsOptInAndCanonicalized() throws {
@@ -778,6 +873,7 @@ final class ConfigTests: XCTestCase {
                 "--context", "selection",
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
+                "--enhance-command", "/Users/me/bin/polish-note",
                 "--compact-pauses",
                 "--no-space-after-paste", "--no-smart-insertion", "--clipboard-paste",
                 "--clipboard-restore-delay-ms", "1500", "--cold-mic",
@@ -792,6 +888,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(set.language, "English")
         XCTAssertEqual(set.mode, "notes")
         XCTAssertEqual(set.journal, "/tmp/inbox.md")
+        XCTAssertEqual(set.enhancementCommand, "/Users/me/bin/polish-note")
         XCTAssertTrue(set.cleanup)
         XCTAssertTrue(set.automaticParagraphs)
         XCTAssertTrue(set.compactPauses)
@@ -849,6 +946,15 @@ final class ConfigTests: XCTestCase {
             "set", "--command", "/usr/bin/true", "--paste",
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--command", "   "]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--enhance-command", "   ",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--enhance-command", "/usr/bin/true", "--no-enhancement",
+        ]))
+        XCTAssertTrue(try Settings.parseAsRoot([
+            "set", "--no-enhancement",
+        ]) is Settings.Set)
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--journal", "/tmp/inbox.txt"]))
         XCTAssertThrowsError(try Settings.parseAsRoot(["set", "--cleanup", "--no-cleanup"]))
         XCTAssertThrowsError(try Settings.parseAsRoot([

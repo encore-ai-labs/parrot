@@ -16,6 +16,9 @@ struct LocalCommandDelivery: Sendable {
         case launch(Int32)
         case failed(Int32, String)
         case timedOut(TimeInterval, String)
+        case outputTooLarge(Int)
+        case invalidOutput
+        case emptyOutput
 
         var errorDescription: String? {
             switch self {
@@ -33,6 +36,12 @@ struct LocalCommandDelivery: Sendable {
                 return "local delivery command exited with status \(status)\(Self.suffix(diagnostic))"
             case .timedOut(let timeout, let diagnostic):
                 return "local delivery command exceeded \(Self.duration(timeout))\(Self.suffix(diagnostic))"
+            case .outputTooLarge(let maximumBytes):
+                return "local command output exceeded \(maximumBytes / 1_024) KiB"
+            case .invalidOutput:
+                return "local command output was not valid UTF-8 text"
+            case .emptyOutput:
+                return "local command returned no text"
             }
         }
 
@@ -54,6 +63,7 @@ struct LocalCommandDelivery: Sendable {
     static let defaultTimeout: TimeInterval = 10
     static let maximumCommandBytes = 16 * 1_024
     static let maximumDiagnosticBytes = 4 * 1_024
+    static let maximumTransformOutputBytes = 1_024 * 1_024
 
     let command: String
     let timeout: TimeInterval
@@ -75,6 +85,26 @@ struct LocalCommandDelivery: Sendable {
     /// Runs synchronously on the caller's worker task. Model inference has
     /// already completed, so this adds no recognition latency or model memory.
     func deliver(_ transcript: String) throws {
+        _ = try execute(transcript, captureStandardOutput: false)
+    }
+
+    /// Captures a bounded UTF-8 result for an explicitly configured local
+    /// enhancement. The same timeout, process-group cleanup, inert stdin
+    /// contract, and bounded diagnostics used by delivery remain in force.
+    func transform(_ transcript: String) throws -> String {
+        let data = try execute(transcript, captureStandardOutput: true) ?? Data()
+        guard let output = String(data: data, encoding: .utf8) else {
+            throw DeliveryError.invalidOutput
+        }
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw DeliveryError.emptyOutput }
+        return trimmed
+    }
+
+    private func execute(
+        _ transcript: String,
+        captureStandardOutput: Bool
+    ) throws -> Data? {
         let inputDescriptor = try makeUnlinkedInputFile()
         defer { close(inputDescriptor) }
         try write(Data(transcript.utf8), to: inputDescriptor)
@@ -87,57 +117,89 @@ struct LocalCommandDelivery: Sendable {
             throw DeliveryError.systemCall("create command diagnostics pipe", errno)
         }
         let diagnosticRead = diagnosticDescriptors[0]
-        let diagnosticWrite = diagnosticDescriptors[1]
+        var diagnosticWrite = diagnosticDescriptors[1]
         defer { close(diagnosticRead) }
+        defer {
+            if diagnosticWrite >= 0 { close(diagnosticWrite) }
+        }
         let diagnosticFlags = fcntl(diagnosticRead, F_GETFL)
         guard diagnosticFlags >= 0,
               fcntl(diagnosticRead, F_SETFL, diagnosticFlags | O_NONBLOCK) == 0 else {
             let code = errno
             close(diagnosticWrite)
+            diagnosticWrite = -1
             throw DeliveryError.systemCall("configure command diagnostics pipe", code)
         }
 
-        let diagnostics = BoundedDiagnosticReader(
+        let diagnostics = BoundedPipeReader(
             descriptor: diagnosticRead,
             maximumBytes: Self.maximumDiagnosticBytes
         )
 
-        let nullOutput = open("/dev/null", O_WRONLY)
-        guard nullOutput >= 0 else {
-            close(diagnosticWrite)
-            throw DeliveryError.systemCall("open /dev/null", errno)
+        var outputRead: Int32 = -1
+        var outputWrite: Int32 = -1
+        var nullOutput: Int32 = -1
+        defer {
+            if outputRead >= 0 { close(outputRead) }
+            if outputWrite >= 0 { close(outputWrite) }
+            if nullOutput >= 0 { close(nullOutput) }
         }
-        defer { close(nullOutput) }
+        let outputReader: BoundedPipeReader?
+        let standardOutput: Int32
+        if captureStandardOutput {
+            var outputDescriptors = [Int32](repeating: -1, count: 2)
+            guard pipe(&outputDescriptors) == 0 else {
+                throw DeliveryError.systemCall("create command output pipe", errno)
+            }
+            outputRead = outputDescriptors[0]
+            outputWrite = outputDescriptors[1]
+            let outputFlags = fcntl(outputRead, F_GETFL)
+            guard outputFlags >= 0,
+                  fcntl(outputRead, F_SETFL, outputFlags | O_NONBLOCK) == 0 else {
+                throw DeliveryError.systemCall("configure command output pipe", errno)
+            }
+            outputReader = BoundedPipeReader(
+                descriptor: outputRead,
+                maximumBytes: Self.maximumTransformOutputBytes
+            )
+            standardOutput = outputWrite
+        } else {
+            nullOutput = open("/dev/null", O_WRONLY)
+            guard nullOutput >= 0 else {
+                throw DeliveryError.systemCall("open /dev/null", errno)
+            }
+            outputReader = nil
+            standardOutput = nullOutput
+        }
 
         var actions: posix_spawn_file_actions_t?
         let actionsStatus = posix_spawn_file_actions_init(&actions)
         guard actionsStatus == 0 else {
-            close(diagnosticWrite)
             throw DeliveryError.systemCall("initialize command file actions", actionsStatus)
         }
         defer { posix_spawn_file_actions_destroy(&actions) }
         var actionStatuses = [
             posix_spawn_file_actions_adddup2(&actions, inputDescriptor, STDIN_FILENO),
-            posix_spawn_file_actions_adddup2(&actions, nullOutput, STDOUT_FILENO),
+            posix_spawn_file_actions_adddup2(&actions, standardOutput, STDOUT_FILENO),
             posix_spawn_file_actions_adddup2(&actions, diagnosticWrite, STDERR_FILENO),
         ]
         // A caller may launch Parrot with a standard descriptor already
         // closed. In that case one of these resources can itself be fd 0–2;
         // the dup actions above replace it, so closing it would close the new
         // standard stream too. Only extra descriptors need explicit closure.
-        for descriptor in [diagnosticRead, inputDescriptor, nullOutput, diagnosticWrite]
+        for descriptor in Set([
+            diagnosticRead, inputDescriptor, standardOutput, diagnosticWrite, outputRead,
+        ])
             where descriptor > STDERR_FILENO {
             actionStatuses.append(posix_spawn_file_actions_addclose(&actions, descriptor))
         }
         if let failure = actionStatuses.first(where: { $0 != 0 }) {
-            close(diagnosticWrite)
             throw DeliveryError.systemCall("configure command file actions", failure)
         }
 
         var attributes: posix_spawnattr_t?
         let attributesStatus = posix_spawnattr_init(&attributes)
         guard attributesStatus == 0 else {
-            close(diagnosticWrite)
             throw DeliveryError.systemCall("initialize command spawn attributes", attributesStatus)
         }
         defer { posix_spawnattr_destroy(&attributes) }
@@ -147,7 +209,6 @@ struct LocalCommandDelivery: Sendable {
             Int16(POSIX_SPAWN_SETPGROUP)
         )
         if let failure = [groupStatus, flagsStatus].first(where: { $0 != 0 }) {
-            close(diagnosticWrite)
             throw DeliveryError.systemCall("configure command process group", failure)
         }
 
@@ -161,17 +222,32 @@ struct LocalCommandDelivery: Sendable {
             }
         }
         close(diagnosticWrite)
+        diagnosticWrite = -1
+        if outputWrite >= 0 {
+            close(outputWrite)
+            outputWrite = -1
+        }
         guard spawnStatus == 0 else {
             throw DeliveryError.launch(spawnStatus)
         }
 
-        let outcome = wait(for: pid, timeout: timeout, diagnostics: diagnostics)
+        let outcome = wait(
+            for: pid,
+            timeout: timeout,
+            diagnostics: diagnostics,
+            output: outputReader
+        )
         diagnostics.drain()
+        outputReader?.drain()
         let diagnostic = diagnostics.text
 
         switch outcome {
         case .finished(let status):
             guard status == 0 else { throw DeliveryError.failed(status, diagnostic) }
+            if outputReader?.didExceedMaximum == true {
+                throw DeliveryError.outputTooLarge(Self.maximumTransformOutputBytes)
+            }
+            return outputReader?.data
         case .timedOut:
             throw DeliveryError.timedOut(timeout, diagnostic)
         case .waitFailed(let code):
@@ -188,17 +264,20 @@ struct LocalCommandDelivery: Sendable {
     private func wait(
         for pid: pid_t,
         timeout: TimeInterval,
-        diagnostics: BoundedDiagnosticReader
+        diagnostics: BoundedPipeReader,
+        output: BoundedPipeReader?
     ) -> ProcessOutcome {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         var waitStatus: Int32 = 0
 
         while true {
             diagnostics.drain()
+            output?.drain()
             let result = waitpid(pid, &waitStatus, WNOHANG)
             if result == pid {
                 terminateRemainingProcessGroup(pid)
                 diagnostics.drain()
+                output?.drain()
                 return .finished(exitStatus(from: waitStatus))
             }
             if result == -1, errno != EINTR { return .waitFailed(errno) }
@@ -213,6 +292,7 @@ struct LocalCommandDelivery: Sendable {
         var reaped = false
         while ProcessInfo.processInfo.systemUptime < graceDeadline {
             diagnostics.drain()
+            output?.drain()
             if !reaped {
                 let result = waitpid(pid, &waitStatus, WNOHANG)
                 if result == pid { reaped = true }
@@ -297,10 +377,34 @@ struct LocalCommandDelivery: Sendable {
     }
 }
 
-private final class BoundedDiagnosticReader: @unchecked Sendable {
+/// Optional post-processing that receives only finalized text on stdin and
+/// returns replacement text on stdout. It deliberately shares the hardened
+/// local-command process boundary while keeping delivery and transformation
+/// configuration independent.
+struct LocalTextEnhancer: Sendable {
+    static let defaultTimeout: TimeInterval = 5
+
+    let command: String
+    let timeout: TimeInterval
+    private let runner: LocalCommandDelivery
+
+    init(command: String, timeout: TimeInterval = Self.defaultTimeout) throws {
+        let runner = try LocalCommandDelivery(command: command, timeout: timeout)
+        self.command = runner.command
+        self.timeout = timeout
+        self.runner = runner
+    }
+
+    func enhance(_ transcript: String) throws -> String {
+        try runner.transform(transcript)
+    }
+}
+
+private final class BoundedPipeReader: @unchecked Sendable {
     private let descriptor: Int32
     private let maximumBytes: Int
     private var bytes: [UInt8] = []
+    private(set) var didExceedMaximum = false
 
     init(descriptor: Int32, maximumBytes: Int) {
         self.descriptor = descriptor
@@ -312,6 +416,8 @@ private final class BoundedDiagnosticReader: @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    var data: Data { Data(bytes) }
+
     func drain() {
         var buffer = [UInt8](repeating: 0, count: 1_024)
         while true {
@@ -321,6 +427,9 @@ private final class BoundedDiagnosticReader: @unchecked Sendable {
             if count < 0, errno == EINTR { continue }
             if count < 0, errno == EAGAIN || errno == EWOULDBLOCK { return }
             guard count > 0 else { return }
+            if count > maximumBytes - min(bytes.count, maximumBytes) {
+                didExceedMaximum = true
+            }
             if bytes.count < maximumBytes {
                 let kept = min(count, maximumBytes - bytes.count)
                 bytes.append(contentsOf: buffer.prefix(kept))

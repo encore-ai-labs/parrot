@@ -68,6 +68,14 @@ struct Stats: ParsableCommand {
             if let saved = summary.estimatedTimeSavedSeconds {
                 print("  estimated saved  \(duration(saved)) in measured dictations")
             }
+            if let average = summary.averageEnhancementSeconds {
+                print(
+                    "  local enhancement \(summary.enhancementAttempts) attempt"
+                        + "\(plural(summary.enhancementAttempts)) · "
+                        + "\(preciseDuration(summary.enhancementSeconds)) total · "
+                        + "\(preciseDuration(average)) average"
+                )
+            }
         } else {
             print()
             print("Voice-time metrics begin with newly recorded dictations; older Markdown stays valid.")
@@ -132,6 +140,11 @@ private func duration(_ seconds: TimeInterval) -> String {
     if hours > 0 { return "\(hours)h \(minutes)m" }
     if minutes > 0 { return "\(minutes)m \(remainder)s" }
     return "\(remainder)s"
+}
+
+private func preciseDuration(_ seconds: TimeInterval) -> String {
+    if seconds < 1 { return String(format: "%.0fms", max(0, seconds) * 1_000) }
+    return String(format: "%.2fs", max(0, seconds))
 }
 
 private func plural(_ count: Int) -> String { count == 1 ? "" : "s" }

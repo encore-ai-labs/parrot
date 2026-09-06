@@ -106,6 +106,36 @@ with `parrot settings set --no-smart-insertion`; use `--no-smart-insertion` for 
 only the trailing boundary with `--no-space-after-paste`. Delivery-only whitespace and casing do
 not alter the transcript saved in history, journals, command input, or file output.
 
+### Optional local smart formatting
+
+For fuller punctuation and grammar cleanup, Parrot can run a separate lightweight language model
+after transcription. This works on macOS 14 and later and does not require Apple Intelligence,
+Ollama, Python, an API key, or a separately installed service:
+
+```sh
+parrot formatter install             # downloads ~574 MB and enables it
+parrot daemon restart
+parrot formatter status
+parrot formatter test "um so i think we should ship this tomorrow"
+```
+
+The formatter is Qwen3.5 0.8B in 4-bit GGUF form, served by a pinned Parrot-managed llama.cpp
+runtime. Both downloads are SHA-256 verified. The private loopback server is authenticated, starts
+and stops with Parrot, and keeps the model warm while the daemon runs. Parakeet or Whisper still
+owns recognition; the formatter sees only the finalized text. Generation is deterministic, input
+and output are bounded, important code/Markdown/numeric/URL/email tokens are checked, and a
+2.5-second ceiling prevents a bad generation from holding up delivery indefinitely. If loading,
+generation, validation, or the deadline fails, Parrot immediately uses its normal deterministic
+transcript instead.
+
+Smart formatting is opt-in because even a small generative model adds memory and some delivery
+latency. Disable it without deleting the download using `parrot formatter off`; re-enable it with
+`parrot formatter on`. To reclaim the model space, stop the daemon and run
+`parrot formatter remove`. `parrot stats` reports formatter time separately so speech-model speed
+comparisons remain honest. Custom local filters remain available to advanced users through
+`parrot settings set --enhance-command '<command>'`; transcript text is passed only on stdin and
+bounded UTF-8 replacement text is read from stdout.
+
 Direct Unicode keystrokes are the default insertion method: they keep the system clipboard
 untouched and now preserve emoji and other supplementary Unicode characters across event chunks.
 If a particular Electron or browser field drops simulated text, enable the compatibility path:
@@ -1048,6 +1078,7 @@ parrot run --debug-hotkey              # print keycodes for every key you press
 - **Swift** — single SPM executable target
 - **WhisperKit** — Whisper inference via CoreML, ANE-accelerated
 - **FluidAudio** — optional Parakeet inference via CoreML
+- **llama.cpp + Qwen3.5 0.8B** — optional warm, local 4-bit smart formatting
 - **AVCaptureSession** — mic capture, pinned to one device
 - **CGEventTap** — global hotkey
 - **CGEvent** — text injection at cursor

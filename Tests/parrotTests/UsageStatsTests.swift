@@ -13,7 +13,7 @@ final class UsageStatsTests: XCTestCase {
             TranscriptRecord(
                 id: "a", recordedAt: try date(2024, 9, 4, 10, calendar: calendar),
                 text: "hello brave world", fileURL: url,
-                audioDuration: 3, processingDuration: 0.3,
+                audioDuration: 3, processingDuration: 0.3, enhancementDuration: 0.1,
                 modelID: "whisper-base.en", mode: .dictation
             ),
             TranscriptRecord(
@@ -41,6 +41,9 @@ final class UsageStatsTests: XCTestCase {
         XCTAssertEqual(summary.measuredDictations, 2)
         XCTAssertEqual(summary.voiceSeconds, 5, accuracy: 0.0001)
         XCTAssertEqual(summary.processingSeconds, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(summary.enhancementAttempts, 1)
+        XCTAssertEqual(summary.enhancementSeconds, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(summary.averageEnhancementSeconds), 0.1, accuracy: 0.0001)
         XCTAssertEqual(try XCTUnwrap(summary.averageSpeakingWPM), 60, accuracy: 0.0001)
         XCTAssertEqual(try XCTUnwrap(summary.processingRealtimeFactor), 0.1, accuracy: 0.0001)
         XCTAssertEqual(summary.estimatedTypingSeconds, 8.4, accuracy: 0.0001)
@@ -53,7 +56,7 @@ final class UsageStatsTests: XCTestCase {
         XCTAssertEqual(model.dictations, 2)
         XCTAssertEqual(model.measuredDictations, 2)
         XCTAssertEqual(model.voiceSeconds, 5, accuracy: 0.0001)
-        XCTAssertEqual(try XCTUnwrap(model.processingRealtimeFactor), 0.1, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(model.processingRealtimeFactor), 0.08, accuracy: 0.0001)
         XCTAssertEqual(
             summary.modes,
             [
@@ -70,6 +73,7 @@ final class UsageStatsTests: XCTestCase {
             TranscriptRecord(
                 id: "fast-1", recordedAt: now.addingTimeInterval(-3), text: "one",
                 fileURL: url, audioDuration: 10, processingDuration: 1,
+                enhancementDuration: 0.25,
                 modelID: "model-fast", mode: .notes
             ),
             TranscriptRecord(
@@ -89,7 +93,7 @@ final class UsageStatsTests: XCTestCase {
         XCTAssertEqual(summary.models[0].dictations, 2)
         XCTAssertEqual(summary.models[0].measuredDictations, 1)
         XCTAssertEqual(
-            try XCTUnwrap(summary.models[0].processingRealtimeFactor), 0.1, accuracy: 0.0001
+            try XCTUnwrap(summary.models[0].processingRealtimeFactor), 0.075, accuracy: 0.0001
         )
         XCTAssertEqual(
             try XCTUnwrap(summary.models[1].processingRealtimeFactor), 0.5, accuracy: 0.0001

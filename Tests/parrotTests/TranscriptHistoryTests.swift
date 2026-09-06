@@ -366,6 +366,7 @@ final class TranscriptHistoryTests: XCTestCase {
             at: date,
             audioDuration: 3.364,
             processingDuration: 0.084,
+            enhancementDuration: 0.021,
             language: "Spanish",
             modelID: "whisper-base.en",
             mode: .notes
@@ -373,7 +374,7 @@ final class TranscriptHistoryTests: XCTestCase {
         let url = try XCTUnwrap(writtenURL)
         let markdown = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(markdown.contains(
-            "<!-- parrot-metrics: audio-ms=3364 processing-ms=84 language=es "
+            "<!-- parrot-metrics: audio-ms=3364 processing-ms=84 enhancement-ms=21 language=es "
                 + "model=whisper-base.en mode=notes -->"
         ))
 
@@ -382,6 +383,7 @@ final class TranscriptHistoryTests: XCTestCase {
         )
         XCTAssertEqual(try XCTUnwrap(record.audioDuration), 3.364, accuracy: 0.0001)
         XCTAssertEqual(try XCTUnwrap(record.processingDuration), 0.084, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(record.enhancementDuration), 0.021, accuracy: 0.0001)
         XCTAssertEqual(record.language, "es")
         XCTAssertEqual(record.modelID, "whisper-base.en")
         XCTAssertEqual(record.mode, .notes)

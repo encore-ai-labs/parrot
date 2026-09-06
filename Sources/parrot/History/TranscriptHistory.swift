@@ -116,6 +116,7 @@ actor TranscriptHistory {
         at date: Date = Date(),
         audioDuration: TimeInterval? = nil,
         processingDuration: TimeInterval? = nil,
+        enhancementDuration: TimeInterval? = nil,
         language: String? = nil,
         modelID: String? = nil,
         mode: DictationMode? = nil,
@@ -126,6 +127,7 @@ actor TranscriptHistory {
             at: date,
             audioDuration: audioDuration,
             processingDuration: processingDuration,
+            enhancementDuration: enhancementDuration,
             language: language,
             modelID: modelID,
             mode: mode,
@@ -140,6 +142,7 @@ actor TranscriptHistory {
         at date: Date = Date(),
         audioDuration: TimeInterval? = nil,
         processingDuration: TimeInterval? = nil,
+        enhancementDuration: TimeInterval? = nil,
         language: String? = nil,
         modelID: String? = nil,
         mode: DictationMode? = nil,
@@ -175,6 +178,13 @@ actor TranscriptHistory {
                 let processingMilliseconds = max(0, Int((processingDuration * 1_000).rounded()))
                 metricFields.append("audio-ms=\(audioMilliseconds)")
                 metricFields.append("processing-ms=\(processingMilliseconds)")
+            }
+            if let enhancementDuration, enhancementDuration.isFinite {
+                let enhancementMilliseconds = max(
+                    0,
+                    Int((enhancementDuration * 1_000).rounded())
+                )
+                metricFields.append("enhancement-ms=\(enhancementMilliseconds)")
             }
             if let language = language.flatMap(RecognitionLanguage.canonicalize),
                language != RecognitionLanguage.automatic {

@@ -42,6 +42,14 @@ struct Settings: ParsableCommand {
             print("mode        \(defaults.mode.rawValue)\(config.mode == nil ? "  (default)" : "")")
             print("cleanup     \(defaults.cleanup ? "on" : "off")\(config.cleanup == nil ? "  (default)" : "")")
             print(
+                "enhancement "
+                    + (defaults.enhancementModel.map {
+                        "on · \($0) (local model)"
+                    } ?? (defaults.enhancementCommand == nil
+                        ? "off  (default)"
+                        : "on · custom local command"))
+            )
+            print(
                 "paragraphs   \(defaults.automaticParagraphs ? "on in notes" : "off")"
                     + "\(config.automaticParagraphs == nil ? "  (default)" : "")"
             )
@@ -164,6 +172,18 @@ struct Settings: ParsableCommand {
         )
         var command: String?
 
+        @Option(
+            name: .customLong("enhance-command"),
+            help: "Replace final text with bounded stdout from a local command."
+        )
+        var enhancementCommand: String?
+
+        @Flag(
+            name: .customLong("no-enhancement"),
+            help: "Disable local post-transcription enhancement."
+        )
+        var noEnhancement: Bool = false
+
         @Flag(name: .long, help: "Restore paste-at-cursor delivery.")
         var paste: Bool = false
 
@@ -281,6 +301,7 @@ struct Settings: ParsableCommand {
                     || noteTemplate != nil || noNoteTemplate || recognitionContext != nil
                     || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
+                    || enhancementCommand != nil || noEnhancement
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || compactPauses || noCompactPauses
                     || spaceAfterPaste || noSpaceAfterPaste
@@ -296,6 +317,9 @@ struct Settings: ParsableCommand {
             }
             guard [journal != nil, command != nil, paste].filter({ $0 }).count <= 1 else {
                 throw ValidationError("pass at most one of --journal, --command, or --paste")
+            }
+            guard !(enhancementCommand != nil && noEnhancement) else {
+                throw ValidationError("pass at most one of --enhance-command or --no-enhancement")
             }
             guard !(cleanup && noCleanup) else {
                 throw ValidationError("pass at most one of --cleanup or --no-cleanup")
@@ -404,6 +428,9 @@ struct Settings: ParsableCommand {
             if let command {
                 _ = try LocalCommandDelivery(command: command)
             }
+            if let enhancementCommand {
+                _ = try LocalTextEnhancer(command: enhancementCommand)
+            }
         }
 
         func run() throws {
@@ -412,6 +439,7 @@ struct Settings: ParsableCommand {
                     || noteTemplate != nil || noNoteTemplate || recognitionContext != nil
                     || model != nil || language != nil || mode != nil
                     || journal != nil || command != nil || paste
+                    || enhancementCommand != nil || noEnhancement
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || compactPauses || noCompactPauses
                     || spaceAfterPaste || noSpaceAfterPaste
@@ -509,6 +537,15 @@ struct Settings: ParsableCommand {
                 config.journalPath = nil
                 config.deliveryCommand = nil
             }
+            if let enhancementCommand {
+                config.enhancementCommand = try LocalTextEnhancer(
+                    command: enhancementCommand
+                ).command
+                config.enhancementModel = nil
+            } else if noEnhancement {
+                config.enhancementCommand = nil
+                config.enhancementModel = nil
+            }
             if cleanup || noCleanup {
                 config.cleanup = cleanup
             }
@@ -587,6 +624,8 @@ struct Settings: ParsableCommand {
             config.mode = nil
             config.journalPath = nil
             config.deliveryCommand = nil
+            config.enhancementCommand = nil
+            config.enhancementModel = nil
             config.cleanup = nil
             config.automaticParagraphs = nil
             config.compactLockedPauses = nil

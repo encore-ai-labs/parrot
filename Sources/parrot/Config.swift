@@ -43,6 +43,12 @@ struct Config: Codable, Equatable {
     /// Optional user-owned local command. Final text is written to its stdin
     /// instead of being injected at the cursor.
     var deliveryCommand: String?
+    /// Optional user-owned local post-processor. Deterministically processed
+    /// text is written to stdin and bounded replacement text is read from stdout.
+    var enhancementCommand: String?
+    /// Optional Parrot-managed local formatter model. Kept separate from the
+    /// transcription model so either can be changed or removed independently.
+    var enhancementModel: String?
     /// Remove conservative, deterministic speech disfluencies after local
     /// transcription. Nil preserves the built-in off default.
     var cleanup: Bool?
@@ -167,6 +173,8 @@ struct RuntimeDefaults: Equatable {
     let mode: DictationMode
     let journalPath: String?
     let deliveryCommand: String?
+    let enhancementCommand: String?
+    let enhancementModel: String?
     let cleanup: Bool
     let automaticParagraphs: Bool
     let compactLockedPauses: Bool
@@ -195,6 +203,8 @@ struct RuntimeDefaults: Equatable {
         journalOverride: String? = nil,
         commandOverride: String? = nil,
         paste: Bool = false,
+        enhancementCommandOverride: String? = nil,
+        disableEnhancement: Bool = false,
         cleanupOverride: Bool? = nil,
         automaticParagraphsOverride: Bool? = nil,
         compactLockedPausesOverride: Bool? = nil,
@@ -224,6 +234,9 @@ struct RuntimeDefaults: Equatable {
             .filter { $0 }.count
         guard destinationOverrides <= 1 else {
             throw RuntimeDefaultsError.conflictingDestinations
+        }
+        guard !(enhancementCommandOverride != nil && disableEnhancement) else {
+            throw RuntimeDefaultsError.conflictingEnhancementOverrides
         }
         if let days = config.historyRetentionDays,
            !HistoryRetentionPolicy.validDays.contains(days) {
@@ -297,6 +310,21 @@ struct RuntimeDefaults: Equatable {
            primary.conflicts(with: notes) {
             throw RuntimeDefaultsError.conflictingHotkeys(primary.name)
         }
+        let resolvedEnhancementCommand: String?
+        let resolvedEnhancementModel: String?
+        if disableEnhancement {
+            resolvedEnhancementCommand = nil
+            resolvedEnhancementModel = nil
+        } else if let enhancementCommandOverride {
+            resolvedEnhancementCommand = enhancementCommandOverride
+            resolvedEnhancementModel = nil
+        } else {
+            guard config.enhancementCommand == nil || config.enhancementModel == nil else {
+                throw RuntimeDefaultsError.conflictingSavedEnhancements
+            }
+            resolvedEnhancementCommand = config.enhancementCommand
+            resolvedEnhancementModel = config.enhancementModel
+        }
         return RuntimeDefaults(
             hotkey: resolvedHotkey,
             noteHotkey: resolvedNoteHotkey,
@@ -308,6 +336,8 @@ struct RuntimeDefaults: Equatable {
             mode: resolvedMode,
             journalPath: resolvedJournalPath,
             deliveryCommand: resolvedDeliveryCommand,
+            enhancementCommand: resolvedEnhancementCommand,
+            enhancementModel: resolvedEnhancementModel,
             cleanup: cleanupOverride ?? config.cleanup ?? false,
             automaticParagraphs: automaticParagraphsOverride
                 ?? config.automaticParagraphs
@@ -338,6 +368,8 @@ enum RuntimeDefaultsError: LocalizedError {
     case conflictingHotkeys(String)
     case conflictingDestinations
     case conflictingSavedDestinations
+    case conflictingEnhancementOverrides
+    case conflictingSavedEnhancements
     case invalidLanguage(String)
     case invalidRecognitionContext(String)
     case invalidClipboardRestoreDelay(Int)
@@ -365,6 +397,10 @@ enum RuntimeDefaultsError: LocalizedError {
         case .conflictingSavedDestinations:
             return "saved delivery has both journal and command destinations; "
                 + "run `parrot settings set --paste` to repair it"
+        case .conflictingEnhancementOverrides:
+            return "pass at most one of --enhance-command or --no-enhancement"
+        case .conflictingSavedEnhancements:
+            return "saved enhancement has both a model and command; run `parrot formatter off`"
         case .invalidLanguage(let language):
             return "unknown language '\(language)'; run `parrot languages`"
         case .invalidRecognitionContext(let context):

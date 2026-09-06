@@ -154,6 +154,10 @@ final class ModelStorageTests: XCTestCase {
 
         XCTAssertEqual(Models.List.paddedID(id, width: 26), id)
         XCTAssertEqual(Models.List.paddedID("short", width: 7), "short  ")
+        XCTAssertEqual(
+            Models.List.languageSummary(RecognitionLanguage.parakeetV3Codes),
+            "25"
+        )
     }
 
     func testRemovingManagedWhisperLeavesOtherModelsAndLegacyUntouched() throws {
@@ -222,6 +226,53 @@ final class ModelStorageTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: folder.appendingPathComponent("parakeet_unified_decoder.mlmodelc").path
         ))
+    }
+
+    func testRemovingV3LeavesCompactParakeetStorageUntouched() throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storage = makeStorage(root)
+        let model = try XCTUnwrap(ModelRegistry.find("parakeet-tdt-0.6b-v3"))
+        let variant = try XCTUnwrap(ParakeetTranscriber.Variant(modelID: model.id))
+        let v3Folder = storage.managedBase.appendingPathComponent(
+            variant.folderName,
+            isDirectory: true
+        )
+        for artifact in variant.requiredArtifacts {
+            let url = v3Folder.appendingPathComponent(artifact)
+            if artifact.hasSuffix(".mlmodelc") {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            } else {
+                try FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: Data()))
+            }
+        }
+        for artifact in ["config.json", "parakeet_v3_vocab.json"] {
+            XCTAssertTrue(FileManager.default.createFile(
+                atPath: v3Folder.appendingPathComponent(artifact).path,
+                contents: Data("metadata".utf8)
+            ))
+        }
+        let compactMarker = storage.managedBase
+            .appendingPathComponent("parakeet-tdt-ctc-110m", isDirectory: true)
+            .appendingPathComponent("keep.txt")
+        try FileManager.default.createDirectory(
+            at: compactMarker.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: compactMarker.path,
+            contents: Data("keep".utf8)
+        ))
+
+        let result = try XCTUnwrap(storage.removeManagedModel(model))
+
+        XCTAssertEqual(result.removedPaths.count, variant.removableArtifacts.count)
+        XCTAssertFalse(ParakeetTranscriber.isDownloaded(model: model, storage: storage))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: compactMarker.path))
     }
 
     func testRemovalRejectsEscapingManagedRoot() throws {

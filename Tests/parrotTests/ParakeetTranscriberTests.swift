@@ -18,6 +18,15 @@ final class ParakeetTranscriberTests: XCTestCase {
         XCTAssertEqual(compact.sizeMB, 331)
         XCTAssertTrue(TranscriberFactory.make(model: compact) is ParakeetTranscriber)
 
+        let multilingual = try XCTUnwrap(ModelRegistry.find("parakeet-tdt-0.6b-v3"))
+        XCTAssertEqual(multilingual.engine, .parakeet)
+        XCTAssertEqual(multilingual.languages.count, 25)
+        XCTAssertEqual(multilingual.sizeMB, 483)
+        XCTAssertTrue(TranscriberFactory.make(
+            model: multilingual,
+            language: "es"
+        ) is ParakeetTranscriber)
+
         let streaming = try XCTUnwrap(
             ModelRegistry.find("parakeet-unified-streaming.en")
         )
@@ -28,6 +37,48 @@ final class ParakeetTranscriberTests: XCTestCase {
             TranscriberFactory.make(model: streaming) as? any RealtimeTranscriber
         )
         XCTAssertTrue(realtime.supportsRealtime)
+    }
+
+    func testV3LanguageHintAndOutputMetadataStayLocalAndBounded() throws {
+        let variant = try XCTUnwrap(
+            ParakeetTranscriber.Variant(modelID: "parakeet-tdt-0.6b-v3")
+        )
+
+        XCTAssertEqual(
+            ParakeetTranscriber.languageHint("es", variant: variant)?.rawValue,
+            "es"
+        )
+        XCTAssertNil(ParakeetTranscriber.languageHint("auto", variant: variant))
+        for code in RecognitionLanguage.parakeetV3Codes {
+            XCTAssertNotNil(
+                ParakeetTranscriber.languageHint(code, variant: variant),
+                "missing FluidAudio language hint for \(code)"
+            )
+        }
+        XCTAssertEqual(
+            ParakeetTranscriber.outputLanguage(
+                requested: "es",
+                variant: variant,
+                transcript: "This must not override an explicit language."
+            ),
+            "es"
+        )
+        XCTAssertEqual(
+            ParakeetTranscriber.outputLanguage(
+                requested: "auto",
+                variant: variant,
+                transcript: ""
+            ),
+            "und"
+        )
+        XCTAssertEqual(
+            ParakeetTranscriber.outputLanguage(
+                requested: "auto",
+                variant: variant,
+                transcript: "This is a clearly written English sentence for language detection."
+            ),
+            "en"
+        )
     }
 
     func testDownloadedStateRequiresEveryRuntimeArtifact() throws {

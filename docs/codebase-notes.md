@@ -160,7 +160,7 @@ and `hide()` delays `orderOut` by 0.18 s so the animation can play.
 the executable needs no resource bundle — same reasoning as `ModelRegistry`). Menu shows
 state + model, plus Quit.
 
-**`ModelRegistry`** — three hardcoded WhisperKit models. Deliberately not JSON
+**`ModelRegistry`** — typed WhisperKit and FluidAudio model entries. Deliberately not JSON
 (commit `abc17a0` dropped the resource bundle for true single-binary).
 
 ---
@@ -499,6 +499,16 @@ the user explicitly passes `--force`. Parent symlinks cannot redirect deletion o
 root, shared/legacy Documents caches are never touched, and removing one Unified Parakeet encoder
 preserves the small shared decoder/vocabulary plus the other batch/live encoder.
 
+**3.40 — Fast Parakeet recognition is English-only despite a maintained multilingual runtime.** ✅ **FIXED**
+
+The optional `parakeet-tdt-0.6b-v3` path downloads only its 483 MB INT8 Core ML artifacts and
+covers the checkpoint's explicit 25 European languages. Fixed languages feed FluidAudio's local
+script-aware filter; automatic recognition classifies only final text with Apple's on-device
+Natural Language framework and reports `und` when uncertain. It reuses Parrot's note formatting,
+history, benchmarking, disk-backed long-file path, and safe per-model removal without changing the
+English default. On the controlled M3 Max fixtures, English reached 181x realtime and Spanish
+82–84x realtime at 0% WER; pause-aware note formatting preserved the same fast path.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |
@@ -516,8 +526,8 @@ claims `parrot doctor` uses it — it uses `allOK`), `configureButton(recording:
 (unused since `14ef846`).
 
 ✅ **FIXED** — `Run` uses the `Transcriber` protocol through `TranscriberFactory`; warmup,
-personalization, in-memory transcription, and file transcription are shared by WhisperKit and both
-Parakeet variants. WhisperKit and compact Parakeet keep long-file audio bounded; Unified Parakeet's
+personalization, in-memory transcription, and file transcription are shared by WhisperKit and all
+Parakeet variants. WhisperKit and TDT Parakeet keep long-file audio bounded; Unified Parakeet's
 upstream file converter still materializes the resampled input before its bounded model windows.
 
 ### P4 — concurrency hygiene

@@ -1,10 +1,11 @@
 import AVFoundation
 import FluidAudio
 import Foundation
+import NaturalLanguage
 
-/// Punctuation-aware English transcription through Parakeet Unified's INT8
-/// Core ML encoder. The model is downloaded once into Parrot's own managed
-/// Application Support directory and every inference call stays on-device.
+/// Fast local Parakeet transcription through FluidAudio's Core ML runtimes.
+/// Models are downloaded once into Parrot's own managed Application Support
+/// directory and every inference call stays on-device.
 actor ParakeetTranscriber: Transcriber {
     static let minimumSamples = ASRConstants.minimumRequiredSamples(
         forSampleRate: ASRConstants.sampleRate
@@ -14,12 +15,14 @@ actor ParakeetTranscriber: Transcriber {
 
     enum Variant: Equatable {
         case compact
+        case tdtV3
         case unified
         case unifiedStreaming
 
         init?(modelID: String) {
             switch modelID {
             case "parakeet-tdt-ctc-110m.en": self = .compact
+            case "parakeet-tdt-0.6b-v3": self = .tdtV3
             case "parakeet-unified.en": self = .unified
             case "parakeet-unified-streaming.en": self = .unifiedStreaming
             default: return nil
@@ -29,6 +32,7 @@ actor ParakeetTranscriber: Transcriber {
         var folderName: String {
             switch self {
             case .compact: return Repo.parakeetTdtCtc110m.folderName
+            case .tdtV3: return Repo.parakeetV3.folderName
             case .unified, .unifiedStreaming: return Repo.parakeetUnified.folderName
             }
         }
@@ -40,6 +44,14 @@ actor ParakeetTranscriber: Transcriber {
                     "Preprocessor.mlmodelc",
                     "Decoder.mlmodelc",
                     "JointDecision.mlmodelc",
+                    "parakeet_vocab.json",
+                ]
+            case .tdtV3:
+                return [
+                    "Preprocessor.mlmodelc",
+                    "Encoder.mlmodelc",
+                    "Decoder.mlmodelc",
+                    "JointDecisionv3.mlmodelc",
                     "parakeet_vocab.json",
                 ]
             case .unified:
@@ -65,7 +77,7 @@ actor ParakeetTranscriber: Transcriber {
                 // FluidAudio currently loads this acoustic CTC head alongside
                 // the compact TDT model for its hybrid decoding path.
                 return [(Repo.parakeetCtc110m.folderName, "CtcHead.mlmodelc")]
-            case .unified, .unifiedStreaming:
+            case .tdtV3, .unified, .unifiedStreaming:
                 return []
             }
         }
@@ -77,6 +89,10 @@ actor ParakeetTranscriber: Transcriber {
             switch self {
             case .compact:
                 return requiredArtifacts
+            case .tdtV3:
+                // FluidAudio also keeps the upstream config and legacy-named
+                // vocabulary beside the five files used at runtime.
+                return requiredArtifacts + ["config.json", "parakeet_v3_vocab.json"]
             case .unified:
                 return ["parakeet_unified_encoder_int8.mlmodelc"]
             case .unifiedStreaming:
@@ -86,13 +102,14 @@ actor ParakeetTranscriber: Transcriber {
     }
 
     private enum Backend {
-        case compact(AsrManager)
+        case tdt(AsrManager)
         case unified(UnifiedAsrManager)
         case unifiedStreaming(StreamingUnifiedAsrManager)
     }
 
     private let variant: Variant
     nonisolated let supportsRealtime: Bool
+    private let requestedLanguage: String
     private let automaticParagraphs: Bool
     private var vocabularyReplacer: VocabularyReplacer
     private var personalizationRevision: UInt64 = 0
@@ -102,6 +119,7 @@ actor ParakeetTranscriber: Transcriber {
 
     init(
         model: TranscriptionModel,
+        language: String = RecognitionLanguage.automatic,
         automaticParagraphs: Bool,
         vocabulary: PersonalVocabulary = PersonalVocabulary(),
         storage: ModelStorage = .default,
@@ -113,6 +131,8 @@ actor ParakeetTranscriber: Transcriber {
         }
         self.variant = variant
         supportsRealtime = variant == .unifiedStreaming
+        requestedLanguage = RecognitionLanguage.canonicalize(language)
+            ?? RecognitionLanguage.automatic
         self.automaticParagraphs = automaticParagraphs
         vocabularyReplacer = VocabularyReplacer(entries: vocabulary.entries)
         self.storage = storage
@@ -155,7 +175,23 @@ actor ParakeetTranscriber: Transcriber {
                 )
                 let loaded = AsrManager()
                 try await loaded.loadModels(models)
-                backend = .compact(loaded)
+                backend = .tdt(loaded)
+            case .tdtV3:
+                let target = storage.managedBase.appendingPathComponent(
+                    variant.folderName,
+                    isDirectory: true
+                )
+                let models = try await AsrModels.downloadAndLoad(
+                    to: target,
+                    version: .v3,
+                    encoderPrecision: .int8,
+                    progressHandler: progressHandler
+                )
+                // FluidAudio recommends the no-mel boundary path for v3
+                // multilingual long-form audio to avoid English-prior drift.
+                let loaded = AsrManager(config: ASRConfig(melChunkContext: false))
+                try await loaded.loadModels(models)
+                backend = .tdt(loaded)
             case .unified:
                 let loaded = UnifiedAsrManager(encoderPrecision: .int8)
                 try await loaded.loadModels(
@@ -202,16 +238,24 @@ actor ParakeetTranscriber: Transcriber {
         let sourceDuration = Double(audio.count) / Double(ASRConstants.sampleRate)
         let wantsTimings = automaticParagraphs && mode == .notes
         switch backend {
-        case .compact(let manager):
-            var state = TdtDecoderState.make(decoderLayers: 1)
+        case .tdt(let manager):
+            var state = TdtDecoderState.make(
+                decoderLayers: variant == .compact ? 1 : 2
+            )
             let result = try await manager.transcribe(
                 compatibleAudio,
-                decoderState: &state
+                decoderState: &state,
+                language: Self.languageHint(requestedLanguage, variant: variant)
             )
             return liveTranscription(
                 text: result.text,
                 timings: wantsTimings ? result.tokenTimings ?? [] : [],
-                sourceDuration: sourceDuration
+                sourceDuration: sourceDuration,
+                language: Self.outputLanguage(
+                    requested: requestedLanguage,
+                    variant: variant,
+                    transcript: result.text
+                )
             )
         case .unified(let manager):
             if wantsTimings {
@@ -256,20 +300,27 @@ actor ParakeetTranscriber: Transcriber {
             duration.isFinite ? max(0, duration) : nil
         }
         switch backend {
-        case .compact(let manager):
-            // The compact manager streams long files through a disk-backed
+        case .tdt(let manager):
+            // The TDT manager streams long files through a disk-backed
             // converter, keeping audio memory bounded independently of length.
-            var state = TdtDecoderState.make(decoderLayers: 1)
+            var state = TdtDecoderState.make(
+                decoderLayers: variant == .compact ? 1 : 2
+            )
             let result: ASRResult
             if let sourceDuration,
                sourceDuration < ASRConstants.minimumAudioDurationSeconds {
                 let samples = try AudioConverter().resampleAudioFile(url)
                 result = try await manager.transcribe(
                     Self.paddingShortAudio(samples),
-                    decoderState: &state
+                    decoderState: &state,
+                    language: Self.languageHint(requestedLanguage, variant: variant)
                 )
             } else {
-                result = try await manager.transcribe(url, decoderState: &state)
+                result = try await manager.transcribe(
+                    url,
+                    decoderState: &state,
+                    language: Self.languageHint(requestedLanguage, variant: variant)
+                )
             }
             text = result.text
             timings = result.tokenTimings ?? []
@@ -299,7 +350,11 @@ actor ParakeetTranscriber: Transcriber {
         let originalText = sanitized(text)
         return TimedTranscription(
             text: vocabularyReplacer.applying(to: originalText),
-            language: "en",
+            language: Self.outputLanguage(
+                requested: requestedLanguage,
+                variant: variant,
+                transcript: originalText
+            ),
             segments: Self.segments(
                 from: buildWordTimings(from: timings).map {
                     TimedWord(text: $0.word, start: $0.startTime, end: $0.endTime)
@@ -314,6 +369,32 @@ actor ParakeetTranscriber: Transcriber {
     nonisolated static func paddingShortAudio(_ samples: [Float]) -> [Float] {
         guard samples.count < minimumSamples else { return samples }
         return samples + repeatElement(0, count: minimumSamples - samples.count)
+    }
+
+    nonisolated static func languageHint(
+        _ requested: String,
+        variant: Variant
+    ) -> Language? {
+        guard variant == .tdtV3, requested != RecognitionLanguage.automatic else {
+            return nil
+        }
+        return Language(rawValue: requested)
+    }
+
+    /// FluidAudio's v3 API auto-detects but does not return a language code.
+    /// Resolve metadata locally from the final transcript so cleanup and
+    /// history never falsely claim English. A pinned language stays exact.
+    nonisolated static func outputLanguage(
+        requested: String,
+        variant: Variant,
+        transcript: String
+    ) -> String {
+        guard variant == .tdtV3 else { return "en" }
+        if requested != RecognitionLanguage.automatic { return requested }
+        guard let detected = NLLanguageRecognizer.dominantLanguage(for: transcript)?.rawValue,
+              RecognitionLanguage.parakeetV3Codes.contains(detected)
+        else { return "und" }
+        return detected
     }
 
     nonisolated static func isDownloaded(
@@ -388,7 +469,8 @@ actor ParakeetTranscriber: Transcriber {
     private func liveTranscription(
         text: String,
         timings: [TokenTiming],
-        sourceDuration: TimeInterval
+        sourceDuration: TimeInterval,
+        language: String = "en"
     ) -> LiveTranscription {
         let segments = Self.segments(
             from: buildWordTimings(from: timings).map {
@@ -400,7 +482,7 @@ actor ParakeetTranscriber: Transcriber {
         let originalText = sanitized(text)
         return LiveTranscription(
             text: vocabularyReplacer.applying(to: originalText),
-            language: "en",
+            language: language,
             segments: segments,
             originalText: originalText
         )

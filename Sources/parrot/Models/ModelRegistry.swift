@@ -35,6 +35,15 @@ enum ModelRegistry {
             recommended: false
         ),
         TranscriptionModel(
+            id: "parakeet-tdt-0.6b-v3",
+            displayName: "Parakeet TDT v3 (25 languages, fast)",
+            engine: .parakeet,
+            whisperKitID: nil,
+            sizeMB: 483,
+            languages: RecognitionLanguage.parakeetV3Codes,
+            recommended: false
+        ),
+        TranscriptionModel(
             id: "parakeet-unified.en",
             displayName: "Parakeet Unified (English, fast)",
             engine: .parakeet,

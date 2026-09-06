@@ -535,8 +535,8 @@ and transcript files use private `0700`/`0600` permissions.
 ### Multilingual dictation
 
 English stays on the compact `whisper-base.en` default. For local dictation and file
-transcription in any Whisper-supported language, switch to the similarly sized multilingual
-model and either pin a language for the lowest latency or detect it per recording:
+transcription in another language, choose either compact multilingual Whisper or the faster,
+larger Parakeet TDT v3 model and pin a language when you know it:
 
 ```sh
 parrot languages
@@ -546,15 +546,28 @@ parrot daemon restart
 
 parrot --model whisper-base --language French            # one run
 parrot transcribe interview.m4a --model whisper-base --language auto
+
+# Faster batch inference across 25 European languages
+parrot settings set --model parakeet-tdt-0.6b-v3 --language es
+parrot daemon restart
 ```
 
 `whisper-base` is a 147 MB multilingual model; `whisper-small` is the optional 486 MB
 higher-capacity alternative. Both recognize 100 language codes locally through WhisperKit.
 Names such as `Spanish` and region identifiers such as `pt-BR` are canonicalized to Whisper
 codes. Parrot rejects incompatible combinations instead of silently sending Spanish to an
-English-only model. Automatic detection adds one language-classification decoder step; pinning
-the known language skips it. The selected or detected language is included in file reports,
-benchmark JSON, and private Markdown-history metadata.
+English-only model. Automatic Whisper detection adds one language-classification decoder step;
+pinning the known language skips it.
+
+`parakeet-tdt-0.6b-v3` downloads only its 483 MB INT8 runtime and covers 25 European languages.
+It is batch recognition—not the live-preview model—but warmed inference is substantially faster
+than multilingual Whisper on this Mac. A fixed language is passed to FluidAudio's local decoder
+as a script guard and is recorded exactly. With `--language auto`, the multilingual checkpoint
+recognizes without a hint and Parrot classifies only the final text through Apple's on-device
+Natural Language framework for safe metadata. If that classifier is uncertain, Parrot records
+`und` rather than falsely claiming English. No audio or text leaves the Mac in either path.
+The selected or detected language is included in file reports, benchmark JSON, and private
+Markdown-history metadata.
 
 Speech cleanup and spoken Markdown structure commands are currently English-specific. When
 another language is detected, Parrot automatically skips English filler-word cleanup so it
@@ -754,7 +767,8 @@ compatibility links at the old paths for other local tools. Tokenizer metadata m
 the shared legacy Hugging Face cache; the large Core ML model bundles are what Parrot moves.
 Downloads show percentage progress in both interactive terminals and daemon logs.
 
-Parrot includes three optional English-only Parakeet choices. Whisper Base remains the default:
+Parrot includes three English-only Parakeet choices and one multilingual choice. Whisper Base
+remains the default:
 it starts quickly, uses the least warm memory, and is the safest general choice. Pick a
 Parakeet model when repeated inference speed matters more than model load cost:
 
@@ -763,6 +777,7 @@ Parakeet model when repeated inference speed matters more than model load cost:
 | `whisper-base.en` | 145 MB | Default; quickest load and lowest memory |
 | `whisper-base` | 147 MB | 100 languages; fixed language or automatic detection |
 | `parakeet-tdt-ctc-110m.en` | 331 MB | Small, very fast English engine |
+| `parakeet-tdt-0.6b-v3` | 483 MB | Fast batch recognition across 25 European languages |
 | `parakeet-unified.en` | 614 MB | Fast English engine with punctuation and capitalization |
 | `parakeet-unified-streaming.en` | 614 MB | Live local English preview; 640 ms latency tier |
 | `whisper-small` | 486 MB | Higher-capacity multilingual Whisper |
@@ -774,8 +789,8 @@ parrot daemon restart
 ```
 
 All Parrot engines run through Core ML on the Mac and use the same private vocabulary replacement,
-note formatting, history, live dictation, file transcription, and benchmark flows. Parakeet is
-English-only and does not currently use Whisper's acoustic prompt hints. See the
+note formatting, history, live dictation, file transcription, and benchmark flows. Parakeet does
+not currently use Whisper's acoustic prompt hints. See the
 [measured model comparison](docs/model-benchmarks.md) before changing the default.
 
 For live text while you speak, install the streaming Unified model and select it explicitly:

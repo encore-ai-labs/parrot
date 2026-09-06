@@ -236,16 +236,18 @@ protocol RealtimeTranscriber: Transcriber {
 
 `LiveTranscription` carries both text and the recognized language code. English-only Whisper
 and Parakeet models resolve `auto` to `en` without a detection pass. Multilingual Whisper uses
-an explicit language token or WhisperKit's in-pipeline detection, reusing the same resident model.
-`RecognitionLanguage` canonicalizes names, codes, and common region identifiers, then rejects
-model/language mismatches before permissions or warmup. The 147 MB multilingual Base option
-preserves the small on-device footprint; the existing English recommendation remains unchanged.
+an explicit language token or WhisperKit's in-pipeline detection. Parakeet TDT v3 covers an
+explicit 25-code subset; a fixed code enables FluidAudio's script-aware decoder filter, while
+`auto` uses checkpoint-native recognition and Apple's local `NLLanguageRecognizer` only on the
+final text for metadata. An uncertain result becomes `und`, which also prevents English-only
+cleanup. `RecognitionLanguage` rejects model/language mismatches before permissions or warmup.
+The existing English recommendation remains unchanged.
 
 Concrete implementations:
 
 - `WhisperKitTranscriber` — wraps the `WhisperKit` package. CoreML, ANE-accelerated.
-- `ParakeetTranscriber` — wraps FluidAudio for compact Parakeet TDT/CTC, batch Unified INT8,
-  and the optional 640 ms Unified streaming tier.
+- `ParakeetTranscriber` — wraps FluidAudio for compact English TDT/CTC, multilingual TDT v3,
+  batch Unified INT8, and the optional 640 ms Unified streaming tier.
 - `TranscriberFactory` — selects the concrete actor from the registry's engine field.
 
 `RealtimeTranscriptionSession` is the only capture-to-model bridge. It serializes model access
@@ -662,7 +664,7 @@ This is the only reason the process needs an `NSApplication` run loop instead of
 
 ### `ModelRegistry`
 
-JSON-driven, mirrors OpenWhispr's pattern:
+Typed, source-backed registry:
 
 ```swift
 struct TranscriptionModel: Codable {
@@ -804,6 +806,7 @@ Current registry:
 | WhisperKit | `whisper-base.en` | ~145 MB | Default; quickest load and lowest memory |
 | WhisperKit | `whisper-base` | ~147 MB | 100 languages; explicit or automatic detection |
 | FluidAudio | `parakeet-tdt-ctc-110m.en` | ~331 MB | Optional; smallest and fastest Parakeet |
+| FluidAudio | `parakeet-tdt-0.6b-v3` | ~483 MB | Optional; fast batch ASR for 25 European languages |
 | FluidAudio | `parakeet-unified.en` | ~614 MB | Optional; punctuation-aware English Parakeet |
 | FluidAudio | `parakeet-unified-streaming.en` | ~614 MB | Optional; 640 ms live local English preview |
 | WhisperKit | `whisper-small.en` | ~488 MB | More accurate English, higher latency |
@@ -948,7 +951,7 @@ Swift's module unit is the **SPM target** (one target = one module = one `import
 Settled since the original draft:
 
 - **Parakeet integration** — FluidAudio 0.15.6. It provides maintained model downloads,
-  compact disk-backed file transcription, Unified timing output, and tested Core ML execution.
+  compact/v3 disk-backed file transcription, Unified timing output, and tested Core ML execution.
   Parrot keeps the Parakeet engines opt-in based on its own same-audio benchmark rather than changing
   the default from an upstream headline number.
 

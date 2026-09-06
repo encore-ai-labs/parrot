@@ -17,11 +17,15 @@ final class RecognitionLanguageTests: XCTestCase {
         let english = try XCTUnwrap(ModelRegistry.find("whisper-base.en"))
         let multilingual = try XCTUnwrap(ModelRegistry.find("whisper-base"))
         let parakeet = try XCTUnwrap(ModelRegistry.find("parakeet-tdt-ctc-110m.en"))
+        let parakeetV3 = try XCTUnwrap(ModelRegistry.find("parakeet-tdt-0.6b-v3"))
 
         XCTAssertTrue(RecognitionLanguage.isSupported("auto", by: english))
         XCTAssertTrue(RecognitionLanguage.isSupported("en", by: parakeet))
         XCTAssertFalse(RecognitionLanguage.isSupported("es", by: english))
         XCTAssertFalse(RecognitionLanguage.isSupported("fr", by: parakeet))
+        XCTAssertTrue(RecognitionLanguage.isSupported("fr", by: parakeetV3))
+        XCTAssertTrue(RecognitionLanguage.isSupported("uk-UA", by: parakeetV3))
+        XCTAssertFalse(RecognitionLanguage.isSupported("ja", by: parakeetV3))
         XCTAssertTrue(RecognitionLanguage.isSupported("haw", by: multilingual))
         XCTAssertEqual(
             RecognitionLanguage.decoderLanguage(requested: "auto", model: english),
@@ -41,6 +45,8 @@ final class RecognitionLanguageTests: XCTestCase {
         XCTAssertEqual(ModelRegistry.find("whisper-base")?.whisperKitID, "openai_whisper-base")
         XCTAssertEqual(ModelRegistry.find("whisper-small")?.whisperKitID, "openai_whisper-small")
         XCTAssertEqual(ModelRegistry.find("whisper-base")?.languages, ["multi"])
+        XCTAssertEqual(RecognitionLanguage.parakeetV3Codes.count, 25)
+        XCTAssertEqual(Set(RecognitionLanguage.parakeetV3Codes).count, 25)
     }
 
     func testDecoderOptionsDetectOnlyWhenLanguageIsAutomatic() {

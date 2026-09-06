@@ -2130,15 +2130,19 @@ struct Models: ParsableCommand {
             id + String(repeating: " ", count: max(0, width - id.count))
         }
 
+        static func languageSummary(_ languages: [String]) -> String {
+            if languages.contains("multi") { return "100" }
+            if languages.count > 3 { return String(languages.count) }
+            return languages.joined(separator: ",")
+        }
+
         func run() throws {
             let storage = ModelStorage.default
             let idWidth = max(26, ModelRegistry.shared.map(\.id.count).max() ?? 0)
             for m in ModelRegistry.shared {
                 let star = m.recommended ? "★" : " "
                 let id = Self.paddedID(m.id, width: idWidth)
-                let languageSummary = m.languages.contains("multi")
-                    ? "100"
-                    : m.languages.joined(separator: ",")
+                let languageSummary = Self.languageSummary(m.languages)
                 let langs = "[\(languageSummary)]"
                     .padding(toLength: 9, withPad: " ", startingAt: 0)
                 let size = String(format: "%5d MB", m.sizeMB)

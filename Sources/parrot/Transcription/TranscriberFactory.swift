@@ -29,6 +29,7 @@ enum TranscriberFactory {
         case .parakeet:
             return ParakeetTranscriber(
                 model: model,
+                language: language,
                 automaticParagraphs: automaticParagraphs,
                 vocabulary: vocabulary
             )

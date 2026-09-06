@@ -28,6 +28,31 @@ compact model and 30 times faster than Unified, and had the lowest maximum resid
 The optional Parakeet choices are useful for long sessions or repeated file transcription,
 where their one-time model load can be amortized.
 
+## Multilingual Parakeet TDT v3 validation
+
+The optional `parakeet-tdt-0.6b-v3` path was validated separately through Parrot's optimized
+binary and an isolated model cache. FluidAudio downloaded only the five runtime artifacts Parrot
+uses: the INT8 encoder, preprocessor, decoder, v3 joint, and vocabulary, plus two tiny upstream
+metadata files. Their measured logical size was 483,257,242 bytes (483.3 MB); the larger Hugging
+Face repository also contains unused model variants that Parrot never downloads.
+
+| Audio / language | Duration | Median inference | Realtime | WER | Warm load |
+|---|---:|---:|---:|---:|---:|
+| English note / `en` | 38.82 s | 0.215 s | 181x | 0.0% | 0.149 s |
+| Spanish note / `es` | 7.94 s | 0.095 s | 84x | 0.0% | 0.104 s |
+| Spanish note / `auto` | 7.94 s | 0.097 s | 82x | 0.0% | 0.102 s |
+
+Each result is the median of five warmed runs with vocabulary, snippets, and fillers disabled.
+The English fixture used the exact 53-word reference, correcting an initially rejected comparison
+against an unrelated five-repetition reference. One process reported 262,324,224 bytes maximum
+resident set size (about 250 MiB). On the same 38.82-second audio, note mode with pause-aware
+paragraphs took a 0.209-second median and inserted the deliberate paragraph boundary.
+
+These samples validate Parrot's integration, not universal multilingual accuracy. FluidAudio's
+[full published benchmark](https://github.com/FluidInference/FluidAudio/blob/main/Documentation/Benchmarks.md)
+covers the checkpoint's 25 languages and broader datasets. Parrot keeps v3 opt-in and retains the
+smaller English models for users who do not need multilingual recognition.
+
 ## Live local streaming validation
 
 The optional `parakeet-unified-streaming.en` path was measured through Parrot's production

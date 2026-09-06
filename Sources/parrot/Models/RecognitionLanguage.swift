@@ -8,6 +8,15 @@ import WhisperKit
 enum RecognitionLanguage {
     static let automatic = "auto"
 
+    /// Languages covered by Parakeet TDT v3's multilingual checkpoint.
+    /// Keep this explicit: unlike Whisper, v3 does not cover every language
+    /// exposed by WhisperKit's language table.
+    static let parakeetV3Codes = [
+        "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de",
+        "el", "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "ru",
+        "sk", "sl", "es", "sv", "uk",
+    ]
+
     static var supportedCodes: [String] {
         Constants.languageCodes.sorted {
             displayName(for: $0).localizedCaseInsensitiveCompare(displayName(for: $1))
@@ -74,7 +83,7 @@ enum RecognitionLanguage {
 
 struct Languages: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "List languages supported by local multilingual Whisper models."
+        abstract: "List language codes recognized by local transcription models."
     )
 
     func run() {
@@ -83,7 +92,11 @@ struct Languages: ParsableCommand {
             let padded = code.padding(toLength: 5, withPad: " ", startingAt: 0)
             print("  \(padded) \(RecognitionLanguage.displayName(for: code))")
         }
-        print("\nUse `parrot settings set --model whisper-base --language <code>`.")
-        print("A fixed language skips automatic detection and minimizes latency.")
+        print("\nMultilingual Whisper models support every code above.")
+        print(
+            "Parakeet TDT v3 supports: "
+                + RecognitionLanguage.parakeetV3Codes.joined(separator: ", ")
+        )
+        print("A fixed language skips detection or guides decoding and minimizes ambiguity.")
     }
 }

@@ -54,6 +54,10 @@ struct Settings: ParsableCommand {
                     + "\(config.spaceAfterPaste == nil ? "  (default)" : "")"
             )
             print(
+                "smart paste  \(defaults.smartInsertion ? "on · bounded local cursor context" : "off")"
+                    + "\(config.smartInsertion == nil ? "  (default)" : "")"
+            )
+            print(
                 "insertion    " + (defaults.insertionMethod == .keystrokes
                     ? "keystrokes · clipboard untouched"
                     : "clipboard · restore after "
@@ -206,6 +210,18 @@ struct Settings: ParsableCommand {
         var noSpaceAfterPaste: Bool = false
 
         @Flag(
+            name: .customLong("smart-insertion"),
+            help: "Fit spacing and safe capitalization to the local cursor context."
+        )
+        var smartInsertion: Bool = false
+
+        @Flag(
+            name: .customLong("no-smart-insertion"),
+            help: "Disable surrounding cursor-text inspection."
+        )
+        var noSmartInsertion: Bool = false
+
+        @Flag(
             name: .customLong("clipboard-paste"),
             help: "Paste through the clipboard for apps that drop simulated text."
         )
@@ -268,6 +284,7 @@ struct Settings: ParsableCommand {
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || compactPauses || noCompactPauses
                     || spaceAfterPaste || noSpaceAfterPaste
+                    || smartInsertion || noSmartInsertion
                     || clipboardPaste || keystrokePaste
                     || clipboardRestoreDelayMilliseconds != nil
                     || warmMicrophone || coldMicrophone
@@ -296,6 +313,11 @@ struct Settings: ParsableCommand {
             guard !(spaceAfterPaste && noSpaceAfterPaste) else {
                 throw ValidationError(
                     "pass at most one of --space-after-paste or --no-space-after-paste"
+                )
+            }
+            guard !(smartInsertion && noSmartInsertion) else {
+                throw ValidationError(
+                    "pass at most one of --smart-insertion or --no-smart-insertion"
                 )
             }
             guard !(clipboardPaste && keystrokePaste) else {
@@ -393,6 +415,7 @@ struct Settings: ParsableCommand {
                     || cleanup || noCleanup || automaticParagraphs || noAutomaticParagraphs
                     || compactPauses || noCompactPauses
                     || spaceAfterPaste || noSpaceAfterPaste
+                    || smartInsertion || noSmartInsertion
                     || clipboardPaste || keystrokePaste
                     || clipboardRestoreDelayMilliseconds != nil
                     || warmMicrophone || coldMicrophone
@@ -498,6 +521,9 @@ struct Settings: ParsableCommand {
             if spaceAfterPaste || noSpaceAfterPaste {
                 config.spaceAfterPaste = spaceAfterPaste
             }
+            if smartInsertion || noSmartInsertion {
+                config.smartInsertion = smartInsertion
+            }
             if clipboardPaste || keystrokePaste {
                 config.insertionMethod = clipboardPaste ? .clipboard : .keystrokes
             }
@@ -563,7 +589,9 @@ struct Settings: ParsableCommand {
             config.deliveryCommand = nil
             config.cleanup = nil
             config.automaticParagraphs = nil
+            config.compactLockedPauses = nil
             config.spaceAfterPaste = nil
+            config.smartInsertion = nil
             config.insertionMethod = nil
             config.clipboardRestoreDelayMilliseconds = nil
             config.warmMicrophone = nil

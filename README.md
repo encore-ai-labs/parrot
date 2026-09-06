@@ -90,11 +90,21 @@ permissions are preserved. Appends use the same advisory lock and `fsync` durabi
 journal delivery. Retrying a recording preserves the mode and destination that originally
 captured it.
 
-Cursor delivery adds one trailing boundary space by default, so consecutive captures become
-`first thought. second thought.` instead of `first thought.second thought.` Existing trailing
-whitespace is never doubled. This delivery-only space is not stored in history, journals, command
-input, or file transcripts. Disable it for exact-input workflows with
-`parrot settings set --no-space-after-paste`, or use `--no-space-after-paste` for one run.
+Cursor delivery fits the transcript to the surrounding text by default. At the middle of a
+sentence, an unambiguous starter such as `This` becomes `this`; proper names, acronyms, `I`,
+Markdown prefixes, and new sentences remain unchanged. Parrot also avoids doubled spaces before
+existing punctuation and adds a missing word boundary around a cursor or selection. The existing
+trailing-space preference still makes consecutive end-of-field captures become
+`first thought. second thought.` instead of `first thought.second thought.`
+
+This smart insertion reads at most 64 characters before and 8 after the cursor through macOS
+Accessibility, only after recording stops and concurrently with transcription. Each cross-process
+request has a 50 ms timeout, fields reported as secure are refused, and the result stays in memory
+and never enters model context, history, journals, logs, or a network request. Unsupported apps or
+an app switch fall back to the prior byte-for-byte behavior. Disable surrounding-text inspection
+with `parrot settings set --no-smart-insertion`; use `--no-smart-insertion` for one run. Disable
+only the trailing boundary with `--no-space-after-paste`. Delivery-only whitespace and casing do
+not alter the transcript saved in history, journals, command input, or file output.
 
 Direct Unicode keystrokes are the default insertion method: they keep the system clipboard
 untouched and now preserve emoji and other supplementary Unicode characters across event chunks.
@@ -843,8 +853,8 @@ managed model cache location; transcript, config, and legacy-model paths stay un
 
 Parrot stores settings only at `~/.config/parrot/config.json`, with user-only permissions.
 The chosen microphone and lowercase choice are remembered during setup. Hotkey, model,
-language, note/dictation mode, pause-aware paragraphs, locked-pause compaction, cleanup, capture
-policy, and delivery can be saved explicitly:
+language, note/dictation mode, pause-aware paragraphs, locked-pause compaction, cleanup, smart
+cursor insertion, capture policy, and delivery can be saved explicitly:
 
 ```sh
 parrot settings
@@ -865,6 +875,7 @@ parrot settings set --paste         # restore paste-at-cursor delivery
 parrot settings set --clipboard-paste # compatibility path; restores prior clipboard
 parrot settings set --clipboard-restore-delay-ms 1500
 parrot settings set --keystroke-paste # privacy-first default; clipboard untouched
+parrot settings set --no-smart-insertion # optional legacy context-free insertion
 parrot settings reset               # resets transcription/formatting/capture/delivery defaults
 parrot daemon restart               # apply to a running LaunchAgent
 ```
@@ -874,9 +885,10 @@ plain dictation. Command-line flags remain one-run overrides: `--hotkey`, `--not
 `--no-note-hotkey`, `--note-journal`, `--no-note-journal`, `--template`, `--no-template`,
 `--context`, `--model`,
 `--notes`, `--dictation`, `--auto-paragraphs`, `--no-auto-paragraphs`, `--cleanup`,
-`--no-cleanup`, `--compact-pauses`, `--no-compact-pauses`, `--clipboard-paste`, `--keystroke-paste`,
-`--clipboard-restore-delay-ms`, `--warm-mic`, and `--cold-mic` take priority without changing
-the file.
+`--no-cleanup`, `--compact-pauses`, `--no-compact-pauses`, `--smart-insertion`,
+`--no-smart-insertion`, `--clipboard-paste`, `--keystroke-paste`,
+`--clipboard-restore-delay-ms`, `--warm-mic`, and `--cold-mic` take priority without changing the
+file.
 `--journal`, `--command`, and `--paste` similarly select one delivery destination without
 changing saved defaults. `--reconfigure` resets the complete first-run configuration.
 
@@ -993,6 +1005,7 @@ parrot settings set --audio-history-days 7      # opt-in replay/reprocess window
 parrot settings set --no-audio-history          # stop retaining new audio
 parrot settings set --keep-history-forever      # default: never auto-delete history
 parrot settings set --no-space-after-paste # exact cursor text; default adds one boundary space
+parrot settings set --no-smart-insertion   # do not inspect bounded cursor context
 parrot settings set --compact-pauses    # locked notes: shorten long near-silent breaks
 parrot settings set --no-compact-pauses # default: preserve the full inference timeline
 parrot settings set --clipboard-paste       # compatibility insertion + clipboard restore
@@ -1002,6 +1015,7 @@ parrot --journal ~/Documents/Notes/inbox.md # append there; don't type at cursor
 parrot --command '$HOME/bin/route-parrot-note' # final text on stdin; don't paste
 parrot --paste                         # override any saved destination for one run
 parrot --no-space-after-paste          # exact cursor insertion for this run
+parrot --no-smart-insertion            # use legacy context-free cursor insertion
 parrot --notes                         # explicit spoken commands → local Markdown
 parrot --template meeting              # named shape + note mode for this run
 parrot --no-template                   # ignore a saved shape for this run

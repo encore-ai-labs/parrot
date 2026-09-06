@@ -507,6 +507,18 @@ struct Run: ParsableCommand {
     var noSpaceAfterPaste: Bool = false
 
     @Flag(
+        name: .customLong("smart-insertion"),
+        help: "Fit spacing and safe capitalization to the local cursor context."
+    )
+    var smartInsertion: Bool = false
+
+    @Flag(
+        name: .customLong("no-smart-insertion"),
+        help: "Do not inspect surrounding cursor text for this run."
+    )
+    var noSmartInsertion: Bool = false
+
+    @Flag(
         name: .customLong("clipboard-paste"),
         help: "Paste through the clipboard for apps that drop simulated text."
     )
@@ -556,6 +568,11 @@ struct Run: ParsableCommand {
         guard !(spaceAfterPaste && noSpaceAfterPaste) else {
             throw ValidationError(
                 "pass at most one of --space-after-paste or --no-space-after-paste"
+            )
+        }
+        guard !(smartInsertion && noSmartInsertion) else {
+            throw ValidationError(
+                "pass at most one of --smart-insertion or --no-smart-insertion"
             )
         }
         guard !(clipboardPaste && keystrokePaste) else {
@@ -657,6 +674,9 @@ struct Run: ParsableCommand {
                     : nil,
                 spaceAfterPasteOverride: spaceAfterPaste || noSpaceAfterPaste
                     ? spaceAfterPaste
+                    : nil,
+                smartInsertionOverride: smartInsertion || noSmartInsertion
+                    ? smartInsertion
                     : nil,
                 insertionMethodOverride: clipboardPaste || keystrokePaste
                     ? (clipboardPaste ? .clipboard : .keystrokes)
@@ -1058,13 +1078,21 @@ struct Run: ParsableCommand {
                 // Let the status menu close and return focus to the user's app
                 // before delivering the recovery insertion.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    TextInjector.inject(
-                        text,
-                        appendSpace: defaults.spaceAfterPaste,
-                        method: defaults.insertionMethod,
-                        clipboardRestoreDelayMilliseconds:
-                            defaults.clipboardRestoreDelayMilliseconds
-                    )
+                    let context = defaults.smartInsertion
+                        ? CursorInsertionContextCapture.start()
+                        : nil
+                    Task { @MainActor in
+                        let snapshot = await context?.value
+                        TextInjector.inject(
+                            text,
+                            appendSpace: defaults.spaceAfterPaste,
+                            smartInsertion: defaults.smartInsertion,
+                            context: snapshot,
+                            method: defaults.insertionMethod,
+                            clipboardRestoreDelayMilliseconds:
+                                defaults.clipboardRestoreDelayMilliseconds
+                        )
+                    }
                 }
             }
         }
@@ -1260,6 +1288,7 @@ struct Run: ParsableCommand {
             mode modeForCapture: DictationMode,
             deliveryRoute: HotkeyModeRouter.DeliveryRoute,
             recognitionContext: Task<String?, Never>?,
+            insertionContext: Task<CursorInsertionSnapshot?, Never>?,
             sessionID: Int,
             audioDuration seconds: TimeInterval,
             compactLongPauses: Bool,
@@ -1268,7 +1297,7 @@ struct Run: ParsableCommand {
             transcriberReadyAfter: Task<Void, Never>? = nil
         ) {
             Task {
-                [modeForCapture, deliveryRoute, recognitionContext, recording,
+                [modeForCapture, deliveryRoute, recognitionContext, insertionContext, recording,
                  compactLongPauses, realtimeCompletion, transcriberReadyAfter] in
                 let started = Date()
                 let inferenceRecording: PreparedInferenceRecording
@@ -1445,6 +1474,9 @@ struct Run: ParsableCommand {
                         commandConfigured: commandForCapture != nil,
                         commandSucceeded: commandDeliverySucceeded
                     )
+                    let insertionSnapshot = deliveryDecision.injectAtCursor
+                        ? await insertionContext?.value
+                        : nil
                     var historyWrite: TranscriptHistoryWrite?
                     if deliveryDecision.deliveryCompleted, let history {
                         do {
@@ -1485,6 +1517,8 @@ struct Run: ParsableCommand {
                             TextInjector.inject(
                                 text,
                                 appendSpace: defaults.spaceAfterPaste,
+                                smartInsertion: defaults.smartInsertion,
+                                context: insertionSnapshot,
                                 method: defaults.insertionMethod,
                                 clipboardRestoreDelayMilliseconds:
                                     defaults.clipboardRestoreDelayMilliseconds
@@ -1705,6 +1739,16 @@ struct Run: ParsableCommand {
             retryDeliveryRoute = deliveryRouteForCapture
             retryContext = contextForCapture
             retryCompactPauses = compactPausesForCapture
+            // A local command never falls back to cursor insertion, while both
+            // journal routes can. Avoid inspecting the target application when
+            // this capture cannot possibly type there.
+            let mayInjectAtCursor = deliveryRouteForCapture == .noteJournal
+                || commandDelivery == nil
+            let insertionContextForCapture = MainActor.assumeIsolated {
+                defaults.smartInsertion && mayInjectAtCursor
+                    ? CursorInsertionContextCapture.start()
+                    : nil
+            }
             let realtimeCompletion: Task<RealtimeTranscriptionSession.Completion, Never>?
             var transcriberReadyAfter: Task<Void, Never>?
             if let realtimeSession, compactPausesForCapture {
@@ -1729,6 +1773,7 @@ struct Run: ParsableCommand {
                 mode: modeForCapture,
                 deliveryRoute: deliveryRouteForCapture,
                 recognitionContext: contextForCapture,
+                insertionContext: insertionContextForCapture,
                 sessionID: sessionID,
                 audioDuration: seconds,
                 compactLongPauses: compactPausesForCapture,
@@ -1790,6 +1835,7 @@ struct Run: ParsableCommand {
                 mode: retryMode,
                 deliveryRoute: retryDeliveryRoute,
                 recognitionContext: retryContext,
+                insertionContext: nil,
                 sessionID: sessionID,
                 audioDuration: seconds,
                 compactLongPauses: retryCompactPauses,
@@ -1948,6 +1994,7 @@ struct Run: ParsableCommand {
             } ?? (commandDelivery == nil
                 ? cursorInsertionDescription
                     + " · boundary space \(defaults.spaceAfterPaste ? "on" : "off")"
+                    + " · smart context \(defaults.smartInsertion ? "on" : "off")"
                 : "local command ← transcript on stdin"),
             cleanup: defaults.cleanup,
             automaticParagraphs: defaults.automaticParagraphs,

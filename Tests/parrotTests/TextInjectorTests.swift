@@ -27,6 +27,128 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertEqual(TextInjector.preparedText("", appendSpace: true), "")
     }
 
+    func testSmartInsertionFitsWordAndPunctuationBoundaries() {
+        XCTAssertEqual(
+            TextInjector.preparedText(
+                "This continues",
+                appendSpace: true,
+                smartBoundary: CursorTextBoundary(before: "Existing thought", after: "next")
+            ),
+            " this continues "
+        )
+        XCTAssertEqual(
+            TextInjector.preparedText(
+                "more",
+                appendSpace: true,
+                smartBoundary: CursorTextBoundary(before: "Already ", after: ". Next")
+            ),
+            "more"
+        )
+        XCTAssertEqual(
+            TextInjector.preparedText(
+                ", however",
+                appendSpace: true,
+                smartBoundary: CursorTextBoundary(before: "First", after: " second")
+            ),
+            ", however"
+        )
+    }
+
+    func testSmartInsertionPreservesSentenceStartsAndSafeExactMode() {
+        for before in [
+            "", "Previous sentence. ", "Previous sentence.” ", "Finished!) ",
+            "Heading\n", "Heading\n   ", "(",
+        ] {
+            XCTAssertEqual(
+                TextInjector.preparedText(
+                    "This starts here.",
+                    appendSpace: false,
+                    smartBoundary: CursorTextBoundary(before: before, after: "")
+                ),
+                "This starts here."
+            )
+        }
+        XCTAssertEqual(
+            TextInjector.preparedText(
+                "This continues",
+                appendSpace: false,
+                smartBoundary: CursorTextBoundary(before: "Prior words ", after: "")
+            ),
+            "this continues"
+        )
+    }
+
+    func testSmartInsertionDoesNotForceSpacesIntoUnspacedScripts() {
+        XCTAssertEqual(
+            TextInjector.preparedText(
+                "世界",
+                appendSpace: true,
+                smartBoundary: CursorTextBoundary(before: "你好", after: "今天")
+            ),
+            "世界"
+        )
+        XCTAssertEqual(
+            TextInjector.preparedText(
+                "こんにちは",
+                appendSpace: true,
+                smartBoundary: CursorTextBoundary(before: "", after: "")
+            ),
+            "こんにちは"
+        )
+    }
+
+    func testSmartInsertionNeverLowercasesNamesAcronymsMarkdownOrPronounI() {
+        let boundary = CursorTextBoundary(before: "Please discuss", after: "")
+        for text in ["RustPond plans", "NASA plans", "I agree", "Élodie agrees"] {
+            XCTAssertEqual(
+                TextInjector.preparedText(
+                    text,
+                    appendSpace: false,
+                    smartBoundary: boundary
+                ),
+                " " + text
+            )
+        }
+        XCTAssertEqual(
+            TextInjector.preparedText(
+                "## Project",
+                appendSpace: false,
+                smartBoundary: boundary
+            ),
+            "## Project"
+        )
+        XCTAssertEqual(
+            TextInjector.preparedText(
+                "- [ ] Follow up\n- [ ] Ship",
+                appendSpace: false,
+                smartBoundary: boundary
+            ),
+            "- [ ] Follow up\n- [ ] Ship"
+        )
+    }
+
+    func testSmartInsertionFallsBackWhenNoReliableContextExists() {
+        XCTAssertEqual(
+            TextInjector.preparedText("This remains", appendSpace: true),
+            "This remains "
+        )
+        XCTAssertNil(CursorInsertionContextCapture.readBoundary(processID: nil))
+        XCTAssertEqual(CursorInsertionContextCapture.maximumCharactersBeforeCursor, 64)
+        XCTAssertEqual(CursorInsertionContextCapture.maximumCharactersAfterCursor, 8)
+        XCTAssertEqual(CursorInsertionContextCapture.messagingTimeout, 0.05)
+        XCTAssertTrue(CursorInsertionContextCapture.isSecureSubrole("AXSecureTextField"))
+        XCTAssertFalse(CursorInsertionContextCapture.isSecureSubrole("AXTextField"))
+    }
+
+    @MainActor
+    func testSmartInsertionRejectsContextFromAnAppThatLostFocus() {
+        let stale = CursorInsertionSnapshot(
+            processID: -1,
+            boundary: CursorTextBoundary(before: "private old field", after: "")
+        )
+        XCTAssertNil(CursorInsertionContextCapture.boundaryForCurrentApplication(stale))
+    }
+
     func testRunFlagsParseAndConflict() throws {
         let enabled = try XCTUnwrap(
             try Run.parseAsRoot(["--space-after-paste"]) as? Run
@@ -51,6 +173,12 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertEqual(clipboard.clipboardRestoreDelayMilliseconds, 1_500)
         XCTAssertThrowsError(try Run.parseAsRoot([
             "--clipboard-paste", "--keystroke-paste",
+        ]))
+        XCTAssertTrue(try XCTUnwrap(
+            try Run.parseAsRoot(["--no-smart-insertion"]) as? Run
+        ).noSmartInsertion)
+        XCTAssertThrowsError(try Run.parseAsRoot([
+            "--smart-insertion", "--no-smart-insertion",
         ]))
         XCTAssertThrowsError(try Run.parseAsRoot([
             "--clipboard-restore-delay-ms", "5001",
@@ -210,6 +338,24 @@ final class TextInjectorTests: XCTestCase {
             }
         }
         XCTAssertEqual(output.count, input.count + 1)
+    }
+
+    func testSmartBoundaryPreparationCostStaysNegligibleForLongNotes() {
+        let input = String(repeating: "A representative dictated sentence. ", count: 250)
+            .trimmingCharacters(in: .whitespaces)
+        let boundary = CursorTextBoundary(before: "Existing project note ", after: "next")
+        var output = ""
+        measure {
+            for _ in 0..<1_000 {
+                output = TextInjector.preparedText(
+                    input,
+                    appendSpace: true,
+                    smartBoundary: boundary
+                )
+            }
+        }
+        XCTAssertEqual(output.first, "a")
+        XCTAssertEqual(output.last, " ")
     }
 
     func testUnicodeChunkPreparationCostStaysBoundedForLongNotes() {

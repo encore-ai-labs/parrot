@@ -149,10 +149,19 @@ enum TextInjector {
     static func inject(
         _ text: String,
         appendSpace: Bool,
+        smartInsertion: Bool = true,
+        context: CursorInsertionSnapshot? = nil,
         method: TextInsertionMethod = .keystrokes,
         clipboardRestoreDelayMilliseconds: Int = defaultClipboardRestoreDelayMilliseconds
     ) {
-        let text = preparedText(text, appendSpace: appendSpace)
+        let boundary = smartInsertion
+            ? CursorInsertionContextCapture.boundaryForCurrentApplication(context)
+            : nil
+        let text = preparedText(
+            text,
+            appendSpace: appendSpace,
+            smartBoundary: boundary
+        )
         guard !text.isEmpty else { return }
 
         if method == .clipboard {
@@ -179,7 +188,18 @@ enum TextInjector {
 
     /// Keeps delivery-only whitespace out of history and other output paths.
     /// Existing whitespace is authoritative and never doubled.
-    static func preparedText(_ text: String, appendSpace: Bool) -> String {
+    static func preparedText(
+        _ text: String,
+        appendSpace: Bool,
+        smartBoundary: CursorTextBoundary? = nil
+    ) -> String {
+        if let smartBoundary {
+            return CursorInsertionFormatter.prepare(
+                text,
+                appendSpace: appendSpace,
+                boundary: smartBoundary
+            )
+        }
         guard appendSpace,
               let last = text.unicodeScalars.last,
               !CharacterSet.whitespacesAndNewlines.contains(last)

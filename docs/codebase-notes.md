@@ -509,6 +509,16 @@ history, benchmarking, disk-backed long-file path, and safe per-model removal wi
 English default. On the controlled M3 Max fixtures, English reached 181x realtime and Spanish
 82–84x realtime at 0% WER; pause-aware note formatting preserved the same fast path.
 
+**3.41 — Context-free insertion creates doubled spaces and sentence-case errors.** ✅ **FIXED**
+
+Cursor delivery now snapshots only a 64-character prefix and 8-character suffix around the
+focused selection after recording stops, using a detached Accessibility read with a 50 ms
+per-request timeout. Secure fields, unsupported controls, and app switches fall back unchanged. A
+pure formatter repairs only word-boundary spacing and a fixed allowlist of safe English sentence
+starters; proper names, acronyms, Markdown, and stored transcript text remain authoritative. The
+formatting pass measured about 0.4 milliseconds for a representative long note and adds no model,
+prompt, network, history, or idle-daemon work.
+
 ### P3 — docs/code drift
 
 | Claim | Reality |
@@ -557,7 +567,8 @@ created and resumed.
 
 - ✅ **FIXED** — Cursor injection adds one configurable delivery-only boundary space, so
   back-to-back dictations cannot concatenate (`helloworld`). History, journals, command stdin,
-  and file output retain exact processed text; no surrounding application content is inspected.
+  and file output retain exact processed text. A later bounded smart-insertion pass now inspects
+  only the immediate cursor boundary after recording; see 3.41.
 - ✅ **FIXED** — WhisperKit receives precomputed dictation/note `DecodingOptions`, an optional
   pinned language (or per-capture detection), and bounded personalization/context prompt tokens.
   Its decoder retains the upstream temperature-fallback and hallucination thresholds.

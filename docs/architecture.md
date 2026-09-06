@@ -279,12 +279,20 @@ the main run loop, or inference. Keystrokes remain the default because clipboard
 Universal Clipboard can observe temporary clipboard values even though Parrot makes no network
 request itself.
 
-Cursor delivery prepares a separate string with one trailing boundary space by default, avoiding
-concatenation across consecutive captures. It does not double existing whitespace and can be
-disabled with `--no-space-after-paste` or the persisted setting. Preparation lives inside
-`TextInjector`, after delivery routing, so the boundary byte never enters transcript history,
-Markdown journals, local-command stdin, file output, recovery state, or model context. This spacing
-policy does not inspect surrounding application text, selections, windows, or the clipboard.
+Smart cursor delivery starts a bounded Accessibility read only after capture stops. The frontmost
+process id is frozen synchronously; a detached task then requests at most 64 characters before and
+8 after its focused selection with a 50 ms timeout per AX request. Fields reported with the
+secure-text subrole are refused. Delivery uses the result only if the same process remains
+frontmost; an unsupported field, timeout, app switch, or explicit `--no-smart-insertion` uses
+legacy insertion. The read runs concurrently with transcription and never touches the clipboard.
+
+`CursorInsertionFormatter` uses those boundaries to avoid doubled/missing word spaces and
+lowercases only a fixed allowlist of unambiguous English sentence starters when insertion is
+clearly mid-sentence. Proper nouns, acronyms, `I`, Markdown prefixes, and new-sentence casing
+remain exact. The independent trailing-space preference can be disabled with
+`--no-space-after-paste`. Preparation lives inside `TextInjector`, after delivery routing, so
+delivery-only whitespace and casing never enter transcript history, Markdown journals,
+local-command stdin, file output, recovery state, or model context.
 
 `LastTranscriptStore` holds only the latest successful finalized text for the current daemon.
 When history is enabled, a background read seeds it from the newest private Markdown entry after
@@ -729,7 +737,8 @@ A `Codable` struct at `~/.config/parrot/config.json`, holding an optional ordere
 list (plus the legacy singular UID for backward compatibility),
 lowercase preference, first-run completion flag, and optional defaults for hotkey, model,
 dictation/notes mode, pause-aware paragraphs, opt-in locked-pause compaction, speech cleanup,
-warm/cold microphone policy, cursor spacing, opt-in recognition context, and delivery destination.
+warm/cold microphone policy, cursor spacing, smart insertion, opt-in recognition context, and
+delivery destination.
 Every field is optional,
 so older config files decode unchanged and nil continues to mean "use the built-in default."
 

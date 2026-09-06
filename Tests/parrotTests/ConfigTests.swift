@@ -40,6 +40,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(config.automaticParagraphs)
         XCTAssertNil(config.compactLockedPauses)
         XCTAssertNil(config.spaceAfterPaste)
+        XCTAssertNil(config.smartInsertion)
         XCTAssertNil(config.insertionMethod)
         XCTAssertNil(config.clipboardRestoreDelayMilliseconds)
         XCTAssertNil(config.warmMicrophone)
@@ -67,6 +68,7 @@ final class ConfigTests: XCTestCase {
         config.automaticParagraphs = false
         config.compactLockedPauses = false
         config.spaceAfterPaste = false
+        config.smartInsertion = false
         config.insertionMethod = .clipboard
         config.clipboardRestoreDelayMilliseconds = 1_500
         config.warmMicrophone = false
@@ -131,6 +133,7 @@ final class ConfigTests: XCTestCase {
                 automaticParagraphs: true,
                 compactLockedPauses: false,
                 spaceAfterPaste: true,
+                smartInsertion: true,
                 insertionMethod: .keystrokes,
                 clipboardRestoreDelayMilliseconds: 1_000,
                 warmMicrophone: true,
@@ -162,6 +165,7 @@ final class ConfigTests: XCTestCase {
                 automaticParagraphs: true,
                 compactLockedPauses: false,
                 spaceAfterPaste: true,
+                smartInsertion: true,
                 insertionMethod: .keystrokes,
                 clipboardRestoreDelayMilliseconds: 1_000,
                 warmMicrophone: true,
@@ -459,6 +463,41 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(overridden.spaceAfterPaste)
     }
 
+    func testRuntimeDefaultsUseSmartInsertionByDefaultAndAllowOverrides() throws {
+        var config = Config()
+        let builtIn = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertTrue(builtIn.smartInsertion)
+
+        config.smartInsertion = false
+        let saved = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertFalse(saved.smartInsertion)
+
+        let overridden = try RuntimeDefaults.resolve(
+            config: config,
+            hotkeyOverride: nil,
+            modelOverride: nil,
+            notes: false,
+            dictation: false,
+            smartInsertionOverride: true,
+            recommendedModel: "whisper-base.en"
+        )
+        XCTAssertTrue(overridden.smartInsertion)
+    }
+
     func testRuntimeDefaultsKeepClipboardInsertionExplicitAndBounded() throws {
         let builtIn = try RuntimeDefaults.resolve(
             config: Config(),
@@ -740,7 +779,7 @@ final class ConfigTests: XCTestCase {
                 "--language", "English", "--mode", "notes",
                 "--journal", "/tmp/inbox.md", "--cleanup", "--auto-paragraphs",
                 "--compact-pauses",
-                "--no-space-after-paste", "--clipboard-paste",
+                "--no-space-after-paste", "--no-smart-insertion", "--clipboard-paste",
                 "--clipboard-restore-delay-ms", "1500", "--cold-mic",
                 "--history-retention-days", "30", "--audio-history-days", "7",
             ]) as? Settings.Set
@@ -757,6 +796,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(set.automaticParagraphs)
         XCTAssertTrue(set.compactPauses)
         XCTAssertTrue(set.noSpaceAfterPaste)
+        XCTAssertTrue(set.noSmartInsertion)
         XCTAssertTrue(set.clipboardPaste)
         XCTAssertEqual(set.clipboardRestoreDelayMilliseconds, 1_500)
         XCTAssertTrue(set.coldMicrophone)
@@ -816,6 +856,9 @@ final class ConfigTests: XCTestCase {
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--space-after-paste", "--no-space-after-paste",
+        ]))
+        XCTAssertThrowsError(try Settings.parseAsRoot([
+            "set", "--smart-insertion", "--no-smart-insertion",
         ]))
         XCTAssertThrowsError(try Settings.parseAsRoot([
             "set", "--clipboard-paste", "--keystroke-paste",

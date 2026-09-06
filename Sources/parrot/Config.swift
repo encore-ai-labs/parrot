@@ -56,6 +56,9 @@ struct Config: Codable, Equatable {
     /// Add one boundary space after cursor-injected text. This never changes
     /// history, journal, command, or stored-file output.
     var spaceAfterPaste: Bool?
+    /// Use a bounded, ephemeral Accessibility read around the cursor to avoid
+    /// doubled spaces and conservative mid-sentence capitalization mistakes.
+    var smartInsertion: Bool?
     /// Cursor insertion transport. Keystrokes remain the local privacy-first
     /// default; clipboard is an explicit compatibility choice.
     var insertionMethod: TextInsertionMethod?
@@ -168,6 +171,7 @@ struct RuntimeDefaults: Equatable {
     let automaticParagraphs: Bool
     let compactLockedPauses: Bool
     let spaceAfterPaste: Bool
+    let smartInsertion: Bool
     let insertionMethod: TextInsertionMethod
     let clipboardRestoreDelayMilliseconds: Int
     let warmMicrophone: Bool
@@ -195,6 +199,7 @@ struct RuntimeDefaults: Equatable {
         automaticParagraphsOverride: Bool? = nil,
         compactLockedPausesOverride: Bool? = nil,
         spaceAfterPasteOverride: Bool? = nil,
+        smartInsertionOverride: Bool? = nil,
         insertionMethodOverride: TextInsertionMethod? = nil,
         clipboardRestoreDelayMillisecondsOverride: Int? = nil,
         warmMicrophoneOverride: Bool? = nil,
@@ -311,6 +316,7 @@ struct RuntimeDefaults: Equatable {
                 ?? config.compactLockedPauses
                 ?? false,
             spaceAfterPaste: spaceAfterPasteOverride ?? config.spaceAfterPaste ?? true,
+            smartInsertion: smartInsertionOverride ?? config.smartInsertion ?? true,
             insertionMethod: insertionMethodOverride ?? config.insertionMethod ?? .keystrokes,
             clipboardRestoreDelayMilliseconds: clipboardRestoreDelayMilliseconds,
             warmMicrophone: warmMicrophoneOverride ?? config.warmMicrophone ?? true,

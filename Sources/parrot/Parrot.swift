@@ -2126,11 +2126,16 @@ struct Models: ParsableCommand {
     )
 
     struct List: ParsableCommand {
+        static func paddedID(_ id: String, width: Int) -> String {
+            id + String(repeating: " ", count: max(0, width - id.count))
+        }
+
         func run() throws {
             let storage = ModelStorage.default
+            let idWidth = max(26, ModelRegistry.shared.map(\.id.count).max() ?? 0)
             for m in ModelRegistry.shared {
                 let star = m.recommended ? "★" : " "
-                let id = m.id.padding(toLength: 26, withPad: " ", startingAt: 0)
+                let id = Self.paddedID(m.id, width: idWidth)
                 let languageSummary = m.languages.contains("multi")
                     ? "100"
                     : m.languages.joined(separator: ",")

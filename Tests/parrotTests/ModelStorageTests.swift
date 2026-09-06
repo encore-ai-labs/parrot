@@ -149,6 +149,13 @@ final class ModelStorageTests: XCTestCase {
         XCTAssertFalse(remove.force)
     }
 
+    func testModelListNeverTruncatesLongCopyableIDs() {
+        let id = "parakeet-unified-streaming.en"
+
+        XCTAssertEqual(Models.List.paddedID(id, width: 26), id)
+        XCTAssertEqual(Models.List.paddedID("short", width: 7), "short  ")
+    }
+
     func testRemovingManagedWhisperLeavesOtherModelsAndLegacyUntouched() throws {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
